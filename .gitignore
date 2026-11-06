@@ -1,0 +1,5 @@
+/target
+*.log
+settings.json
+vault/.obsidian/workspace.json
+vault/.obsidian/workspace-mobile.json

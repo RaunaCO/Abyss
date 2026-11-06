@@ -1,0 +1,374 @@
+//! The bottom bar, laid out like the official app: track info with like and
+//! menu on the left; shuffle / previous / play / next / repeat with the time
+//! and progress line below them in the centre; queue, lyrics, volume and the
+//! quality pill on the right.
+
+use super::sc;
+use gpui::{canvas, div, prelude::*, px, relative, AnyElement, Context, FontWeight, MouseButton, MouseDownEvent, Window};
+
+use super::icons::Icon;
+use super::widgets::{cover, explicit_badge, fmt_time, icon_button};
+use super::{theme, AppView, Drag, MenuTarget, Page};
+use crate::audio::output::fmt_khz;
+use crate::config::Repeat;
+
+pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
+    let entity = cx.entity();
+    let ambient = view.ambient(cx);
+    let now = view.now.as_ref().map(|n| (n.track.clone(), n.info.clone()));
+    let duration = view.duration();
+    let position = view.display_position().min(duration.max(0.0));
+    let frac = if duration > 0.0 { (position / duration) as f32 } else { 0.0 };
+    let playing = now.is_some() && !view.snap.paused && !view.ended;
+    let fav = now.as_ref().map(|(t, _)| view.fav_ids.contains(&t.id)).unwrap_or(false);
+
+    // ---------------------------------------------------------- left
+    let left = div()
+        .w(sc(340.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(sc(12.))
+        .min_w(sc(0.))
+        .when_some(now.clone(), |d, (track, _)| {
+            let album = track.album.as_ref().map(|a| a.id);
+            let artist = track.artists.first().map(|a| a.id);
+            let t_fav = track.clone();
+            let t_more = track.clone();
+            d.child(
+                div()
+                    .id("np-cover")
+                    .flex_none()
+                    .cursor_pointer()
+                    .child(cover(track.cover(160), 42., false, cx))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_now_playing(cx)
+                    })),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(sc(0.))
+                    .flex()
+                    .flex_col()
+                    .gap(sc(3.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(sc(6.))
+                            .min_w(sc(0.))
+                            .child(
+                                div()
+                                    .id("np-title")
+                                    .min_w(sc(0.))
+                                    .truncate()
+                                    .text_size(sc(12.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.underline())
+                                    .child(track.display_title())
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        if let Some(id) = album {
+                                            this.navigate(Page::Album(id), cx)
+                                        }
+                                    })),
+                            )
+                            .when(track.explicit, |d| d.child(explicit_badge())),
+                    )
+                    .child(
+                        div()
+                            .id("np-artist")
+                            .truncate()
+                            .text_size(sc(11.))
+                            .text_color(theme::text_secondary())
+                            .cursor_pointer()
+                            .hover(|s| s.underline().text_color(theme::text()))
+                            .child(track.artist_names())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                if let Some(id) = artist {
+                                    this.navigate(Page::Artist(id), cx)
+                                }
+                            })),
+                    ),
+            )
+            .child(icon_button(
+                "np-fav",
+                if fav { Icon::HeartFilled } else { Icon::Heart },
+                15. * view.heart_scale(track.id),
+                if fav { theme::text() } else { theme::text_secondary() },
+                move |this, _, _, cx| this.toggle_favorite(&t_fav, cx),
+                cx,
+            ))
+            .child(icon_button(
+                "np-more",
+                Icon::More,
+                15.,
+                theme::text_secondary(),
+                move |this, ev: &gpui::ClickEvent, _, cx| {
+                    this.menu = Some((ev.position(), MenuTarget::Track(t_more.clone())));
+                    cx.notify();
+                },
+                cx,
+            ))
+        });
+
+    // -------------------------------------------------------- centre
+    let shuffle_color = if view.shuffle { theme::accent() } else { theme::text_secondary() };
+    let repeat_icon = if view.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
+    let repeat_color = if view.repeat == Repeat::Off { theme::text_secondary() } else { theme::accent() };
+    let e1 = entity.clone();
+    let progress = div()
+        .id("progress")
+        .relative()
+        .flex_1()
+        .h(sc(14.))
+        .flex()
+        .items_center()
+        .cursor_pointer()
+        .group("progress")
+        .child(
+            canvas(move |b, _, cx| e1.update(cx, |v, _| v.progress_bounds = b), |_, _, _, _| {})
+                .absolute()
+                .size_full(),
+        )
+        .child(
+            div()
+                .w_full()
+                .h(sc(3.))
+                .rounded(sc(2.))
+                .bg(theme::active())
+                .group_hover("progress", |s| s.h(sc(5.)))
+                .child(div().h_full().w(relative(frac)).rounded(sc(2.)).bg(theme::text())),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                this.bar_click_block = true;
+                if this.now.is_some() {
+                    this.drag = Some(Drag::Progress);
+                    this.drag_to(ev.position, cx);
+                }
+            }),
+        );
+
+    let play_icon = if playing { Icon::Pause } else { Icon::Play };
+    let center = div()
+        .flex_1()
+        .min_w(sc(0.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(sc(1.))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sc(10.))
+                .child(icon_button("shuffle", Icon::Shuffle, 15., shuffle_color, |this, _, _, cx| this.toggle_shuffle(cx), cx))
+                .child(icon_button("prev", Icon::Prev, 18., theme::text(), |this, _, _, cx| this.prev(cx), cx))
+                .child(icon_button("playpause", play_icon, 24., theme::text(), |this, _, _, cx| this.toggle_play(cx), cx))
+                .child(icon_button("next", Icon::Next, 18., theme::text(), |this, _, _, cx| this.next(cx), cx))
+                .child(icon_button("repeat", repeat_icon, 15., repeat_color, |this, _, _, cx| this.cycle_repeat(cx), cx)),
+        )
+        .child(
+            div()
+                .w_full()
+                .max_w(sc(580.))
+                .flex()
+                .items_center()
+                .gap(sc(10.))
+                .text_size(sc(10.5))
+                .text_color(theme::text_secondary())
+                .child(div().w(sc(34.)).text_right().child(fmt_time(position)))
+                .child(progress)
+                .child(div().w(sc(34.)).child(fmt_time(duration))),
+        );
+
+    // --------------------------------------------------------- right
+    let pill = now.as_ref().and_then(|(_, info)| info.clone()).map(|info| {
+        let tier = info.tier();
+        let (fg, border) = match tier {
+            "MAX" => (theme::gold(), super::fx::with_alpha(theme::gold(), 0.45)),
+            "HIGH" => (theme::high(), super::fx::with_alpha(theme::high(), 0.45)),
+            _ => (theme::text_secondary(), theme::border()),
+        };
+        let detail = match view.snap.source {
+            Some((bits, rate)) if view.snap.key == view.now.as_ref().map(|n| n.key) => {
+                if info.codec.eq_ignore_ascii_case("aac") {
+                    "AAC".to_string()
+                } else {
+                    format!("{bits}-bit {}kHz", fmt_khz(rate))
+                }
+            }
+            _ => info.detail(),
+        };
+        div()
+            .id("quality")
+            .flex_none()
+            .h(sc(26.))
+            .px(sc(12.))
+            .flex()
+            .items_center()
+            .rounded(sc(13.))
+            .border_1()
+            .border_color(border)
+            .bg(super::fx::with_alpha(fg, 0.10))
+            .text_color(fg)
+            .text_size(sc(10.))
+            .font_weight(FontWeight::BOLD)
+            .cursor_pointer()
+            .hover(|s| s.opacity(0.85))
+            .active(|s| s.opacity(0.6))
+            .child(detail)
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.show_quality_info = !this.show_quality_info;
+                cx.notify();
+            }))
+    });
+
+    let vol = if view.muted { 0.0 } else { view.volume };
+    let show_pct = view.drag == Some(Drag::Volume) || view.volume_hint_until.is_some_and(|t| std::time::Instant::now() < t);
+    let e2 = entity.clone();
+    let volume = div()
+        .id("volume")
+        .relative()
+        .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _, cx| {
+            // One notch = 1 %; touchpads step every 12 px.
+            let steps = match ev.delta {
+                gpui::ScrollDelta::Lines(l) => l.y.signum() as i32,
+                gpui::ScrollDelta::Pixels(p) => {
+                    this.volume_wheel_px += f32::from(p.y);
+                    let n = (this.volume_wheel_px / 12.0) as i32;
+                    this.volume_wheel_px -= n as f32 * 12.0;
+                    n
+                }
+            };
+            if steps != 0 {
+                let base = if this.muted { 0.0 } else { this.volume };
+                let pct = ((base * 100.0).round() as i32 + steps).clamp(0, 100);
+                this.set_volume(pct as f32 / 100.0, cx);
+                this.save_settings();
+                this.volume_hint_until = Some(std::time::Instant::now() + std::time::Duration::from_millis(1200));
+            }
+            cx.stop_propagation();
+        }))
+        .w(sc(84.))
+        .h(sc(14.))
+        .flex()
+        .items_center()
+        .cursor_pointer()
+        .child(
+            canvas(move |b, _, cx| e2.update(cx, |v, _| v.volume_bounds = b), |_, _, _, _| {})
+                .absolute()
+                .size_full(),
+        )
+        .child(
+            div()
+                .w_full()
+                .h(sc(3.))
+                .rounded(sc(2.))
+                .bg(theme::active())
+                .child(div().h_full().w(relative(vol)).rounded(sc(2.)).bg(theme::text())),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                this.bar_click_block = true;
+                this.drag = Some(Drag::Volume);
+                this.drag_to(ev.position, cx);
+            }),
+        );
+
+    // Toggles that are on get a rounded highlight, as in the original.
+    let toggle = |id: &'static str, icon: Icon, on: bool, cx: &mut Context<AppView>, f: fn(&mut AppView, &mut Context<AppView>)| {
+        div()
+            .id(id)
+            .flex_none()
+            .size(sc(30.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(sc(8.))
+            .cursor_pointer()
+            .when(on, |d| d.bg(theme::elevated()))
+            .hover(|s| s.bg(theme::hover()))
+            .active(|s| s.opacity(0.6))
+            .child(icon.el(16., if on { theme::text() } else { theme::text_secondary() }))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                f(this, cx)
+            }))
+    };
+    let right = div()
+        .w(sc(340.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap(sc(4.))
+        .child(toggle("queue", Icon::Queue, view.show_queue, cx, |this, cx| {
+            this.show_queue = !this.show_queue;
+            if this.show_queue {
+                this.show_lyrics = false;
+            }
+            cx.notify();
+        }))
+        // Lyrics live in the full Now Playing view, as in the original.
+        .child(toggle(
+            "lyrics",
+            Icon::Lyrics,
+            view.now_playing_open && view.np_tab == super::now_playing::NpTab::Lyrics,
+            cx,
+            |this, cx| this.open_np_tab(super::now_playing::NpTab::Lyrics, cx),
+        ))
+        .child(icon_button(
+            "mute",
+            if vol <= 0.001 { Icon::VolumeOff } else { Icon::VolumeUp },
+            16.,
+            theme::text_secondary(),
+            |this, _, _, cx| this.toggle_mute(cx),
+            cx,
+        ))
+        .child(volume)
+        .child(
+            div()
+                .w(sc(30.))
+                .flex_none()
+                .text_size(sc(10.))
+                .text_color(theme::text_secondary())
+                .when(show_pct, |d| d.child(format!("{}%", (vol * 100.0).round() as i32))),
+        )
+        .children(pill);
+
+    div()
+        .id("player-bar")
+        .on_click(cx.listener(|this, _, _, cx| {
+            if std::mem::take(&mut this.bar_click_block) {
+                return;
+            }
+            this.toggle_now_playing(cx);
+        }))
+        .h(sc(theme::PLAYER_H))
+        .flex_none()
+        .px(sc(16.))
+        .flex()
+        .items_center()
+        .gap(sc(20.))
+        .when(!view.now_playing_open, |d| d.bg(theme::player_bar()))
+        .when(view.now.is_some() && !view.now_playing_open, |d| {
+            d.bg(gpui::linear_gradient(
+                90.,
+                gpui::linear_color_stop(super::fx::with_alpha(ambient, 0.14), 0.),
+                gpui::linear_color_stop(theme::player_bar(), 0.4),
+            ))
+        })
+        .child(left)
+        .child(center)
+        .child(right)
+        .into_any_element()
+}

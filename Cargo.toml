@@ -1,0 +1,46 @@
+[package]
+name = "tide"
+version = "0.1.0"
+edition = "2021"
+description = "Unofficial native TIDAL desktop client written in Rust with GPUI"
+license = "MIT"
+
+[dependencies]
+gpui = "0.2.2"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+dirs = "5"
+open = "5"
+parking_lot = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "blocking"] }
+roxmltree = "0.20"
+unicode-segmentation = "1"
+sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
+raw-window-handle = "0.6"
+rand = "0.8"
+
+# Audio: decoding, high quality resampling, output
+symphonia = { version = "0.5.4", default-features = false, features = ["flac", "isomp4", "aac", "mp3", "wav", "pcm"] }
+rubato = "0.16"
+cpal = "0.15.3"
+rtrb = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.15"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[build-dependencies]
+embed-resource = "3"
