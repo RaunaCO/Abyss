@@ -17,17 +17,23 @@ resampler and WASAPI exclusive (bit-perfect) output.
 ## Features
 
 - **Playback**: Hi-Res FLAC (up to 24-bit) via DASH, AAC for CD-quality tracks,
-  gapless queue, seeking, shuffle/repeat, ReplayGain normalization.
+  gapless queue, instant seeking (DASH segments restart), shuffle/repeat, ReplayGain normalization.
 - **Audio engine**: symphonia decoding, rubato sinc resampling, shared (cpal)
   or WASAPI exclusive output, lock-free ring buffer.
 - **Library**: Home, Explore, genres, mixes, playlists (create/edit/reorder),
   albums, tracks, artists; sorting everywhere; inline album unfolding in the
   collection (MusicBee / foobar2000 style).
-- **Now Playing**: full-window view with synced lyrics (click to seek, sync
-  offset, TIDAL + LRCLIB providers), credits and similar tracks.
+- **Home**: the same "For you" / Staff Picks / Uploads feed as the official app, with local recents.
+- **Now Playing**: full-window view with TIDAL's rotating blurred-cover background,
+  synced lyrics that follow smoothly (click to seek, sync offset, glow on the
+  current line, TIDAL + LRCLIB), credits, similar tracks and the queue beside them.
+- **Settings & menu**: settings page and hamburger menu (File, Navigation,
+  Playback, View, Help) laid out like the official app, with keyboard shortcuts.
 - **Interface**: TIDAL-style icon rail, two-row header with working window
   controls, 68 px player bar, smooth wheel scrolling, haptic-style press
   effects, UI zoom, mouse back/forward buttons.
+- **Ratings**: 0 to 5 stars in half-star steps for any track (lists, album panel, player bar), sortable. Stored locally in `%APPDATA%\tide\ratings.json` since TIDAL has no rating API.
+- **Discord**: Rich Presence shown like Spotify's ("Listening to TIDE" with cover, title, artist, progress bar and a button). See [docs/DISCORD.md](docs/DISCORD.md).
 - **System**: Windows media controls (SMTC), Inter font bundled.
 
 ## Getting started
@@ -60,8 +66,10 @@ authorize it in your browser). Tokens are stored locally in
 - [Configuration & diagnostics](docs/CONFIGURATION.md)
 - [Development guide](docs/DEVELOPMENT.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Discord integration](docs/DISCORD.md)
 - [Legal notes](docs/LEGAL.md)
-- Knowledge base as an [Obsidian](https://obsidian.md) vault: open the [`vault/`](vault) folder.
+- [Code graph (graphify)](docs/GRAPH.md)
+- Knowledge base as an [Obsidian](https://obsidian.md) vault: open the [`vault/`](vault) folder (start at `Home.md`; the code map is in `vault/Code Graph/`).
 
 ## Project name
 

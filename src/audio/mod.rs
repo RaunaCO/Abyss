@@ -95,6 +95,9 @@ struct EngineView {
     buffering: bool,
     /// Key of the track that should be shown while nothing is audible yet.
     loading: Option<u64>,
+    /// While seeking nothing is audible yet; keep showing the target position,
+    /// duration and format so the player bar does not blank out.
+    seek_hint: Option<(f64, f64, Option<(u32, u32)>)>,
 }
 
 impl Player {
@@ -111,6 +114,11 @@ impl Player {
             .spawn(move || Engine::new(http, rx, ev_tx, st, o, prefs, volume).run())
             .expect("spawn audio engine");
         (Self { tx, state, out }, ev_rx)
+    }
+
+    /// Loudness of the low / mid / high bands being played (for visuals).
+    pub fn levels(&self) -> [f32; 3] {
+        self.out.levels()
     }
 
     pub fn send(&self, cmd: Cmd) {
@@ -143,6 +151,11 @@ impl Player {
             snap.downloaded = if done { 1.0 } else { total.map(|t| have as f32 / t.max(1) as f32).unwrap_or(0.0) };
         } else if let Some(k) = v.loading {
             snap.key = Some(k);
+            if let Some((pos, dur, src)) = v.seek_hint {
+                snap.position = pos;
+                snap.duration = dur;
+                snap.source = src;
+            }
         }
         snap
     }
@@ -178,7 +191,7 @@ impl Drop for Worker {
 
 fn spawn_worker(http: &Client, info: &StreamInfo) -> Worker {
     let mp4 = matches!(info.source, StreamSource::Segments(_)) || !info.codec.eq_ignore_ascii_case("flac");
-    let buffer = stream::start(http.clone(), info.source.clone());
+    let buffer = stream::start(http.clone(), info.source.clone(), info.seg_secs.clone());
     let (tx, rx) = mpsc::sync_channel::<DecMsg>(24);
     let (seek_tx, seek_rx) = mpsc::channel::<f64>();
     let buf = buffer.clone();
@@ -187,6 +200,45 @@ fn spawn_worker(http: &Client, info: &StreamInfo) -> Worker {
         .spawn(move || decode_loop(buf, mp4, tx, seek_rx))
         .expect("spawn decoder");
     Worker { rx, seek_tx, buffer }
+}
+
+/// Move `dec` to `t` seconds. DASH streams restart the download at the right
+/// segment (instant); other sources use the demuxer's seek, falling back to
+/// decoding from the start and discarding samples.
+pub fn do_seek(dec: &mut Decoder, buf: &Arc<Buffer>, mp4: bool, t: f64) -> anyhow::Result<f64> {
+    if let Some((seg, seg_start)) = buf.segment_for(t) {
+        buf.restart_at(seg);
+        let mut d = Decoder::open(buf.clone(), mp4)?;
+        let skip = ((t - seg_start).max(0.0) * d.sample_rate as f64) as usize * 2;
+        let mut done = 0usize;
+        while done < skip {
+            match d.next_chunk() {
+                Ok(Some(c)) => done += c.len(),
+                _ => break,
+            }
+        }
+        let reached = seg_start + done as f64 / 2.0 / d.sample_rate as f64;
+        *dec = d;
+        return Ok(reached);
+    }
+    match dec.seek(t) {
+        Ok(at) => Ok(at),
+        Err(e) => {
+            log::debug!("seek fallback: {e:#}");
+            let mut d = Decoder::open(buf.clone(), mp4)?;
+            let skip = (t * d.sample_rate as f64) as usize * 2;
+            let mut done = 0usize;
+            while done < skip {
+                match d.next_chunk() {
+                    Ok(Some(c)) => done += c.len(),
+                    _ => break,
+                }
+            }
+            let reached = done as f64 / 2.0 / d.sample_rate as f64;
+            *dec = d;
+            Ok(reached)
+        }
+    }
 }
 
 fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Receiver<f64>) {
@@ -213,30 +265,11 @@ fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Rec
             target = Some(t);
         }
         if let Some(t) = target {
-            let reached = match dec.seek(t) {
+            let reached = match do_seek(&mut dec, &buf, mp4, t) {
                 Ok(at) => at,
                 Err(e) => {
-                    // Not seekable (fragmented MP4 still downloading): decode
-                    // from the start and throw samples away up to the target.
-                    log::debug!("seek fallback: {e:#}");
-                    match open() {
-                        Ok(mut d) => {
-                            let skip = (t * d.sample_rate as f64) as usize * 2;
-                            let mut done = 0usize;
-                            while done < skip {
-                                match d.next_chunk() {
-                                    Ok(Some(c)) => done += c.len(),
-                                    _ => break,
-                                }
-                            }
-                            dec = d;
-                            done as f64 / 2.0 / dec.sample_rate as f64
-                        }
-                        Err(e) => {
-                            let _ = tx.send(DecMsg::Error(format!("{e:#}")));
-                            return;
-                        }
-                    }
+                    let _ = tx.send(DecMsg::Error(format!("{e:#}")));
+                    return;
                 }
             };
             if tx.send(DecMsg::Seeked(reached)).is_err() {
@@ -256,7 +289,7 @@ fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Rec
                 // Stay alive: the user may still seek back into this track.
                 match seek_rx.recv() {
                     Ok(t) => {
-                        let reached = dec.seek(t).unwrap_or(0.0);
+                        let reached = do_seek(&mut dec, &buf, mp4, t).unwrap_or(0.0);
                         if tx.send(DecMsg::Seeked(reached)).is_err() {
                             return;
                         }
@@ -489,6 +522,7 @@ impl Engine {
         let mut v = self.view.lock();
         v.marks.clear();
         v.loading = None;
+        v.seek_hint = None;
         v.buffering = false;
     }
 
@@ -529,8 +563,12 @@ impl Engine {
             self.cur = Some(t);
             return;
         }
+        let hint = self.view.lock().marks.front().map(|m| (m.duration, m.source));
         self.flush_output();
         self.reset_timeline();
+        if let Some((dur, src)) = hint {
+            self.view.lock().seek_hint = Some((secs.max(0.0), dur, src));
+        }
         let _ = t.worker.seek_tx.send(secs.max(0.0));
         t.seeking = true;
         t.ended = false;

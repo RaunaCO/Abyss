@@ -5,11 +5,14 @@ Playback engine, Hi-Res DASH, library pages, playlist editing, lyrics,
 Now Playing, zoom, mouse navigation, sorting, inline album unfolding.
 
 ## Next (UI parity with TIDAL)
-- [ ] Home shortcuts grid and *Staff Picks* / *Uploads* tabs
+- [x] Home feed with shortcuts, *Staff Picks* / *Uploads* tabs
+- [x] Settings page and hamburger menu
+- [x] Rotating blurred Now Playing background
 - [ ] Artist page and Search page comparison
 - [ ] Genre / decade pages visual check
 - [ ] Horizontally scrolling chips
-- [ ] Multi-colour Now Playing background
+- [ ] "View all" pages for home rows
+- [ ] Report playback to TIDAL (its recents)
 
 ## Improvements beyond TIDAL
 - [ ] Parametric EQ / DSP chain

@@ -212,12 +212,14 @@ fn item_text(item: &Item) -> (String, String, Option<String>, bool) {
 
 /// A cover card: cover edge to edge (no panel), bold title, grey artist and,
 /// in grids, the release year.
-pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, cx: &mut Context<AppView>) -> AnyElement {
+pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &AppView, cx: &mut Context<AppView>) -> AnyElement {
     let (title, subtitle, url, round) = item_text(item);
     let group = key.clone();
     let id = ElementId::Name(key);
     let open = item.clone();
     let play = item.clone();
+    let group_for_stars = group.clone();
+    let album_id = if let Item::Album(a) = item { Some(a.id) } else { None };
     let (explicit, year) = match item {
         Item::Album(a) => (a.explicit, a.year().to_string()),
         Item::Track(t) => (t.explicit, String::new()),
@@ -247,7 +249,14 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, cx: &mut C
                         .size_full()
                         .rounded(sc(if round { width / 2. } else { 4. }))
                         .bg(gpui::rgba(0x00000000))
-                        .group_hover(group.clone(), |s| s.bg(gpui::rgba(0x00000040))),
+                        .group_hover(group.clone(), |s| {
+                            // Official card hover: gradient from clear to 70 % black.
+                            s.bg(gpui::linear_gradient(
+                                180.,
+                                gpui::linear_color_stop(gpui::rgba(0x00000000), 0.),
+                                gpui::linear_color_stop(gpui::rgba(0x000000b3), 1.),
+                            ))
+                        }),
                 )
                 .child(
                     div()
@@ -291,7 +300,22 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, cx: &mut C
                 )
                 .child(div().truncate().text_color(theme::text_secondary()).text_size(sc(11.5)).child(subtitle))
                 .when(detail && !year.is_empty(), |d| {
-                    d.child(div().text_size(sc(10.)).font_weight(FontWeight::BOLD).text_color(theme::text_dim()).child(year))
+                    d.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(div().text_size(sc(10.)).font_weight(FontWeight::BOLD).text_color(theme::text_dim()).child(year))
+                            .when_some(album_id, |d, aid| {
+                                // Stars: always visible once rated, otherwise on hover.
+                                let rated = view.ratings.get_album(aid) > 0;
+                                d.child(
+                                    div()
+                                        .when(!rated, |d| d.invisible().group_hover(group_for_stars.clone(), |s| s.visible()))
+                                        .child(album_stars("card", aid, 11., view, cx)),
+                                )
+                            }),
+                    )
                 }),
         )
         .into_any_element()
@@ -304,13 +328,14 @@ pub struct RowStyle {
     pub number: bool,
     pub date: bool,
     pub bpm: bool,
+    pub rating: bool,
     /// Collection section whose sort the column headers control.
     pub sortable: Option<&'static str>,
 }
 
 impl RowStyle {
     pub const fn new(cover: bool, album: bool, number: bool) -> Self {
-        Self { cover, album, number, date: false, bpm: false, sortable: None }
+        Self { cover, album, number, date: false, bpm: false, rating: true, sortable: None }
     }
 }
 
@@ -331,6 +356,7 @@ impl Cols {
     pub const DATE: f32 = 100.0;
     pub const TIME: f32 = 46.0;
     pub const BPM: f32 = 38.0;
+    pub const RATING: f32 = 84.0;
     pub const ACTIONS: f32 = 84.0;
     pub fn artist(style: RowStyle) -> f32 {
         if style.album { 0.22 } else { 0.30 }
@@ -500,6 +526,7 @@ pub fn track_row(
                 cx,
             ))
         })
+        .when(style.rating, |d| d.child(div().w(sc(Cols::RATING)).flex_none().child(stars("row", track.id, 13., view, cx))))
         .when(style.date, |d| {
             d.child(
                 div()
@@ -630,4 +657,125 @@ pub fn section_title(title: impl Into<SharedString>) -> AnyElement {
 
 pub fn message(text: impl Into<SharedString>) -> AnyElement {
     div().py(sc(48.)).text_color(theme::text_secondary()).child(text.into()).into_any_element()
+}
+
+/// Star rating of a track, 0 to 5 in half-star steps. Each star has a left and
+/// a right half you can click; the stars preview the value under the pointer,
+/// and clicking the current value clears the rating.
+pub fn stars(scope: &'static str, track_id: u64, size: f32, view: &AppView, cx: &mut Context<AppView>) -> AnyElement {
+    stars_for(false, scope, track_id, size, view, cx)
+}
+
+/// The same control for a whole album.
+pub fn album_stars(scope: &'static str, album_id: u64, size: f32, view: &AppView, cx: &mut Context<AppView>) -> AnyElement {
+    stars_for(true, scope, album_id, size, view, cx)
+}
+
+fn stars_for(album: bool, scope: &'static str, id: u64, size: f32, view: &AppView, cx: &mut Context<AppView>) -> AnyElement {
+    let actual = if album { view.ratings.get_album(id) } else { view.ratings.get(id) };
+    let shown = match view.rating_hover {
+        Some((a, i, v)) if a == album && i == id => v,
+        _ => actual,
+    };
+    let kind = if album { "album" } else { "track" };
+    div()
+        .flex()
+        .items_center()
+        .children((0..5u8).map(|k| {
+            let (half, full) = (2 * k + 1, 2 * k + 2);
+            let icon = if shown >= full {
+                Icon::Star
+            } else if shown == half {
+                Icon::StarHalf
+            } else {
+                Icon::StarOutline
+            };
+            let color = if shown >= half { theme::gold() } else { theme::text_dim() };
+            let hit = |v: u8, left: bool, cx: &mut Context<AppView>| {
+                div()
+                    .id(ElementId::Name(format!("{scope}-{kind}-star-{id}-{v}").into()))
+                    .absolute()
+                    .top(sc(0.))
+                    .h_full()
+                    .w(gpui::relative(0.5))
+                    .when(left, |d| d.left(sc(0.)))
+                    .when(!left, |d| d.right(sc(0.)))
+                    .cursor_pointer()
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        if *hovered {
+                            this.rating_hover = Some((album, id, v));
+                        } else if this.rating_hover == Some((album, id, v)) {
+                            this.rating_hover = None;
+                        }
+                        cx.notify();
+                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        let now = if album { this.ratings.get_album(id) } else { this.ratings.get(id) };
+                        let next = if now == v { 0 } else { v };
+                        if album {
+                            this.set_album_rating(id, next, cx);
+                        } else {
+                            this.set_rating(id, next, cx);
+                        }
+                    }))
+            };
+            div()
+                .relative()
+                .size(sc(size))
+                .flex_none()
+                .child(icon.el(size, color))
+                .child(hit(half, true, cx))
+                .child(hit(full, false, cx))
+        }))
+        .into_any_element()
+}
+
+/// One of the quick links at the top of "For you": a small cover with the name beside it.
+pub fn shortcut(id: (&'static str, usize), item: &Item, cx: &mut Context<AppView>) -> AnyElement {
+    let (title, subtitle, url, _) = item_text(item);
+    let open = item.clone();
+    div()
+        .id(id)
+        .w(gpui::relative(0.328))
+        .h(sc(46.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(sc(10.))
+        .pr(sc(10.))
+        .rounded(sc(6.))
+        .overflow_hidden()
+        .bg(theme::surface())
+        .cursor_pointer()
+        .hover(|s| s.bg(theme::hover()))
+        .active(|s| s.bg(theme::active()))
+        .child(match &url {
+            Some(_) => cover(url.clone(), 46., false, cx),
+            None => div()
+                .size(sc(46.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::linear_gradient(
+                    135.,
+                    gpui::linear_color_stop(gpui::rgb(0x6a5cff), 0.),
+                    gpui::linear_color_stop(gpui::rgb(0x2bb8ff), 1.),
+                ))
+                .child(Icon::Heart.el(18., theme::text()))
+                .into_any_element(),
+        })
+        .child(
+            div()
+                .flex_1()
+                .min_w(sc(0.))
+                .flex()
+                .flex_col()
+                .gap(sc(2.))
+                .child(div().truncate().text_size(sc(11.)).font_weight(FontWeight::BOLD).child(title))
+                .when(!subtitle.is_empty(), |d| d.child(div().truncate().text_size(sc(10.)).text_color(theme::text_dim()).child(subtitle))),
+        )
+        .on_click(cx.listener(move |this, _, _, cx| this.open_item(&open, cx)))
+        .into_any_element()
 }

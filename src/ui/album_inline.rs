@@ -40,7 +40,6 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
     let artist_id = album.artists.first().map(|a| a.id);
     // Caret under the clicked card.
     let caret_x = 24.0 + 8.0 + column as f32 * (theme::CARD_W + 8.0) + theme::CARD_W / 2.0 - 10.0;
-    let _ = cols;
 
     let total: u64 = tracks.as_ref().map(|t| t.iter().map(|x| x.duration as u64).sum()).unwrap_or(album.duration as u64);
     let n = tracks.as_ref().map(|t| t.len()).unwrap_or(album.number_of_tracks as usize);
@@ -55,13 +54,13 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
         None => div().p(sc(20.)).text_color(theme::text_dim()).child("Cargando pistas…").into_any_element(),
         Some(tracks) => {
             let multi_disc = tracks.iter().any(|t| t.volume_number > 1);
-            // Long albums flow into two columns, like MusicBee's album view.
-            let split = if tracks.len() > 14 { (tracks.len() + 1) / 2 } else { tracks.len() };
             let row = |i: usize, cx: &mut Context<AppView>| -> AnyElement {
                 let t = tracks[i].clone();
                 let current = playing_id == Some(t.id);
                 let fav = view.fav_ids.contains(&t.id);
                 let t_menu = t.clone();
+                let t_fav = t.clone();
+                let rated = view.ratings.get(t.id);
                 let group: SharedString = format!("inl-{i}").into();
                 div()
                     .id(("inline-track", i))
@@ -76,19 +75,47 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                     .when(current, |d| d.bg(theme::accent_dim()))
                     .hover(|s| s.bg(theme::hover()))
                     .active(|s| s.bg(theme::active()))
+                    // Track number, replaced by a play arrow on hover.
                     .child(
                         div()
+                            .relative()
                             .w(sc(26.))
                             .flex_none()
+                            .flex()
+                            .justify_center()
                             .text_size(sc(12.))
                             .text_color(if current { theme::accent() } else { theme::text_dim() })
-                            .child(if current {
-                                super::widgets::eq_bars(playing, theme::accent()).into_any_element()
-                            } else if multi_disc {
-                                div().child(format!("{}.{}", t.volume_number, t.track_number)).into_any_element()
-                            } else {
-                                div().child(t.track_number.to_string()).into_any_element()
-                            }),
+                            .child(
+                                div()
+                                    .group_hover(group.clone(), |s| s.invisible())
+                                    .child(if current {
+                                        super::widgets::eq_bars(playing, theme::accent()).into_any_element()
+                                    } else if multi_disc {
+                                        div().child(format!("{}.{}", t.volume_number, t.track_number)).into_any_element()
+                                    } else {
+                                        div().child(t.track_number.to_string()).into_any_element()
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id(("inline-play", i))
+                                    .absolute()
+                                    .invisible()
+                                    .group_hover(group.clone(), |s| s.visible())
+                                    .cursor_pointer()
+                                    .child(if current && playing { Icon::Pause } else { Icon::Play }.el(15., theme::text()))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        if current {
+                                            this.toggle_play(cx);
+                                            return;
+                                        }
+                                        if let Some(list) = this.albums.get(&id).and_then(Load::ready).map(|(_, t)| t.clone()) {
+                                            this.shuffle = false;
+                                            this.play_tracks(list, i, cx);
+                                        }
+                                    })),
+                            ),
                     )
                     .child(
                         div()
@@ -99,7 +126,31 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                             .text_color(if current { theme::accent() } else { theme::text() })
                             .child(t.display_title()),
                     )
-                    .when(fav, |d| d.child(Icon::HeartFilled.el(13., theme::accent())))
+                    // Stars: always shown when rated, otherwise on hover.
+                    .child(
+                        div()
+                            .flex_none()
+                            .when(rated == 0, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
+                            .child(super::widgets::stars("inl", t.id, 12., view, cx)),
+                    )
+                    // Like: always shown when liked, otherwise on hover.
+                    .child(
+                        div()
+                            .id(("inline-fav", i))
+                            .flex_none()
+                            .cursor_pointer()
+                            .when(!fav, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
+                            .active(|s| s.opacity(0.5))
+                            .child(if fav {
+                                Icon::HeartFilled.el(14. * view.heart_scale(t.id), theme::text())
+                            } else {
+                                Icon::Heart.el(14., theme::text_secondary())
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.toggle_favorite(&t_fav, cx)
+                            })),
+                    )
                     .child(div().flex_none().text_size(sc(12.)).text_color(theme::text_secondary()).child(fmt_time(t.duration as f64)))
                     .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                         cx.stop_propagation();
@@ -119,16 +170,49 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                     )
                     .into_any_element()
             };
-            let left: Vec<AnyElement> = (0..split).map(|i| row(i, cx)).collect();
-            let right: Vec<AnyElement> = (split..tracks.len()).map(|i| row(i, cx)).collect();
-            div()
-                .flex_1()
-                .min_w(sc(0.))
-                .flex()
-                .gap(sc(16.))
-                .child(div().flex_1().min_w(sc(0.)).flex().flex_col().children(left))
-                .when(!right.is_empty(), |d| d.child(div().flex_1().min_w(sc(0.)).flex().flex_col().children(right)))
-                .into_any_element()
+            // Adapt to the room: as many columns as fit (>= 260 px each), but only as
+            // many as the album needs (about 10 rows per column), so long albums
+            // spread out instead of growing very tall.
+            let grid_w = cols as f32 * (theme::CARD_W + 8.0);
+            let list_w = (grid_w - 200.0 - 24.0 - 40.0).max(260.0);
+            let fit = ((list_w + 16.0) / 276.0).floor().clamp(1.0, 4.0) as usize;
+            let need = ((tracks.len() + 9) / 10).clamp(1, 4);
+            let ncols = fit.min(need);
+            // Flat list with a header before each disc of a multi-disc album.
+            let mut flat: Vec<Result<usize, u32>> = Vec::new();
+            let mut disc = 0u32;
+            for (i, t) in tracks.iter().enumerate() {
+                if multi_disc && t.volume_number != disc {
+                    disc = t.volume_number;
+                    flat.push(Err(disc));
+                }
+                flat.push(Ok(i));
+            }
+            let per = (flat.len() + ncols - 1) / ncols;
+            let columns: Vec<AnyElement> = flat
+                .chunks(per.max(1))
+                .map(|chunk| {
+                    let rows: Vec<AnyElement> = chunk
+                        .iter()
+                        .map(|e| match e {
+                            Ok(i) => row(*i, cx),
+                            Err(d) => div()
+                                .h(sc(30.))
+                                .px(sc(10.))
+                                .flex()
+                                .items_end()
+                                .pb(sc(4.))
+                                .text_size(sc(10.5))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme::text_dim())
+                                .child(format!("DISCO {d}"))
+                                .into_any_element(),
+                        })
+                        .collect();
+                    div().flex_1().min_w(sc(0.)).flex().flex_col().children(rows).into_any_element()
+                })
+                .collect();
+            div().flex_1().min_w(sc(0.)).flex().gap(sc(16.)).children(columns).into_any_element()
         }
     };
 
@@ -182,6 +266,7 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                                 })),
                         )
                         .child(div().text_size(sc(12.)).text_color(theme::text_dim()).child(meta))
+                        .child(super::widgets::album_stars("inl-album", id, 15., view, cx))
                         .child(div().flex().gap(sc(6.)).children(quality_badge(&album.tags)))
                         .child(
                             div()

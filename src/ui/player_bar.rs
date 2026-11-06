@@ -4,7 +4,7 @@
 //! quality pill on the right.
 
 use super::sc;
-use gpui::{canvas, div, prelude::*, px, relative, AnyElement, Context, FontWeight, MouseButton, MouseDownEvent, Window};
+use gpui::{canvas, div, AnimationExt, prelude::*, px, relative, AnyElement, Context, FontWeight, MouseButton, MouseDownEvent, Window};
 
 use super::icons::Icon;
 use super::widgets::{cover, explicit_badge, fmt_time, icon_button};
@@ -15,6 +15,12 @@ use crate::config::Repeat;
 pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
     let entity = cx.entity();
     let ambient = view.ambient(cx);
+    let palette = view.palette(cx);
+    let bar_frames = if view.settings.lock().np_blur {
+        view.now.as_ref().and_then(|n| n.track.cover(640)).and_then(|u| super::images::frames(&u, cx))
+    } else {
+        None
+    };
     let now = view.now.as_ref().map(|n| (n.track.clone(), n.info.clone()));
     let duration = view.duration();
     let position = view.display_position().min(duration.max(0.0));
@@ -24,7 +30,7 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
 
     // ---------------------------------------------------------- left
     let left = div()
-        .w(sc(340.))
+        .w(sc(410.))
         .flex_none()
         .flex()
         .items_center()
@@ -114,6 +120,7 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
                 },
                 cx,
             ))
+            .child(super::widgets::stars("bar", track.id, 13., view, cx))
         });
 
     // -------------------------------------------------------- centre
@@ -311,7 +318,12 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         .items_center()
         .justify_end()
         .gap(sc(4.))
-        .child(toggle("queue", Icon::Queue, view.show_queue, cx, |this, cx| {
+        .child(toggle("queue", Icon::Queue, if view.now_playing_open { view.np_queue_side } else { view.show_queue }, cx, |this, cx| {
+            if this.now_playing_open {
+                this.np_queue_side = !this.np_queue_side;
+                cx.notify();
+                return;
+            }
             this.show_queue = !this.show_queue;
             if this.show_queue {
                 this.show_lyrics = false;
@@ -360,12 +372,20 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         .items_center()
         .gap(sc(20.))
         .when(!view.now_playing_open, |d| d.bg(theme::player_bar()))
-        .when(view.now.is_some() && !view.now_playing_open, |d| {
-            d.bg(gpui::linear_gradient(
-                90.,
-                gpui::linear_color_stop(super::fx::with_alpha(ambient, 0.14), 0.),
-                gpui::linear_color_stop(theme::player_bar(), 0.4),
-            ))
+        .relative()
+        // The same turning cover as Now Playing, as a strip under a veil, so the bar and the
+        // full-screen view share one background.
+        .when(view.now.is_some() && !view.now_playing_open && bar_frames.is_some(), |d| {
+            let f = bar_frames.clone().unwrap();
+            d.child(
+                div()
+                    .absolute()
+                    .top(sc(0.))
+                    .left(sc(0.))
+                    .size_full()
+                    .child(super::fx::rotating_backdrop(&f, view.bg_angle_now))
+                    .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(gpui::rgba(0x000000b8))),
+            )
         })
         .child(left)
         .child(center)

@@ -14,11 +14,13 @@ pub fn player_bar() -> Rgba {
 pub fn surface() -> Rgba {
     rgb(0x161616)
 }
+/// Row / item hover: the official app's `--wave-color-solid-base-brighter`.
 pub fn hover() -> Rgba {
-    rgba(0xffffff14)
+    rgb(0x242429)
 }
+/// Pressed / strongest hover: `--wave-color-solid-base-brightest`.
 pub fn active() -> Rgba {
-    rgba(0xffffff22)
+    rgb(0x303036)
 }
 pub fn elevated() -> Rgba {
     rgb(0x232327)
@@ -30,10 +32,10 @@ pub fn text() -> Rgba {
     rgb(0xffffff)
 }
 pub fn text_secondary() -> Rgba {
-    rgb(0xa9a9ae)
+    rgb(0xafafb6)
 }
 pub fn text_dim() -> Rgba {
-    rgb(0x6e6e74)
+    rgb(0x787887)
 }
 /// The cyan accent used for the playing track, progress and active items.
 pub fn accent() -> Rgba {

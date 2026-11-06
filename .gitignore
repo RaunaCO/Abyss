@@ -3,3 +3,8 @@
 settings.json
 vault/.obsidian/workspace.json
 vault/.obsidian/workspace-mobile.json
+graphify-out/cache/
+graphify-out/memory/
+graphify-out/.graphify_root
+graphify-out/*.pending.json
+graphify-out/*.sig

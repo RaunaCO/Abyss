@@ -18,6 +18,7 @@ pub enum SortKey {
     Year,
     Duration,
     Count,
+    Rating,
 }
 
 impl SortKey {
@@ -30,6 +31,7 @@ impl SortKey {
             SortKey::Year => "Año",
             SortKey::Duration => "Duración",
             SortKey::Count => "Nº de pistas",
+            SortKey::Rating => "Valoración",
         }
     }
     fn code(self) -> &'static str {
@@ -41,6 +43,7 @@ impl SortKey {
             SortKey::Year => "year",
             SortKey::Duration => "duration",
             SortKey::Count => "count",
+            SortKey::Rating => "rating",
         }
     }
     fn from_code(s: &str) -> Self {
@@ -51,6 +54,7 @@ impl SortKey {
             "year" => SortKey::Year,
             "duration" => SortKey::Duration,
             "count" => SortKey::Count,
+            "rating" => SortKey::Rating,
             _ => SortKey::Added,
         }
     }
@@ -70,8 +74,8 @@ pub fn section(page: &Page) -> Option<&'static str> {
 
 pub fn options(section: &str) -> &'static [SortKey] {
     match section {
-        "tracks" => &[SortKey::Added, SortKey::Name, SortKey::Artist, SortKey::Album, SortKey::Duration],
-        "albums" => &[SortKey::Added, SortKey::Name, SortKey::Artist, SortKey::Year],
+        "tracks" => &[SortKey::Added, SortKey::Name, SortKey::Artist, SortKey::Album, SortKey::Duration, SortKey::Rating],
+        "albums" => &[SortKey::Added, SortKey::Name, SortKey::Artist, SortKey::Year, SortKey::Rating],
         "artists" => &[SortKey::Added, SortKey::Name],
         "playlists" => &[SortKey::Added, SortKey::Name, SortKey::Count],
         _ => &[SortKey::Added, SortKey::Name],
@@ -136,6 +140,7 @@ impl AppView {
         let (pk, pd) = get(self, "playlists");
         let (mk, md) = get(self, "mixes");
 
+        let ratings = self.ratings.clone();
         if let Load::Ready(list) = &mut self.fav_tracks {
             let ranks = self.sort_ranks.entry("tracks").or_default();
             rank(ranks, list, |t| t.id.to_string());
@@ -148,6 +153,8 @@ impl AppView {
                         t(a).cmp(&t(b)).then(a.track_number.cmp(&b.track_number))
                     }
                     SortKey::Duration => a.duration.cmp(&b.duration),
+                    // Best rated first.
+                    SortKey::Rating => ratings.get(b.id).cmp(&ratings.get(a.id)),
                     _ => ranks.get(&a.id.to_string()).cmp(&ranks.get(&b.id.to_string())),
                 };
                 if td { o.reverse() } else { o }
@@ -162,6 +169,8 @@ impl AppView {
                     SortKey::Artist => text_key(&a.artist_names()).cmp(&text_key(&b.artist_names())).then(a.release_date.cmp(&b.release_date)),
                     // Newest first feels natural for years.
                     SortKey::Year => b.release_date.cmp(&a.release_date),
+                    // Best rated first.
+                    SortKey::Rating => ratings.get_album(b.id).cmp(&ratings.get_album(a.id)),
                     _ => ranks.get(&a.id.to_string()).cmp(&ranks.get(&b.id.to_string())),
                 };
                 if ad { o.reverse() } else { o }

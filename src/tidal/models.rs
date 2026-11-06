@@ -284,6 +284,22 @@ impl Mix {
     }
 }
 
+impl Mix {
+    /// A mix as the home feed describes it (v2 API: text infos and image list).
+    pub fn parse_feed(v: &Value) -> Option<Self> {
+        let id = s(v, "id");
+        if id.is_empty() {
+            return None;
+        }
+        let text = |k: &str| v.get(k).and_then(|t| t.get("text")).and_then(Value::as_str).unwrap_or("").to_string();
+        let images = v.get("mixImages").and_then(Value::as_array);
+        let image = ["MEDIUM", "LARGE", "SMALL"].iter().find_map(|size| {
+            images?.iter().find(|i| i.get("size").and_then(Value::as_str) == Some(*size))?.get("url")?.as_str().map(str::to_string)
+        });
+        Some(Self { id, title: text("titleTextInfo"), subtitle: text("subtitleTextInfo"), image })
+    }
+}
+
 /// One card in a horizontal row (home page, artist page, ...).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
@@ -345,6 +361,8 @@ pub enum RowKind {
     Links,
     /// Big promotion cards with a category label.
     Featured,
+    /// The 3x2 grid of quick links at the top of "For you".
+    Shortcuts,
 }
 
 /// A titled row of items.
@@ -376,6 +394,8 @@ pub enum StreamSource {
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
     pub source: StreamSource,
+    /// DASH only: seconds per media segment, used to jump straight to a position.
+    pub seg_secs: Vec<f64>,
     pub codec: String,
     pub audio_quality: String,
     pub bit_depth: Option<u32>,

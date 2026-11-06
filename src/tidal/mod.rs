@@ -559,6 +559,62 @@ impl Tidal {
     }
 
     /// The editorial home page as titled rows of cards and tracks.
+    /// The home feed ("For you", "Staff Picks", "Uploads") the official app shows.
+    /// `vibe` is `static`, `editorial` or `uploads`.
+    pub fn home_feed(&self, vibe: &str) -> Result<Vec<Row>> {
+        let cc = self.country();
+        let uid = self.user_id()?;
+        let url = format!("https://api.tidal.com/v2/home/feed/{vibe}");
+        let v = self.send(|token| {
+            self.http
+                .get(&url)
+                .bearer_auth(token)
+                .query(&[
+                    ("locale", "es_ES"),
+                    ("deviceType", "DESKTOP"),
+                    ("platform", "DESKTOP"),
+                    ("countryCode", cc.as_str()),
+                    ("timeOffset", "+00:00"),
+                    ("limit", "30"),
+                ])
+                .header("x-tidal-client-version", "2.47.0")
+                .header("x-tidal-authenticated-userid", uid.to_string())
+                .header("x-tidal-authenticated-subscription", "HIFI_PLUS")
+        })?;
+        let parse = |x: &Value| -> Option<Item> {
+            let kind = x.get("type")?.as_str()?;
+            let data = x.get("data")?;
+            match kind {
+                "ALBUM" => Album::parse(data).map(Item::Album),
+                "PLAYLIST" => Playlist::parse(data).map(Item::Playlist),
+                "ARTIST" => Artist::parse(data).map(Item::Artist),
+                "MIX" => Mix::parse_feed(data).map(Item::Mix),
+                "TRACK" => Track::parse(data).map(Item::Track),
+                "DEEP_LINK" => {
+                    let url = data.get("url")?.as_str()?;
+                    let page = url.strip_prefix("tidal://my-collection/")?;
+                    Some(Item::Link(Link { title: data.get("title")?.as_str()?.to_string(), path: format!("@{page}"), icon: String::new() }))
+                }
+                _ => None,
+            }
+        };
+        let mut rows = Vec::new();
+        for module in v.get("items").and_then(Value::as_array).into_iter().flatten() {
+            let items: Vec<Item> = module.get("items").and_then(Value::as_array).into_iter().flatten().filter_map(parse).collect();
+            if items.is_empty() {
+                continue;
+            }
+            let mut title = module.get("title").and_then(Value::as_str).unwrap_or("").to_string();
+            // "Because you listened to" + the album it is about.
+            if let Some(about) = module.get("header").and_then(|h| h.get("data")).and_then(|d| d.get("title")).and_then(Value::as_str) {
+                title = format!("{title} {about}");
+            }
+            let kind = if module.get("type").and_then(Value::as_str) == Some("SHORTCUT_LIST") { RowKind::Shortcuts } else { RowKind::Cards };
+            rows.push(Row { title, items, kind });
+        }
+        Ok(rows)
+    }
+
     pub fn page(&self, name: &str) -> Result<Vec<Row>> {
         let v = self.get(&format!("/pages/{name}"), &[])?;
         let mut rows = Vec::new();
@@ -966,6 +1022,7 @@ impl Tidal {
             let mpd = dash::parse(&manifest)?;
             return Ok(StreamInfo {
                 source: StreamSource::Segments(mpd.urls),
+                seg_secs: mpd.seg_secs,
                 codec: mpd.codec,
                 audio_quality,
                 bit_depth: bit_depth.or(mpd.bit_depth),
@@ -990,6 +1047,7 @@ impl Tidal {
         let codec = m.get("codecs").and_then(Value::as_str).unwrap_or("flac").to_string();
         Ok(StreamInfo {
             source: StreamSource::Single(url),
+            seg_secs: Vec::new(),
             codec: if codec.starts_with("mp4a") { "AAC".into() } else { codec },
             audio_quality,
             bit_depth,

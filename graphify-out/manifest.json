@@ -1,0 +1,368 @@
+{
+  "Cargo.toml": {
+    "mtime": 1793973575.9835496,
+    "seen": 1793997412.4210067,
+    "ast_hash": "05438a48084a1a5a41e149d199dce5a6",
+    "semantic_hash": ""
+  },
+  "assets/make_logo.py": {
+    "mtime": 1793973575.9388928,
+    "seen": 1793997412.4210117,
+    "ast_hash": "9279489444aaee0ad5caa54989fbfbe0",
+    "semantic_hash": ""
+  },
+  "build.rs": {
+    "mtime": 1793879374.92827,
+    "seen": 1793997412.4210145,
+    "ast_hash": "e9a626a48070a55221c16e0b40290edd",
+    "semantic_hash": ""
+  },
+  "src/audio/decode.rs": {
+    "mtime": 1793875657.7669654,
+    "seen": 1793997412.4210157,
+    "ast_hash": "295e347776a6bc81e1ea7de2dfcad8a6",
+    "semantic_hash": ""
+  },
+  "src/audio/mod.rs": {
+    "mtime": 1793977629.3422482,
+    "seen": 1793997412.4210174,
+    "ast_hash": "ac0f79a68fae65780b5d6857bae6e7f4",
+    "semantic_hash": ""
+  },
+  "src/audio/output.rs": {
+    "mtime": 1793978623.345998,
+    "seen": 1793997412.4210186,
+    "ast_hash": "da7884670d79599dac5246d096de954c",
+    "semantic_hash": ""
+  },
+  "src/audio/stream.rs": {
+    "mtime": 1793974078.0129752,
+    "seen": 1793997412.4210198,
+    "ast_hash": "06a005cb0d5cb5755bc47e70acc06ef4",
+    "semantic_hash": ""
+  },
+  "src/config.rs": {
+    "mtime": 1793976924.8732018,
+    "seen": 1793997412.421021,
+    "ast_hash": "885576e51a29b20c3023e08ab8efbef3",
+    "semantic_hash": ""
+  },
+  "src/discord.rs": {
+    "mtime": 1793975185.5293932,
+    "seen": 1793997412.421022,
+    "ast_hash": "886ae380f6817f4477e43c1c92c5b665",
+    "semantic_hash": ""
+  },
+  "src/main.rs": {
+    "mtime": 1793980345.9335413,
+    "seen": 1793997412.421023,
+    "ast_hash": "8ee861501240367a8ac9218cf473a38f",
+    "semantic_hash": ""
+  },
+  "src/ratings.rs": {
+    "mtime": 1793977491.0562794,
+    "seen": 1793997412.4210243,
+    "ast_hash": "1f861adc605519c677ff488f9470fbfe",
+    "semantic_hash": ""
+  },
+  "src/recents.rs": {
+    "mtime": 1793978342.333564,
+    "seen": 1793997412.4210258,
+    "ast_hash": "d14f6a8ccabee0b0640ad28432f0daab",
+    "semantic_hash": ""
+  },
+  "src/tidal/dash.rs": {
+    "mtime": 1793974092.6204937,
+    "seen": 1793997412.4210272,
+    "ast_hash": "27105cc7e47583dac234e8c9310bbf99",
+    "semantic_hash": ""
+  },
+  "src/tidal/lyrics.rs": {
+    "mtime": 1793881530.8623972,
+    "seen": 1793997412.4210281,
+    "ast_hash": "5a23fe67fec94e87c063b7abf5cc5ff0",
+    "semantic_hash": ""
+  },
+  "src/tidal/mod.rs": {
+    "mtime": 1793976613.2437375,
+    "seen": 1793997412.421029,
+    "ast_hash": "638bf8ea21dc8fede9edd54093676efe",
+    "semantic_hash": ""
+  },
+  "src/tidal/models.rs": {
+    "mtime": 1793976613.2427363,
+    "seen": 1793997412.4210303,
+    "ast_hash": "afff1f4e9d5102746e7d07791bbd30a3",
+    "semantic_hash": ""
+  },
+  "src/ui/album_inline.rs": {
+    "mtime": 1793977491.059285,
+    "seen": 1793997412.4210315,
+    "ast_hash": "50a9c856bb4fc8eb5022fe4584f8679e",
+    "semantic_hash": ""
+  },
+  "src/ui/appmenu.rs": {
+    "mtime": 1793977063.9210198,
+    "seen": 1793997412.4210324,
+    "ast_hash": "6933532b82727062802cb5a6e4df7a1e",
+    "semantic_hash": ""
+  },
+  "src/ui/debug.rs": {
+    "mtime": 1793978255.8176603,
+    "seen": 1793997412.4210336,
+    "ast_hash": "3a3a61e7164df713ce689b281292fc50",
+    "semantic_hash": ""
+  },
+  "src/ui/fx.rs": {
+    "mtime": 1793979270.2023425,
+    "seen": 1793997412.421035,
+    "ast_hash": "de194fe73496ae55cc03f89db3ac8761",
+    "semantic_hash": ""
+  },
+  "src/ui/icons.rs": {
+    "mtime": 1793977057.0636466,
+    "seen": 1793997412.4210358,
+    "ast_hash": "139f2e197c9b174949a141ffc0530d7c",
+    "semantic_hash": ""
+  },
+  "src/ui/images.rs": {
+    "mtime": 1793979893.0827422,
+    "seen": 1793997412.421037,
+    "ast_hash": "c02ade653fb566280eaeee7be44f5e26",
+    "semantic_hash": ""
+  },
+  "src/ui/input.rs": {
+    "mtime": 1793973575.671244,
+    "seen": 1793997412.4210386,
+    "ast_hash": "f89595ef654016ea1e73174b661db777",
+    "semantic_hash": ""
+  },
+  "src/ui/media.rs": {
+    "mtime": 1793973575.6828072,
+    "seen": 1793997412.4210396,
+    "ast_hash": "92f6cc6dfe72d624de2c9886eb52eb4b",
+    "semantic_hash": ""
+  },
+  "src/ui/mod.rs": {
+    "mtime": 1793979270.2033436,
+    "seen": 1793997412.421041,
+    "ast_hash": "605ac43e1d1341508bd9b895bd58e318",
+    "semantic_hash": ""
+  },
+  "src/ui/motion.rs": {
+    "mtime": 1793974367.4818332,
+    "seen": 1793997412.421042,
+    "ast_hash": "7ead1738d48e23be39436d2fe4f58c3b",
+    "semantic_hash": ""
+  },
+  "src/ui/now_playing.rs": {
+    "mtime": 1793980082.8908763,
+    "seen": 1793997412.4210432,
+    "ast_hash": "3fa651024855126f8ab59f43dddb7c98",
+    "semantic_hash": ""
+  },
+  "src/ui/pages.rs": {
+    "mtime": 1793978342.3355744,
+    "seen": 1793997412.4210446,
+    "ast_hash": "f575a2e9ff17f77f267e8d92d2578560",
+    "semantic_hash": ""
+  },
+  "src/ui/player_bar.rs": {
+    "mtime": 1793979270.2043447,
+    "seen": 1793997412.4210455,
+    "ast_hash": "cf99a34a727f9eee7f5c1a9b40735e87",
+    "semantic_hash": ""
+  },
+  "src/ui/playlists.rs": {
+    "mtime": 1793973575.8095994,
+    "seen": 1793997412.4210465,
+    "ast_hash": "c29073982f5136aa708b70b155cad9cc",
+    "semantic_hash": ""
+  },
+  "src/ui/settings.rs": {
+    "mtime": 1793977057.0646567,
+    "seen": 1793997412.421048,
+    "ast_hash": "28ca70a530ed6773247e65d7fa6ac2c7",
+    "semantic_hash": ""
+  },
+  "src/ui/sidebar.rs": {
+    "mtime": 1793973575.826945,
+    "seen": 1793997412.4210489,
+    "ast_hash": "8d92c1c4c70b91d06db1c2924d4051d6",
+    "semantic_hash": ""
+  },
+  "src/ui/smooth.rs": {
+    "mtime": 1793973575.8348336,
+    "seen": 1793997412.4210498,
+    "ast_hash": "445b03bf184a49a085908b7a50f99796",
+    "semantic_hash": ""
+  },
+  "src/ui/sort.rs": {
+    "mtime": 1793977491.0597935,
+    "seen": 1793997412.4210508,
+    "ast_hash": "d4cbfe0577cce33fa90a5b99dfdb82f9",
+    "semantic_hash": ""
+  },
+  "src/ui/theme.rs": {
+    "mtime": 1793974367.4798226,
+    "seen": 1793997412.4210522,
+    "ast_hash": "fb083f04529ecdcfb589091ac9b7f6d0",
+    "semantic_hash": ""
+  },
+  "src/ui/titlebar.rs": {
+    "mtime": 1793977057.064157,
+    "seen": 1793997412.4210532,
+    "ast_hash": "935f8cee448cfb0ddb381a07882cd922",
+    "semantic_hash": ""
+  },
+  "src/ui/widgets.rs": {
+    "mtime": 1793977500.902488,
+    "seen": 1793997412.4210544,
+    "ast_hash": "39863437532369b4ee999d38de6f63ca",
+    "semantic_hash": ""
+  },
+  "src/ui/winctl.rs": {
+    "mtime": 1793980276.803916,
+    "seen": 1793997412.4210556,
+    "ast_hash": "e61a1c2f722404bc66df23e6f7a845ca",
+    "semantic_hash": ""
+  },
+  "CONTRIBUTING.md": {
+    "mtime": 1793973710.9805274,
+    "seen": 1793997412.4210565,
+    "ast_hash": "7383261722cd05ad7000de01e9b187ea",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1793976341.0803795,
+    "seen": 1793997412.4210577,
+    "ast_hash": "f951941467793048b6d83f70d60f0cca",
+    "semantic_hash": ""
+  },
+  "docs/ARCHITECTURE.md": {
+    "mtime": 1793973710.7891083,
+    "seen": 1793997412.4210591,
+    "ast_hash": "4ed593095f937c091c6ddcb824b80883",
+    "semantic_hash": ""
+  },
+  "docs/AUDIO.md": {
+    "mtime": 1793973710.8235545,
+    "seen": 1793997412.42106,
+    "ast_hash": "7bf254962dbf769cc06f9e0ce5e40870",
+    "semantic_hash": ""
+  },
+  "docs/CONFIGURATION.md": {
+    "mtime": 1793973710.8539217,
+    "seen": 1793997412.4210613,
+    "ast_hash": "cc84577b25149f29bc07a12e6900f437",
+    "semantic_hash": ""
+  },
+  "docs/DEVELOPMENT.md": {
+    "mtime": 1793973710.8886483,
+    "seen": 1793997412.421063,
+    "ast_hash": "b42c670851b6d4bfdda2f2b1f87355a1",
+    "semantic_hash": ""
+  },
+  "docs/DISCORD.md": {
+    "mtime": 1793975708.173523,
+    "seen": 1793997412.421064,
+    "ast_hash": "31acf8144ba8a51e561700d549f4869c",
+    "semantic_hash": ""
+  },
+  "docs/LEGAL.md": {
+    "mtime": 1793973710.9514282,
+    "seen": 1793997412.4210653,
+    "ast_hash": "6154cfeaa341bc82813ca446f4f11b15",
+    "semantic_hash": ""
+  },
+  "docs/ROADMAP.md": {
+    "mtime": 1793973710.9210253,
+    "seen": 1793997412.4210663,
+    "ast_hash": "c1b0f9b8b3a9a770fe3e1f59c791a949",
+    "semantic_hash": ""
+  },
+  "vault/Architecture.md": {
+    "mtime": 1793973740.958077,
+    "seen": 1793997412.4210672,
+    "ast_hash": "440fa6231aa9ca12ac0dd074eaf89188",
+    "semantic_hash": ""
+  },
+  "vault/Audio Pipeline.md": {
+    "mtime": 1793973740.9915316,
+    "seen": 1793997412.4210682,
+    "ast_hash": "fae0ccbef6672c9f41896b9d35575625",
+    "semantic_hash": ""
+  },
+  "vault/Brand Identity.md": {
+    "mtime": 1793973740.90032,
+    "seen": 1793997412.4210699,
+    "ast_hash": "65dfca235929061d34694aef24646437",
+    "semantic_hash": ""
+  },
+  "vault/Daily Notes/Template.md": {
+    "mtime": 1793973741.2161148,
+    "seen": 1793997412.4210708,
+    "ast_hash": "01caf7129100e4f8e583cdfea4ab7595",
+    "semantic_hash": ""
+  },
+  "vault/Decision Log.md": {
+    "mtime": 1793973741.1510541,
+    "seen": 1793997412.4210722,
+    "ast_hash": "067bff2604c38555b87724da4e6f776a",
+    "semantic_hash": ""
+  },
+  "vault/Glossary.md": {
+    "mtime": 1793973741.1871865,
+    "seen": 1793997412.4210732,
+    "ast_hash": "e0bf8458cbe2e58d84a58081613e5c85",
+    "semantic_hash": ""
+  },
+  "vault/Home.md": {
+    "mtime": 1793973740.838126,
+    "seen": 1793997412.4210742,
+    "ast_hash": "8771a504cff6e6f1e74d17eaafe5f3ae",
+    "semantic_hash": ""
+  },
+  "vault/Legal Notes.md": {
+    "mtime": 1793973740.9272015,
+    "seen": 1793997412.4210753,
+    "ast_hash": "1f38401c87bfc0351b7634621aa6a08f",
+    "semantic_hash": ""
+  },
+  "vault/Project Overview.md": {
+    "mtime": 1793973740.8697467,
+    "seen": 1793997412.4210768,
+    "ast_hash": "b46492bd918abeab59a7150f2ec57c2d",
+    "semantic_hash": ""
+  },
+  "vault/Roadmap.md": {
+    "mtime": 1793973741.1201522,
+    "seen": 1793997412.421078,
+    "ast_hash": "a5ee07ad382dfd26828aec8e79e78720",
+    "semantic_hash": ""
+  },
+  "vault/TIDAL API Notes.md": {
+    "mtime": 1793973741.0269828,
+    "seen": 1793997412.4210792,
+    "ast_hash": "af0da348d73241acc28f8e783554c7f0",
+    "semantic_hash": ""
+  },
+  "vault/Testing Workflow.md": {
+    "mtime": 1793973741.0852888,
+    "seen": 1793997412.4210804,
+    "ast_hash": "9bd42917fb001b8c74601782e3f7def5",
+    "semantic_hash": ""
+  },
+  "vault/UI System.md": {
+    "mtime": 1793973741.0568671,
+    "seen": 1793997412.4210813,
+    "ast_hash": "8e20997cb4422f91c23e434bc6093706",
+    "semantic_hash": ""
+  },
+  "assets/logo.png": {
+    "mtime": 1793879357.172693,
+    "seen": 1793997412.4210827,
+    "ast_hash": "586cc9314ed9c02b9b87f968bb3d6002",
+    "semantic_hash": ""
+  }
+}

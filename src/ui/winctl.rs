@@ -80,7 +80,10 @@ pub fn start_drag(window: &mut Window) {
     if let Some(h) = hwnd(window) {
         unsafe {
             win32::ReleaseCapture();
-            win32::SendMessageW(h, win32::WM_NCLBUTTONDOWN, win32::HTCAPTION, 0);
+            // Posted, not sent: the move loop must start from the message pump. Run inside
+            // gpui's event handler it keeps the app borrowed while gpui's own tasks (the
+            // ticker) run in that loop, which panics with "RefCell already borrowed".
+            win32::PostMessageW(h, win32::WM_NCLBUTTONDOWN, win32::HTCAPTION, 0);
         }
         return;
     }

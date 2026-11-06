@@ -38,6 +38,8 @@ mod winctl;
 mod album_inline;
 mod sort;
 pub mod fx;
+mod settings;
+mod appmenu;
 mod sidebar;
 pub mod theme;
 mod widgets;
@@ -59,7 +61,7 @@ use crate::config::{Quality, Repeat, Settings};
 use crate::tidal::*;
 use input::{InputEvent, TextInput};
 
-actions!(app, [PlayPause, NextTrack, PrevTrack, FocusSearch, SeekForward, SeekBack, VolumeUp, VolumeDown, ToggleMute, GoBack, GoForward, ZoomIn, ZoomOut, ZoomReset]);
+actions!(app, [OpenSettings, GoHome, ToggleShuffle, PlayPause, NextTrack, PrevTrack, FocusSearch, SeekForward, SeekBack, VolumeUp, VolumeDown, ToggleMute, GoBack, GoForward, ZoomIn, ZoomOut, ZoomReset]);
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some("App");
@@ -82,6 +84,12 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl--", ZoomOut, None),
         KeyBinding::new("ctrl-0", ZoomReset, None),
         KeyBinding::new("backspace", GoBack, ctx),
+        KeyBinding::new("shift-backspace", GoForward, ctx),
+        KeyBinding::new("ctrl-p", OpenSettings, None),
+        KeyBinding::new("ctrl-h", GoHome, None),
+        KeyBinding::new("ctrl-s", ToggleShuffle, None),
+        KeyBinding::new("ctrl-shift-right", SeekForward, None),
+        KeyBinding::new("ctrl-shift-left", SeekBack, None),
     ]
 }
 
@@ -188,6 +196,14 @@ pub struct AppView {
 
     // Data.
     pub home: Load<Vec<Row>>,
+    /// Selected home tab (0 For you, 1 Staff Picks, 2 Uploads) and the feeds of tabs 1 and 2.
+    pub home_tab: usize,
+    /// Settings page: selected tab and whether the sound-output list is unfolded.
+    pub settings_tab: usize,
+    /// Open hamburger menu: the path of hovered entries (empty = only the groups).
+    pub app_menu: Option<Vec<usize>>,
+    pub settings_dev_open: bool,
+    pub home_extra: HashMap<usize, Load<Vec<Row>>>,
     pub explore: Load<Vec<Row>>,
     pub browse: HashMap<String, Load<Vec<Row>>>,
     /// More albums by the artist + related artists, per album page.
@@ -257,6 +273,23 @@ pub struct AppView {
     pub ambient_at: std::time::Instant,
     /// Heart that was just liked: (track id, when).
     pub heart_pop: Option<(u64, std::time::Instant)>,
+    /// Local star ratings and the half-star value being hovered, if any.
+    pub ratings: crate::ratings::Ratings,
+    /// (is album, id, half stars)
+    pub rating_hover: Option<(bool, u64, u8)>,
+    /// Smoothed, compressed band levels (0..1) that gently modulate the backgrounds.
+    pub vis: [f32; 3],
+    /// State of the rotating Now Playing / player-bar background.
+    pub bg_spin: fx::BgSpin,
+    /// Its angle for the current frame (computed once per render).
+    pub bg_angle_now: f32,
+    /// Albums played here (newest first) and when the home feed was last fetched.
+    pub recents: Vec<crate::recents::RecentAlbum>,
+    pub home_loaded: Option<std::time::Instant>,
+    /// Slow running mean of each band, so `vis` follows the music's dynamics rather than its loudness.
+    vis_mean: [f32; 3],
+    /// Play queue docked beside the lyrics / credits / similar tabs in Now Playing.
+    pub np_queue_side: bool,
     /// Lyrics follow the song (off after a manual scroll).
     pub lyrics_follow: bool,
     /// Per-track lyrics timing correction in seconds.
@@ -264,6 +297,9 @@ pub struct AppView {
     pub lyrics_scroll: ScrollHandle,
     /// Synced line last scrolled to (auto-follow).
     pub lyrics_line: Option<usize>,
+    /// Previous active lyric line and a counter, to fade lines in and out.
+    pub lyrics_prev: Option<usize>,
+    pub lyrics_changes: usize,
     /// When `snap` was taken (to interpolate the progress bar).
     pub snap_at: std::time::Instant,
     /// Sidebar width animation: (width at start, start time).
@@ -282,6 +318,8 @@ pub struct AppView {
     pub scroll_animating: bool,
     autoplay_jump: bool,
     media: Option<media::Media>,
+    pub discord: crate::discord::Discord,
+    pub discord_input: Entity<TextInput>,
     pub credits: HashMap<u64, Load<Vec<(String, Vec<String>)>>>,
     pub toast: Option<(String, std::time::Instant)>,
     pub login: LoginState,
@@ -338,6 +376,30 @@ impl AppView {
             InputEvent::Escape | InputEvent::Submit(_) => window.focus(&this.focus),
         })
         .detach();
+        let discord_input = cx.new(|cx| TextInput::new("ID de aplicación de Discord", cx));
+        discord_input.update(cx, |i, cx| i.set_text(&settings.lock().discord_client_id, cx));
+        cx.subscribe_in(&discord_input, window, |this, _, ev: &InputEvent, window, cx| match ev {
+            InputEvent::Changed(text) => {
+                let id: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
+                {
+                    let mut s = this.settings.lock();
+                    s.discord_client_id = id.clone();
+                    s.save();
+                }
+                this.discord.set_client_id(id);
+                cx.notify();
+            }
+            InputEvent::Escape | InputEvent::Submit(_) => window.focus(&this.focus),
+        })
+        .detach();
+        let discord = {
+            let st = settings.lock();
+            let id = std::env::var("TIDE_DISCORD_ID")
+                .ok()
+                .or_else(|| Some(st.discord_client_id.clone()).filter(|s| !s.is_empty()))
+                .unwrap_or_else(|| crate::config::DISCORD_APP_ID.to_string());
+            crate::discord::Discord::new(id, st.discord)
+        };
         let dlg_title = cx.new(|cx| TextInput::new("Mi playlist", cx));
         let dlg_desc = cx.new(|cx| TextInput::new("", cx));
         for input in [&dlg_title, &dlg_desc] {
@@ -365,6 +427,11 @@ impl AppView {
             list_len: 0,
             row_scroll: HashMap::new(),
             home: Load::Idle,
+            home_tab: 0,
+            settings_tab: 0,
+            app_menu: None,
+            settings_dev_open: false,
+            home_extra: HashMap::new(),
             explore: Load::Idle,
             browse: HashMap::new(),
             album_extra: HashMap::new(),
@@ -422,10 +489,21 @@ impl AppView {
             ambient_to: theme::accent(),
             ambient_at: std::time::Instant::now(),
             heart_pop: None,
+            ratings: crate::ratings::Ratings::load(),
+            rating_hover: None,
+            vis: [0.0; 3],
+            bg_spin: fx::BgSpin::Stopped(0.0),
+            bg_angle_now: 0.0,
+            recents: crate::recents::load(),
+            home_loaded: None,
+            vis_mean: [0.0; 3],
+            np_queue_side: false,
             lyrics_follow: true,
             lyrics_offset: HashMap::new(),
             lyrics_scroll: ScrollHandle::new(),
             lyrics_line: None,
+            lyrics_prev: None,
+            lyrics_changes: 0,
             snap_at: std::time::Instant::now(),
             sidebar_anim: None,
             np_anim: None,
@@ -437,6 +515,8 @@ impl AppView {
             scroll_animating: false,
             autoplay_jump: false,
             media: media::Media::new(window),
+            discord,
+            discord_input,
             credits: HashMap::new(),
             toast: None,
             login: LoginState::Idle,
@@ -533,6 +613,7 @@ impl AppView {
 
     fn reset_data(&mut self) {
         self.home = Load::Idle;
+        self.home_extra.clear();
         self.explore = Load::Idle;
         self.albums.clear();
         self.playlists.clear();
@@ -745,9 +826,28 @@ impl AppView {
 
     pub fn load_page_data(&mut self, cx: &mut Context<Self>) {
         match self.page.clone() {
-            Page::Home if self.home.is_idle() => {
+            Page::Home if self.home_tab == 0 && self.home.is_idle() => {
                 self.home = Load::Loading;
-                self.fetch(cx, |t| t.page("home"), |this, r, _| this.home = into_load(r));
+                self.home_loaded = Some(std::time::Instant::now());
+                self.fetch(cx, |t| t.home_feed("static"), |this, r, _| this.home = into_load(r));
+            }
+            // Coming back to Home after a while: refresh quietly, keeping what is shown.
+            Page::Home if self.home_tab == 0 && self.home_loaded.is_some_and(|t| t.elapsed() > Duration::from_secs(90)) => {
+                self.home_loaded = Some(std::time::Instant::now());
+                self.fetch(cx, |t| t.home_feed("static"), |this, r, _| {
+                    if let Ok(rows) = r {
+                        this.home = Load::Ready(rows);
+                        this.content_changed_pub();
+                    }
+                });
+            }
+            Page::Home if self.home_tab > 0 && !self.home_extra.contains_key(&self.home_tab) => {
+                let tab = self.home_tab;
+                self.home_extra.insert(tab, Load::Loading);
+                let vibe = if tab == 1 { "editorial" } else { "uploads" };
+                self.fetch(cx, move |t| t.home_feed(vibe), move |this, r, _| {
+                    this.home_extra.insert(tab, into_load(r));
+                });
             }
             Page::Explore if self.explore.is_idle() => {
                 self.explore = Load::Loading;
@@ -825,8 +925,28 @@ impl AppView {
         }
     }
 
+    pub fn set_home_tab(&mut self, tab: usize, cx: &mut Context<Self>) {
+        if self.home_tab != tab {
+            self.home_tab = tab;
+            self.list_len = usize::MAX - 1;
+            self.page_anim += 1;
+            self.load_page_data(cx);
+            self.content_changed_pub();
+            cx.notify();
+        }
+    }
+
     pub fn open_item(&mut self, item: &Item, cx: &mut Context<Self>) {
         match item {
+            // Shortcut to a collection page ("My Tracks"...).
+            Item::Link(l) if l.path.starts_with('@') => match &l.path[1..] {
+                "tracks" => self.navigate(Page::MyTracks, cx),
+                "albums" => self.navigate(Page::MyAlbums, cx),
+                "artists" => self.navigate(Page::MyArtists, cx),
+                "playlists" => self.navigate(Page::MyPlaylists, cx),
+                "mixes" => self.navigate(Page::MyMixes, cx),
+                _ => {}
+            },
             Item::Link(l) => self.navigate(Page::Browse(l.path.clone(), l.title.clone()), cx),
             Item::Promo(p) => match p.kind.as_str() {
                 "PLAYLIST" => self.navigate(Page::Playlist(p.target.clone()), cx),
@@ -972,6 +1092,10 @@ impl AppView {
         self.ended = false;
         self.player.send(Cmd::ClearQueue);
         self.now = Some(NowPlaying { track: item.track.clone(), info: None, key, index });
+        if crate::recents::record(&mut self.recents, &item.track) {
+            // The home shortcuts show it as soon as the user is back there.
+            self.content_changed_pub();
+        }
         self.snap.position = 0.0;
         let quality = self.settings.lock().quality;
         let id = item.track.id;
@@ -1213,6 +1337,45 @@ impl AppView {
         cx.notify();
     }
 
+    /// Set a track's rating in half stars (0 clears it).
+    pub fn set_rating(&mut self, track: u64, halves: u8, cx: &mut Context<Self>) {
+        self.ratings.set(track, halves);
+        if sort::SortKey::Rating == self.sort_of("tracks").0 {
+            self.apply_sorts();
+            self.content_changed_pub();
+        }
+        cx.notify();
+    }
+
+    /// Ease the visual levels towards the audio. Compressed and heavily smoothed:
+    /// the backgrounds should breathe, not dance.
+    fn update_vis(&mut self) {
+        let raw = self.player.levels();
+        let playing = self.now.is_some() && !self.snap.paused && !self.ended;
+        for i in 0..3 {
+            let target = if playing {
+                // Compare with the running mean: louder than usual -> towards 1,
+                // quieter -> towards 0, so it moves with the music's dynamics at any volume.
+                let m = &mut self.vis_mean[i];
+                *m += (raw[i] - *m) * 0.006;
+                (0.5 + (raw[i] - *m) / (*m + 0.004) * 1.1).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let k = if target > self.vis[i] { 0.16 } else { 0.05 };
+            self.vis[i] += (target - self.vis[i]) * k;
+        }
+    }
+
+    pub fn set_album_rating(&mut self, album: u64, halves: u8, cx: &mut Context<Self>) {
+        self.ratings.set_album(album, halves);
+        if sort::SortKey::Rating == self.sort_of("albums").0 {
+            self.apply_sorts();
+            self.content_changed_pub();
+        }
+        cx.notify();
+    }
+
     pub fn toggle_favorite(&mut self, track: &Track, cx: &mut Context<Self>) {
         let id = track.id;
         let fav = !self.fav_ids.contains(&id);
@@ -1312,9 +1475,22 @@ impl AppView {
             match which {
                 "normalize" => s.normalize = !s.normalize,
                 "autoplay" => s.autoplay = !s.autoplay,
+                "discord" => s.discord = !s.discord,
+                "audio_metadata" => s.audio_metadata = !s.audio_metadata,
+                "show_ratings" => s.show_ratings = !s.show_ratings,
+                "hide_uploads" => {
+                    s.hide_uploads = !s.hide_uploads;
+                    if s.hide_uploads && self.home_tab == 2 {
+                        self.home_tab = 0;
+                    }
+                }
                 _ => {}
             }
             s.save();
+        }
+        if which == "discord" {
+            let on = self.settings.lock().discord;
+            self.discord.set_enabled(on);
         }
         if which == "normalize" {
             // Applies from the next track; re-send prefs so the engine knows.
@@ -1431,6 +1607,12 @@ impl AppView {
                 changed = true;
             }
         }
+        {
+            let playing = self.now.is_some() && !self.snap.paused && !self.ended && !self.snap.buffering;
+            let dur = self.duration();
+            let pos = self.snap.position;
+            self.discord.update(self.now.as_ref().map(|n| (&n.track, dur)), playing, pos);
+        }
         if let Some(m) = self.media.as_mut() {
             let playing = self.now.is_some() && !self.snap.paused && !self.ended;
             m.update(self.now.as_ref().map(|n| (n.key, &n.track)), playing, self.snap.position);
@@ -1507,6 +1689,8 @@ impl Render for AppView {
             return pages::login_screen(self, cx).into_any_element();
         }
         self.drive_animations(window);
+        self.update_vis();
+        self.bg_angle_now = self.bg_angle(window);
         let np_overlay = if self.now_playing_open && self.now.is_some() { Some(now_playing::render(self, window, cx)) } else { None };
         let blocks = self.blocks(window);
         if self.list_len == usize::MAX {
@@ -1553,6 +1737,9 @@ impl Render for AppView {
                 this.save_settings();
             }))
             .on_action(cx.listener(|this, _: &ToggleMute, _, cx| this.toggle_mute(cx)))
+            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.navigate(Page::Settings, cx)))
+            .on_action(cx.listener(|this, _: &GoHome, _, cx| this.navigate(Page::Home, cx)))
+            .on_action(cx.listener(|this, _: &ToggleShuffle, _, cx| this.toggle_shuffle(cx)))
             .on_action(cx.listener(|this, _: &GoBack, _, cx| this.go_back(cx)))
             .on_action(cx.listener(|this, _: &GoForward, _, cx| this.go_forward(cx)))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.step_zoom(1, cx)))
@@ -1615,6 +1802,7 @@ impl Render for AppView {
             .children(np_overlay)
             .child(player_bar::render(self, window, cx))
             .children(pages::overlays(self, window, cx))
+            .children(appmenu::overlay(self, window, cx))
             .children(playlists::dialog_overlay(self, cx))
             .into_any_element()
     }

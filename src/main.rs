@@ -4,6 +4,9 @@
 
 mod audio;
 mod config;
+mod discord;
+mod ratings;
+mod recents;
 mod tidal;
 mod ui;
 
@@ -11,6 +14,15 @@ use gpui::{prelude::*, px, size, App, Application, Bounds, SharedString, Titleba
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("tide=info")).init();
+    // A panic inside a window callback aborts the process without a trace; keep the message.
+    std::panic::set_hook(Box::new(|info| {
+        let text = format!("{info}
+{}
+", std::backtrace::Backtrace::force_capture());
+        let _ = std::fs::create_dir_all(config::config_dir());
+        let _ = std::fs::write(config::config_dir().join("crash.log"), &text);
+        eprintln!("{text}");
+    }));
 
     // Diagnostics: `TIDE --probe <track id>` prints what TIDAL offers.
     let args: Vec<String> = std::env::args().collect();
@@ -73,7 +85,7 @@ fn main() {
                 });
                 let mp4 = matches!(info.source, tidal::StreamSource::Segments(_)) || !info.codec.eq_ignore_ascii_case("flac");
                 let start = std::time::Instant::now();
-                let buf = audio::stream::start(t.http().clone(), info.source.clone());
+                let buf = audio::stream::start(t.http().clone(), info.source.clone(), info.seg_secs.clone());
                 match audio::decode::Decoder::open(buf.clone(), mp4) {
                     Ok(mut d) => {
                         println!("decoder: {} Hz, {:?} bit, {} ch, duration {:?}, opened in {:?}", d.sample_rate, d.bits_per_sample, d.channels, d.duration, start.elapsed());
@@ -93,8 +105,9 @@ fn main() {
                             }
                         }
                         println!("decoded {:.1} s, peak {peak:.3}, first audio after {:?}", frames as f64 / d.sample_rate as f64, start.elapsed());
-                        match d.seek(120.0) {
-                            Ok(at) => println!("seek to 120 s -> {at:.2} s"),
+                        let st = std::time::Instant::now();
+                        match audio::do_seek(&mut d, &buf, mp4, 150.0) {
+                            Ok(at) => println!("seek to 150 s -> {at:.2} s in {:?}", st.elapsed()),
                             Err(e) => println!("seek failed (fallback will be used): {e:#}"),
                         }
                         let mut r = audio::decode::Resampler2::new(d.sample_rate, 48_000).unwrap();

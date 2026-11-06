@@ -117,7 +117,7 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .active(|s| s.opacity(0.6))
                 .child(Icon::Menu.el(15., theme::text_secondary()))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_app_menu(cx))),
         )
         .child(
             drag_area(div().id("title-drag"), cx)
@@ -138,7 +138,7 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .child(window_button("win-close", Icon::WinClose, WinButton::Close, cx)),
         );
 
-    // Row 2: logo (over the rail), back/forward pill, search and account.
+    // Row 2: sidebar toggle (over the rail), back/forward pill, search and account.
     let header = div()
         .h(sc(theme::HEADER_H))
         .flex_none()
@@ -154,11 +154,17 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .justify_center()
                 .child(
                     div()
-                        .id("brand")
+                        .id("sidebar-toggle")
+                        .size(sc(30.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(sc(8.))
                         .cursor_pointer()
+                        .hover(|s| s.bg(theme::hover()))
                         .active(|s| s.opacity(0.6))
-                        .child(gpui::img(super::images::logo()).size(sc(26.)).rounded(sc(7.)))
-                        .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Home, cx))),
+                        .child(Icon::Collapse.el(18., theme::text_secondary()))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
                 ),
         )
         .child(

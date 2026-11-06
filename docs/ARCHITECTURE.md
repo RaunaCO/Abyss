@@ -33,7 +33,16 @@ See [AUDIO.md](AUDIO.md). `mod.rs` is the engine (queue, gapless, seek),
 - Chrome: `titlebar.rs`, `sidebar.rs`, `player_bar.rs`, `now_playing.rs`.
 - Motion: `fx.rs`, `motion.rs`, `smooth.rs` (smooth wheel + Ctrl+wheel zoom).
 - Platform: `winctl.rs` (Win32 caption buttons / drag), `media.rs` (SMTC).
+- Pages added later: `settings.rs` (settings page), `appmenu.rs` (hamburger
+  menu), `album_inline.rs` (collection album panel).
 - `debug.rs`: screenshot helper, see [CONFIGURATION.md](CONFIGURATION.md).
+
+## Other top-level modules
+- `discord.rs`: Discord Rich Presence over the local IPC pipe.
+- `ratings.rs`: local star ratings for tracks and albums.
+- `recents.rs`: albums played in TIDE, for the home shortcuts.
+
+A generated map of every module and call: [GRAPH.md](GRAPH.md).
 
 ## Conventions
 - All UI sizes go through `sc()` so zoom applies everywhere.

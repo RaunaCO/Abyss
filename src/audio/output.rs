@@ -19,12 +19,60 @@ pub struct OutShared {
     pub gain: AtomicU32,
     /// Output callback reported an error (device lost, ...).
     pub failed: AtomicBool,
+    /// Smoothed loudness of the low / mid / high bands (f32 bits) and the
+    /// filter state they are computed from. Only used for the subtle
+    /// background animation.
+    pub vis: [AtomicU32; 3],
+    lp: [AtomicU32; 2],
 }
 
 impl OutShared {
     pub fn set_gain(&self, g: f32) {
         self.gain.store(g.to_bits(), Ordering::Relaxed);
     }
+    /// Band levels, roughly 0..0.5 for normal music.
+    pub fn levels(&self) -> [f32; 3] {
+        [0, 1, 2].map(|i| f32::from_bits(self.vis[i].load(Ordering::Relaxed)))
+    }
+
+    fn decay_levels(&self) {
+        for v in &self.vis {
+            let x = f32::from_bits(v.load(Ordering::Relaxed)) * 0.92;
+            v.store(if x < 1e-4 { 0 } else { x.to_bits() }, Ordering::Relaxed);
+        }
+    }
+
+    /// Split the samples into low / mid / high with two one-pole filters and
+    /// smooth their RMS (fast attack, slow release).
+    fn analyse(&self, samples: &[f32]) {
+        let frames = samples.len() / 2;
+        if frames == 0 {
+            self.decay_levels();
+            return;
+        }
+        let mut lp1 = f32::from_bits(self.lp[0].load(Ordering::Relaxed));
+        let mut lp2 = f32::from_bits(self.lp[1].load(Ordering::Relaxed));
+        let (mut e0, mut e1, mut e2) = (0f32, 0f32, 0f32);
+        for f in samples.chunks_exact(2) {
+            let x = 0.5 * (f[0] + f[1]);
+            lp1 += 0.02 * (x - lp1);
+            lp2 += 0.22 * (x - lp2);
+            let (low, mid, high) = (lp1, lp2 - lp1, x - lp2);
+            e0 += low * low;
+            e1 += mid * mid;
+            e2 += high * high;
+        }
+        self.lp[0].store(lp1.to_bits(), Ordering::Relaxed);
+        self.lp[1].store(lp2.to_bits(), Ordering::Relaxed);
+        let n = frames as f32;
+        for (i, e) in [e0, e1, e2].into_iter().enumerate() {
+            let target = (e / n).sqrt();
+            let cur = f32::from_bits(self.vis[i].load(Ordering::Relaxed));
+            let k = if target > cur { 0.3 } else { 0.06 };
+            self.vis[i].store((cur + (target - cur) * k).to_bits(), Ordering::Relaxed);
+        }
+    }
+
     fn gain(&self) -> f32 {
         f32::from_bits(self.gain.load(Ordering::Relaxed))
     }
@@ -70,6 +118,7 @@ fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], app
     }
     if shared.paused.load(Ordering::Relaxed) {
         out.fill(0.0);
+        shared.decay_levels();
         return;
     }
     let want = out.len() - out.len() % 2;
@@ -82,6 +131,7 @@ fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], app
         chunk.commit_all();
     }
     out[n..].fill(0.0);
+    // (Band analysis for the backgrounds is no longer used: they drift on their own.)
     if apply_gain {
         let g = shared.gain();
         if g != 1.0 {

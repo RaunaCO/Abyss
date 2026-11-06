@@ -6,6 +6,8 @@ use anyhow::{anyhow, Result};
 pub struct Mpd {
     /// Initialization segment first, then every media segment in order.
     pub urls: Vec<String>,
+    /// Duration in seconds of each media segment (not the init segment).
+    pub seg_secs: Vec<f64>,
     pub codec: String,
     pub bit_depth: Option<u32>,
     pub sample_rate: Option<u32>,
@@ -43,9 +45,15 @@ pub fn parse(xml: &str) -> Result<Mpd> {
     let start: u64 = template.attribute("startNumber").and_then(|s| s.parse().ok()).unwrap_or(1);
 
     let mut count: u64 = 0;
+    let timescale: f64 = template.attribute("timescale").and_then(|t| t.parse().ok()).unwrap_or(1.0);
+    let mut seg_secs: Vec<f64> = Vec::new();
     if let Some(tl) = template.children().find(|n| n.has_tag_name("SegmentTimeline")) {
         for s in tl.children().filter(|n| n.has_tag_name("S")) {
             let r: i64 = s.attribute("r").and_then(|r| r.parse().ok()).unwrap_or(0);
+            let d: f64 = s.attribute("d").and_then(|d| d.parse().ok()).unwrap_or(0.0);
+            for _ in 0..=r.max(0) {
+                seg_secs.push(d / timescale);
+            }
             count += 1 + r.max(0) as u64;
         }
     }
@@ -70,6 +78,7 @@ pub fn parse(xml: &str) -> Result<Mpd> {
 
     Ok(Mpd {
         urls,
+        seg_secs,
         codec: if codec.starts_with("mp4a") { "AAC".into() } else { codec.to_uppercase() },
         bit_depth,
         sample_rate,
@@ -83,6 +92,8 @@ mod tests {
         let xml = r#"<?xml version='1.0'?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><Period><AdaptationSet contentType="audio" mimeType="audio/mp4"><Representation id="FLAC,96000,24" codecs="flac" bandwidth="3000000" audioSamplingRate="96000"><SegmentTemplate timescale="96000" initialization="https://x/0.mp4" media="https://x/$Number$.mp4" startNumber="1"><SegmentTimeline><S d="384000" r="3"/><S d="1000"/></SegmentTimeline></SegmentTemplate></Representation></AdaptationSet></Period></MPD>"#;
         let m = super::parse(xml).unwrap();
         assert_eq!(m.urls.len(), 6);
+        assert_eq!(m.seg_secs.len(), 5);
+        assert_eq!(m.seg_secs[0], 4.0);
         assert_eq!(m.urls[1], "https://x/1.mp4");
         assert_eq!(m.urls[5], "https://x/5.mp4");
         assert_eq!(m.bit_depth, Some(24));

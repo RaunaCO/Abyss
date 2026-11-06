@@ -14,3 +14,10 @@ tags: [tide, tech, api]
 - Lyrics: TIDAL first, then LRCLIB.
 
 See [[Audio Pipeline]], [[Architecture]].
+
+## v2 home feed
+- `GET https://api.tidal.com/v2/home/feed/{static|editorial|uploads}` with
+  headers `x-tidal-client-version`, `x-tidal-authenticated-userid`,
+  `x-tidal-authenticated-subscription`. Details: [[Home Feed]].
+- Mix items there use `titleTextInfo`/`subtitleTextInfo` and `mixImages`.
+- `/v1/pages/home` is the old editorial page (The Hits, New Tracks…).

@@ -76,6 +76,16 @@ pub struct Settings {
     pub shuffle: bool,
     pub repeat: Repeat,
     pub recent_searches: Vec<String>,
+    /// Discord Rich Presence ("Listening to TIDE"), like Spotify's.
+    pub discord: bool,
+    /// Now Playing background: blurred cover (true) or flat colour (false).
+    pub np_blur: bool,
+    /// Extra columns in track lists: BPM and ratings; and the Uploads tab on Home.
+    pub audio_metadata: bool,
+    pub show_ratings: bool,
+    pub hide_uploads: bool,
+    /// Application ID of the Discord application named TIDE.
+    pub discord_client_id: String,
 
     /// OAuth client used for the device login. Can be replaced in settings.json.
     pub client_id: String,
@@ -113,6 +123,12 @@ impl Default for Settings {
             shuffle: false,
             repeat: Repeat::Off,
             recent_searches: Vec::new(),
+            discord: true,
+            np_blur: true,
+            audio_metadata: true,
+            show_ratings: true,
+            hide_uploads: false,
+            discord_client_id: String::new(),
             // Replaced by whichever client the user signed in with.
             client_id: DEVICE_CLIENT_ID.into(),
             client_secret: DEVICE_CLIENT_SECRET.into(),
@@ -122,6 +138,10 @@ impl Default for Settings {
 
 /// TIDAL's device-authorization client (TV / limited-input flow). Its
 /// sessions get FLAC only for hi-res tracks; 16-bit tracks come as AAC.
+/// Application ID of TIDE's Discord application (registered once by the project,
+/// so users need no setup). Public identifier, not a secret.
+pub const DISCORD_APP_ID: &str = "1568272471487025294";
+
 pub const DEVICE_CLIENT_ID: &str = "fX2JxdmntZWK0ixT";
 pub const DEVICE_CLIENT_SECRET: &str = "1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg=";
 

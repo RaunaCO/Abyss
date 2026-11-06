@@ -107,3 +107,24 @@ impl AppView {
         }
     }
 }
+
+/// `cubic-bezier(.4, 0, .2, 1)`, the official lyrics easing (`--lyrics-ease`).
+pub fn lyrics_ease(t: f32) -> f32 {
+    cubic_bezier(0.4, 0.0, 0.2, 1.0, t)
+}
+
+/// CSS-style cubic bezier easing (x solved with a few Newton steps).
+pub fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let bez = |a: f32, b: f32, u: f32| 3.0 * (1.0 - u).powi(2) * u * a + 3.0 * (1.0 - u) * u * u * b + u.powi(3);
+    let mut u = t;
+    for _ in 0..8 {
+        let x = bez(x1, x2, u) - t;
+        let dx = 3.0 * (1.0 - u).powi(2) * x1 + 6.0 * (1.0 - u) * u * (x2 - x1) + 3.0 * u * u * (1.0 - x2);
+        if dx.abs() < 1e-5 {
+            break;
+        }
+        u = (u - x / dx).clamp(0.0, 1.0);
+    }
+    bez(y1, y2, u)
+}

@@ -46,6 +46,8 @@ pub enum Block {
     Links(Vec<Item>),
     Featured(SharedString, Vec<Item>),
     TrackHeader(RowStyle),
+    Shortcuts(Vec<Item>),
+    ShortcutsTitled(SharedString, Vec<Item>),
     Track(TrackSrc, usize, RowStyle),
     AlbumHeader(Album, u32),
     PlaylistHeader(Playlist, u32, u64),
@@ -126,19 +128,47 @@ impl AppView {
                     RowKind::Chips => Block::Chips(r.title.clone().into(), r.items.clone()),
                     RowKind::Links => Block::Links(r.items.clone()),
                     RowKind::Featured => Block::Featured(r.title.clone().into(), r.items.clone()),
+                    RowKind::Shortcuts => Block::ShortcutsTitled(r.title.clone().into(), r.items.clone()),
                 });
             }
         };
         match &self.page {
             Page::Home | Page::Explore => {
-                let (title, data) = if self.page == Page::Home { ("Inicio", &self.home) } else { ("Explorar", &self.explore) };
+                let home_extra = self.home_extra.get(&self.home_tab);
+                let (title, data) = if self.page == Page::Home {
+                    ("Inicio", if self.home_tab == 0 { &self.home } else { home_extra.unwrap_or(&Load::Idle) })
+                } else {
+                    ("Explorar", &self.explore)
+                };
                 if self.page == Page::Home {
-                    b.push(Block::Tabs(vec!["Para ti".into()], 0));
+                    let mut tabs: Vec<SharedString> = vec!["Para ti".into(), "Staff Picks".into()];
+                    if !self.settings.lock().hide_uploads {
+                        tabs.push("Uploads".into());
+                    }
+                    b.push(Block::Tabs(tabs, self.home_tab));
                 } else {
                     b.push(Block::Title(title.into(), None));
                 }
                 match data {
                     Load::Ready(r) if r.is_empty() => b.push(Block::Message("No hay nada que mostrar todavía.".into())),
+                    Load::Ready(r) if self.page == Page::Home => {
+                        // The quick-access grid holds the six most recent items, so it
+                        // goes below the first recommendations instead of leading the page.
+                        let mut ordered: Vec<Row> = r.iter().filter(|x| x.kind != RowKind::Shortcuts).cloned().collect();
+                        if let Some(short) = r.iter().find(|x| x.kind == RowKind::Shortcuts) {
+                            let at = 2.min(ordered.len());
+                            // What was played here comes first; TIDAL's own list fills the rest.
+                            let mut items: Vec<Item> = self.recents.iter().take(6).map(|a| Item::Album(a.to_album())).collect();
+                            for it in &short.items {
+                                let dup = matches!(it, Item::Album(a) if items.iter().any(|x| matches!(x, Item::Album(b) if b.id == a.id)));
+                                if !dup && items.len() < 6 {
+                                    items.push(it.clone());
+                                }
+                            }
+                            ordered.insert(at, Row { title: "Escuchado recientemente".into(), items, kind: RowKind::Shortcuts });
+                        }
+                        rows(&mut b, &ordered)
+                    }
                     Load::Ready(r) => rows(&mut b, r),
                     Load::Failed(e) => state(&mut b, false, Some(e)),
                     _ => state(&mut b, true, None),
@@ -228,7 +258,7 @@ impl AppView {
                 Some(Load::Ready((pl, tracks))) => {
                     let total: u64 = tracks.iter().map(|t| t.duration as u64).sum();
                     b.push(Block::PlaylistHeader(pl.clone(), tracks.len() as u32, total));
-                    let style = RowStyle { date: true, bpm: true, ..RowStyle::new(true, true, false) };
+                    let style = RowStyle { date: true, bpm: self.settings.lock().audio_metadata, rating: self.settings.lock().show_ratings, ..RowStyle::new(true, true, false) };
                     b.push(Block::FilterBar);
                     b.push(Block::TrackHeader(style));
                     for (i, t) in tracks.iter().enumerate() {
@@ -341,7 +371,7 @@ impl AppView {
                 match &self.fav_tracks {
                     Load::Ready(l) if l.is_empty() => b.push(Block::Message("Aún no tienes pistas favoritas.".into())),
                     Load::Ready(l) => {
-                        let style = RowStyle { date: true, bpm: true, sortable: Some("tracks"), ..RowStyle::new(true, true, false) };
+                        let style = RowStyle { date: true, bpm: self.settings.lock().audio_metadata, rating: self.settings.lock().show_ratings, sortable: Some("tracks"), ..RowStyle::new(true, true, false) };
                         b.push(Block::Actions(TrackSrc::Favorites));
                         b.push(Block::FilterBar);
                         b.push(Block::TrackHeader(style));
@@ -356,7 +386,6 @@ impl AppView {
                 }
             }
             Page::Settings => {
-                b.push(Block::Title("Ajustes".into(), None));
                 b.push(Block::Settings);
             }
         }
@@ -422,7 +451,7 @@ impl AppView {
                     .flex()
                     .gap(sc(theme::GAP))
                     .children(items.iter().enumerate().map(|(i, it)| {
-                        let c = card(SharedString::from(format!("g{ix}-{i}")), it, cw, true, cx);
+                        let c = card(SharedString::from(format!("g{ix}-{i}")), it, cw, true, &*self, cx);
                         super::fx::stagger(SharedString::from(format!("gs{}-{ix}-{i}", self.page_anim)), i, c)
                     }))
                     .children((items.len()..cols).map(|_| div().w(sc(cw)).flex_none()))
@@ -463,6 +492,7 @@ impl AppView {
                     .child(div().flex_1().min_w(sc(0.)).pl(sc(if style.cover { 42. } else { 0. })).child(label("TÍTULO", Some(SortKey::Name), cx)))
                     .child(div().w(relative(Cols::artist(style))).flex_none().child(label("ARTISTA", Some(SortKey::Artist), cx)))
                     .when(style.album, |d| d.child(div().w(relative(Cols::ALBUM)).flex_none().child(label("ÁLBUM", Some(SortKey::Album), cx))))
+                    .when(style.rating, |d| d.child(div().w(sc(Cols::RATING)).flex_none().child(label("VALORACIÓN", Some(SortKey::Rating), cx))))
                     .when(style.date, |d| d.child(div().w(sc(Cols::DATE)).flex_none().child(label("AÑADIDA", Some(SortKey::Added), cx))))
                     .child(div().w(sc(Cols::TIME)).flex_none().child(label("TIEMPO", Some(SortKey::Duration), cx)))
                     .when(style.bpm, |d| d.child(div().w(sc(Cols::BPM)).flex_none().child(label("BPM", None, cx))))
@@ -612,20 +642,40 @@ impl AppView {
                 .into_any_element(),
             Block::Tabs(tabs, active) => div()
                 .pt(sc(26.))
-                .mb(sc(4.))
+                .mb(sc(14.))
                 .flex()
                 .gap(sc(20.))
                 .border_b_1()
                 .border_color(theme::border())
                 .children(tabs.into_iter().enumerate().map(|(i, t)| {
                     div()
+                        .id(("home-tab", i))
                         .pb(sc(9.))
                         .text_size(sc(12.))
                         .font_weight(FontWeight::BOLD)
+                        .cursor_pointer()
                         .text_color(if i == active { theme::text() } else { theme::text_dim() })
+                        .hover(|s| s.text_color(theme::text()))
                         .when(i == active, |d| d.border_b_2().border_color(theme::text()))
                         .child(t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_home_tab(i, cx)))
                 }))
+                .into_any_element(),
+            Block::ShortcutsTitled(title, items) => div()
+                .pt(sc(22.))
+                .pb(sc(8.))
+                .flex()
+                .flex_col()
+                .gap(sc(12.))
+                .child(div().text_size(sc(16.)).font_weight(FontWeight::BOLD).child(title))
+                .child(div().flex().flex_wrap().gap(sc(8.)).children(items.into_iter().enumerate().map(|(i, it)| widgets::shortcut(("shortcut", i), &it, cx))))
+                .into_any_element(),
+            Block::Shortcuts(items) => div()
+                .pb(sc(8.))
+                .flex()
+                .flex_wrap()
+                .gap(sc(8.))
+                .children(items.into_iter().enumerate().map(|(i, it)| widgets::shortcut(("shortcut", i), &it, cx)))
                 .into_any_element(),
             Block::FilterBar => div()
                 .pb(sc(16.))
@@ -843,7 +893,7 @@ impl AppView {
                     .overflow_x_scroll()
                     .track_scroll(&handle)
                     .children(items.iter().enumerate().map(|(i, it)| {
-                        let c = card(SharedString::from(format!("r{row}-{i}")), it, theme::ROW_CARD_W, false, cx);
+                        let c = card(SharedString::from(format!("r{row}-{i}")), it, theme::ROW_CARD_W, false, &*self, cx);
                         super::fx::stagger(SharedString::from(format!("rs{}-{row}-{i}", self.page_anim)), i, c)
                     })),
             )
@@ -898,6 +948,7 @@ impl AppView {
                             .child(t)
                     })),
             )
+            .child(widgets::album_stars("hdr", id, 17., self, cx))
             .into_any_element();
         let tint = album.cover(640).and_then(|u| super::images::color(&u, cx));
         self.page_tint = tint;
@@ -1021,179 +1072,6 @@ impl AppView {
             ],
             right,
         )
-    }
-
-    fn settings_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let s = self.settings.lock().clone();
-        let quality_opt = |q: Quality, cx: &mut Context<Self>| {
-            let selected = s.quality == q;
-            div()
-                .id(SharedString::from(format!("q-{}", q.label())))
-                .p(sc(14.))
-                .flex()
-                .items_center()
-                .gap(sc(14.))
-                .rounded(sc(6.))
-                .cursor_pointer()
-                .border_1()
-                .border_color(if selected { theme::accent() } else { theme::border() })
-                .hover(|st| st.bg(theme::hover()))
-                .child(
-                    div()
-                        .size(sc(18.))
-                        .rounded(sc(9.))
-                        .border_2()
-                        .border_color(if selected { theme::accent() } else { theme::text_dim() })
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .when(selected, |d| d.child(div().size(sc(8.)).rounded(sc(4.)).bg(theme::accent()))),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(q.label()))
-                        .child(div().text_size(sc(13.)).text_color(theme::text_secondary()).child(q.description())),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.set_quality(q, cx)))
-        };
-        let toggle = |id: &'static str, label: &'static str, desc: &'static str, on: bool, f: fn(&mut AppView, &mut Context<AppView>), cx: &mut Context<Self>| {
-            div()
-                .id(id)
-                .py(sc(12.))
-                .flex()
-                .items_center()
-                .gap(sc(16.))
-                .cursor_pointer()
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
-                        .child(div().text_size(sc(13.)).text_color(theme::text_secondary()).child(desc)),
-                )
-                .child(
-                    div()
-                        .w(sc(40.))
-                        .h(sc(22.))
-                        .rounded(sc(11.))
-                        .p(sc(3.))
-                        .bg(if on { theme::accent() } else { theme::elevated() })
-                        .flex()
-                        .when(on, |d| d.justify_end())
-                        .child(div().size(sc(16.)).rounded(sc(8.)).bg(if on { theme::button_text() } else { theme::text_secondary() })),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| f(this, cx)))
-        };
-        let devices = self.devices.clone();
-        let current = s.output_device.clone();
-        let section = |t: &'static str| div().pt(sc(28.)).pb(sc(10.)).text_size(sc(18.)).font_weight(FontWeight::BOLD).child(t);
-
-        div()
-            .max_w(sc(760.))
-            .flex()
-            .flex_col()
-            .child(section("Calidad de streaming"))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sc(8.))
-                    .child(quality_opt(Quality::Max, cx))
-                    .child(quality_opt(Quality::High, cx))
-                    .child(quality_opt(Quality::Low, cx)),
-            )
-            .child(section("Salida de audio"))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sc(2.))
-                    .children(std::iter::once(None).chain(devices.into_iter().map(Some)).enumerate().map(|(i, d)| {
-                        let selected = d == current;
-                        let label = d.clone().unwrap_or_else(|| "Predeterminado del sistema".into());
-                        let dd = d.clone();
-                        div()
-                            .id(("dev", i))
-                            .px(sc(12.))
-                            .py(sc(9.))
-                            .rounded(sc(6.))
-                            .flex()
-                            .items_center()
-                            .gap(sc(10.))
-                            .cursor_pointer()
-                            .when(selected, |x| x.bg(theme::active()))
-                            .hover(|x| x.bg(theme::hover()))
-                            .child(Icon::VolumeUp.el(16., if selected { theme::accent() } else { theme::text_dim() }))
-                            .child(div().truncate().child(label))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let s = this.settings.lock().clone();
-                                this.set_output(dd.clone(), s.exclusive_mode, s.force_volume, cx)
-                            }))
-                    })),
-            )
-            .child(toggle(
-                "exclusive",
-                "Modo exclusivo",
-                "Toma el control del dispositivo (WASAPI) y envía el audio a su frecuencia original, sin pasar por el mezclador de Windows.",
-                s.exclusive_mode,
-                |this, cx| {
-                    let s = this.settings.lock().clone();
-                    this.set_output(s.output_device, !s.exclusive_mode, s.force_volume, cx)
-                },
-                cx,
-            ))
-            .child(toggle(
-                "forcevol",
-                "Forzar volumen",
-                "En modo exclusivo, fija el volumen al 100 % para una salida bit-perfect (controla el volumen en tu DAC o amplificador).",
-                s.force_volume,
-                |this, cx| {
-                    let s = this.settings.lock().clone();
-                    this.set_output(s.output_device, s.exclusive_mode, !s.force_volume, cx)
-                },
-                cx,
-            ))
-            .child(section("Reproducción"))
-            .child(toggle(
-                "normalize",
-                "Normalización de volumen",
-                "Iguala el volumen entre pistas con los datos de ganancia de TIDAL, sin saturar. Se desactiva sola con «Forzar volumen» en modo exclusivo.",
-                s.normalize,
-                |this, cx| this.toggle_setting("normalize", cx),
-                cx,
-            ))
-            .child(toggle(
-                "autoplay",
-                "Reproducción automática",
-                "Cuando termina la cola, sigue con canciones parecidas a la última.",
-                s.autoplay,
-                |this, cx| this.toggle_setting("autoplay", cx),
-                cx,
-            ))
-            .child(
-                div()
-                    .py(sc(8.))
-                    .text_size(sc(13.))
-                    .text_color(theme::text_secondary())
-                    .child(if self.snap.output.is_empty() {
-                        "Salida actual: se abrirá al reproducir".to_string()
-                    } else {
-                        format!("Salida actual: {}", self.snap.output)
-                    }),
-            )
-            .child(section("Cuenta"))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sc(16.))
-                    .child(div().flex_1().child(s.username.clone().unwrap_or_default()))
-                    .child(pill("signout", "Cerrar sesión", None, false, |this, _, _, cx| this.sign_out(cx), cx)),
-            )
-            .into_any_element()
     }
 }
 
@@ -1340,7 +1218,7 @@ pub fn side_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
         .into_any_element()
 }
 
-fn queue_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
+pub fn queue_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
     let cur = view.now.as_ref().map(|n| n.index);
     let items: Vec<(usize, crate::ui::QItem)> = view.queue.iter().cloned().enumerate().filter(|(i, _)| cur.map(|c| *i >= c).unwrap_or(true)).collect();
     div()
