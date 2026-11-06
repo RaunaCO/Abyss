@@ -55,17 +55,18 @@ fn row(id: impl Into<ElementId>, title: impl Into<SharedString>, desc: Option<Sh
         .children(right)
 }
 
-fn switch(on: bool) -> AnyElement {
+fn switch(on: bool, key: &str) -> AnyElement {
+    // The knob slides and the track fades between colours.
+    let v = super::interact::follow(&format!("sw-{key}"), if on { 1.0 } else { 0.0 }, 0.22);
     div()
         .flex_none()
         .w(sc(40.))
         .h(sc(22.))
         .rounded(sc(11.))
         .p(sc(2.))
-        .bg(if on { gpui::rgb(0xe4e4e7) } else { gpui::rgb(0x303036) })
+        .bg(super::interact::mix(gpui::rgb(0x303036), gpui::rgb(0xe4e4e7), v))
         .flex()
-        .when(on, |d| d.justify_end())
-        .child(div().size(sc(18.)).rounded(sc(9.)).bg(if on { gpui::rgb(0x111111) } else { gpui::rgb(0x8a8a93) }))
+        .child(div().ml(sc(18. * v)).size(sc(18.)).rounded(sc(9.)).bg(super::interact::mix(gpui::rgb(0x8a8a93), gpui::rgb(0x111111), v)))
         .into_any_element()
 }
 
@@ -84,7 +85,7 @@ fn small_button(id: impl Into<ElementId>, label: impl Into<SharedString>, white:
         .font_weight(FontWeight::BOLD)
         .bg(if white { gpui::rgb(0xffffff) } else { gpui::rgb(0x242429) })
         .text_color(if white { gpui::rgb(0x000000) } else { theme::text() })
-        .hover(|s| s.opacity(0.85))
+        .hover(|s| s.opacity(0.9).shadow_md())
         .active(|s| s.opacity(0.65))
         .child(label.into())
 }
@@ -99,17 +100,19 @@ impl AppView {
         f: impl Fn(&mut AppView, &mut Context<AppView>) + 'static,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        row(id, title, Some(desc.into()), Some(switch(on)))
+        let k = format!("srow-{id}");
+        let h = super::interact::hover(&k);
+        let el = row(id, title, Some(desc.into()), Some(switch(on, id)))
             .cursor_pointer()
-            .hover(|s| s.bg(gpui::rgba(0xffffff05)))
-            .on_click(cx.listener(move |this, _, _, cx| f(this, cx)))
-            .into_any_element()
+            .bg(super::fx::with_alpha(gpui::rgb(0xffffff), 0.05 * h))
+            .on_click(cx.listener(move |this, _, _, cx| f(this, cx)));
+        super::interact::track(el, k, cx).into_any_element()
     }
 
     fn link_row(&mut self, id: &'static str, title: &'static str, url: &'static str, cx: &mut Context<Self>) -> AnyElement {
         row(id, title, None, Some(Icon::Forward.el(14., theme::text_secondary()).into_any_element()))
             .cursor_pointer()
-            .hover(|s| s.bg(gpui::rgba(0xffffff05)))
+            .hover(|s| s.bg(gpui::rgba(0xffffff0d)))
             .on_click(cx.listener(move |_, _, _, _| {
                 let _ = open::that(url);
             }))
@@ -124,21 +127,24 @@ impl AppView {
             .border_b_1()
             .border_color(gpui::rgba(0xffffff12))
             .children(["General", "Cuenta", "Acerca de"].into_iter().enumerate().map(|(i, t)| {
-                div()
+                let k = format!("stab-{i}");
+                let h = super::interact::hover(&k);
+                let el = div()
                     .id(("settings-tab", i))
                     .pb(sc(10.))
                     .text_size(sc(12.))
                     .font_weight(FontWeight::BOLD)
                     .cursor_pointer()
-                    .text_color(if i == tab { theme::text() } else { theme::text_dim() })
-                    .hover(|s| s.text_color(theme::text()))
-                    .when(i == tab, |d| d.border_b_2().border_color(theme::text()))
+                    .text_color(if i == tab { theme::text() } else { super::interact::mix(theme::text_dim(), theme::text(), h) })
+                    .border_b_2()
+                    .border_color(if i == tab { theme::text() } else { super::fx::with_alpha(theme::text_dim(), h) })
                     .child(t)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.settings_tab = i;
                         this.content_changed_pub();
                         cx.notify();
-                    }))
+                    }));
+                super::interact::track(el, k, cx)
             }));
         let body = match tab {
             1 => self.settings_account(cx),
@@ -195,7 +201,7 @@ impl AppView {
                         gpui::linear_color_stop(gpui::rgba(0xffd43200), 0.7),
                     ))
                 })
-                .hover(|st| st.bg(gpui::rgba(0xffffff05)))
+                .hover(|st| st.bg(gpui::rgba(0xffffff0d)))
                 .child(dot(selected))
                 .child(row_text(q.label(), Some(sub.into())))
                 .when(q == Quality::Low, |d| {

@@ -7,6 +7,7 @@ use gpui::{
 };
 
 use super::icons::Icon;
+use super::interact;
 use super::{images, theme, AppView, MenuTarget, Page};
 use crate::tidal::{Item, Track};
 
@@ -51,6 +52,49 @@ pub fn cover(url: Option<String>, size: f32, round: bool, cx: &mut Context<AppVi
             .justify_center()
             .child(Icon::Track.el(size * 0.3, theme::text_dim()))
             .into_any_element(),
+    }
+}
+
+/// A cover zoomed by `t` (0..1) inside its frame (eased hover zoom).
+pub fn cover_zoom_t(url: Option<String>, size: f32, round: bool, t: f32, cx: &mut Context<AppView>) -> AnyElement {
+    let radius = if round { size / 2.0 } else { 4.0 };
+    match url.as_deref().and_then(|u| images::get(u, cx)) {
+        Some(i) => {
+            let z = size * (1.0 + 0.07 * t);
+            div()
+                .relative()
+                .size(sc(size))
+                .flex_none()
+                .rounded(sc(radius))
+                .overflow_hidden()
+                .child(img(i).absolute().left(sc((size - z) / 2.0)).top(sc((size - z) / 2.0)).size(sc(z)).object_fit(ObjectFit::Cover))
+                .into_any_element()
+        }
+        None => cover(url, size, round, cx),
+    }
+}
+
+/// A cover that zooms a little inside its frame while `group` is hovered.
+pub fn cover_zoom(url: Option<String>, size: f32, round: bool, group: SharedString, cx: &mut Context<AppView>) -> AnyElement {
+    let radius = if round { size / 2.0 } else { 4.0 };
+    match url.as_deref().and_then(|u| images::get(u, cx)) {
+        Some(i) => div()
+            .relative()
+            .size(sc(size))
+            .flex_none()
+            .rounded(sc(radius))
+            .overflow_hidden()
+            .child(
+                img(i)
+                    .absolute()
+                    .top(sc(0.))
+                    .left(sc(0.))
+                    .size(sc(size))
+                    .object_fit(ObjectFit::Cover)
+                    .group_hover(group, move |s| s.size(sc(size * 1.08)).left(sc(-size * 0.04)).top(sc(-size * 0.04))),
+            )
+            .into_any_element(),
+        None => cover(url, size, round, cx),
     }
 }
 
@@ -110,19 +154,23 @@ pub fn icon_button(
     on_click: impl Fn(&mut AppView, &ClickEvent, &mut Window, &mut Context<AppView>) + 'static,
     cx: &mut Context<AppView>,
 ) -> impl IntoElement {
-    div()
+    let id: ElementId = id.into();
+    let key = format!("ib-{id}");
+    let (h, p) = (interact::hover(&key), interact::press(&key));
+    // Hover: a soft disc fades in and the glyph grows; press: it sinks.
+    let el = div()
         .id(id)
         .flex_none()
         .p(sc(6.))
         .rounded(sc(999.))
         .cursor_pointer()
-        .hover(|s| s.bg(theme::hover()))
-        .active(|s| s.bg(theme::active()).opacity(0.6))
-        .child(Icon::el(icon, size, color))
+        .bg(super::fx::with_alpha(gpui::rgb(0xffffff), 0.055 * h + 0.045 * p))
+        .child(Icon::el(icon, size, color).opacity(0.78 + 0.22 * h - 0.2 * p))
         .on_click(cx.listener(move |this, ev, window, cx| {
             cx.stop_propagation();
             on_click(this, ev, window, cx)
-        }))
+        }));
+    interact::track(el, key, cx)
 }
 
 pub fn pill(
@@ -134,7 +182,11 @@ pub fn pill(
     cx: &mut Context<AppView>,
 ) -> impl IntoElement {
     let (bg, fg) = if primary { (theme::button(), theme::button_text()) } else { (theme::elevated(), theme::text()) };
-    div()
+    let id: ElementId = id.into();
+    let key = format!("pill-{id}");
+    let (h, p) = (interact::hover(&key), interact::press(&key));
+    let hover_bg = if primary { gpui::rgb(0xececf0) } else { gpui::rgb(0x2e2e34) };
+    let el = div()
         .id(id)
         .flex()
         .items_center()
@@ -142,16 +194,23 @@ pub fn pill(
         .h(sc(36.))
         .px(sc(18.))
         .rounded(sc(18.))
-        .bg(bg)
+        // Hover: lighter and lifted (shadow); press: sinks a little and dims.
+        .bg(interact::mix(bg, hover_bg, h))
+        .opacity(1.0 - 0.18 * p)
+        .shadow(vec![gpui::BoxShadow {
+            color: gpui::Hsla::from(super::fx::with_alpha(gpui::rgb(0x000000), 0.32 * h * (1.0 - p))),
+            offset: gpui::point(sc(0.), sc(4. * h)),
+            blur_radius: sc(14.),
+            spread_radius: sc(-2.),
+        }])
         .text_color(fg)
         .text_size(sc(12.5))
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()
-        .hover(|s| s.opacity(0.88).shadow_md())
-        .active(|s| s.opacity(0.6))
         .when_some(icon, |d, i| d.child(i.el(18., fg)))
         .child(label.into())
-        .on_click(cx.listener(on_click))
+        .on_click(cx.listener(on_click));
+    interact::track(el, key, cx)
 }
 
 pub fn quality_badge(tags: &[String]) -> Option<AnyElement> {
@@ -230,7 +289,9 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
         Item::Track(t) => (t.explicit, String::new()),
         _ => (false, String::new()),
     };
-    div()
+    let key = format!("card-{group}");
+    let (h, p) = (interact::hover(&key), interact::press(&key));
+    let el = div()
         .id(id)
         .w(sc(width))
         .flex_none()
@@ -245,10 +306,16 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
                 .relative()
                 .size(sc(width))
                 .rounded(sc(if round { width / 2. } else { 4. }))
-                // Hover: the cover lifts off the page.
-                .group_hover(group.clone(), |s| s.shadow_lg())
+                // Hover: a soft shadow grows under the cover (paint only, so it glides).
+                .shadow(vec![gpui::BoxShadow {
+                    color: gpui::Hsla::from(super::fx::with_alpha(gpui::rgb(0x000000), 0.38 * h)),
+                    offset: gpui::point(sc(0.), sc(8. * h)),
+                    blur_radius: sc(22.),
+                    spread_radius: sc(-4.),
+                }])
+                .opacity(1.0 - 0.08 * p)
                 .child(cover(url, width, round, cx))
-                // Hover: the cover dims slightly and a play button appears.
+                // Official card hover: gradient from clear to 70 % black, faded in.
                 .child(
                     div()
                         .absolute()
@@ -256,16 +323,13 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
                         .left(sc(0.))
                         .size_full()
                         .rounded(sc(if round { width / 2. } else { 4. }))
-                        .bg(gpui::rgba(0x00000000))
-                        .group_hover(group.clone(), |s| {
-                            // Official card hover: gradient from clear to 70 % black.
-                            s.bg(gpui::linear_gradient(
-                                180.,
-                                gpui::linear_color_stop(gpui::rgba(0x00000000), 0.),
-                                gpui::linear_color_stop(gpui::rgba(0x000000b3), 1.),
-                            ))
-                        }),
+                        .bg(gpui::linear_gradient(
+                            180.,
+                            gpui::linear_color_stop(gpui::rgba(0x00000000), 0.),
+                            gpui::linear_color_stop(super::fx::with_alpha(gpui::rgb(0x000000), 0.55 * h), 1.),
+                        )),
                 )
+                // The play button rises and fades in.
                 .child(
                     div()
                         .id("play")
@@ -278,8 +342,9 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
                         .flex()
                         .items_center()
                         .justify_center()
-                        .invisible()
-                        .group_hover(group, |s| s.visible())
+                        .opacity(h)
+                        .when(h < 0.02, |d| d.invisible())
+                        .shadow_lg()
                         .hover(|s| s.bg(theme::accent()))
                         .active(|s| s.opacity(0.7))
                         .child(Icon::Play.el(18., theme::button_text()))
@@ -303,7 +368,7 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
                         .min_w(sc(0.))
                         .text_size(sc(12.))
                         .font_weight(FontWeight::BOLD)
-                        .child(div().min_w(sc(0.)).truncate().child(title))
+                        .child(div().min_w(sc(0.)).truncate().group_hover(group.clone(), |s| s.underline()).child(title))
                         .when(explicit, |d| d.child(explicit_badge())),
                 )
                 .child(div().truncate().text_color(theme::text_secondary()).text_size(sc(11.5)).child(subtitle))
@@ -326,7 +391,8 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
                     )
                 }),
         )
-        .into_any_element()
+        ;
+    interact::track(el, key, cx).into_any_element()
 }
 
 #[derive(Clone, Copy)]
@@ -389,6 +455,8 @@ pub fn track_row(
     let playing = view.now.as_ref().map(|n| n.track.id) == Some(track.id);
     let fav = view.fav_ids.contains(&track.id);
     let group: SharedString = format!("track-{ix}").into();
+    let row_key = format!("row-{ix}");
+    let (h, p) = (interact::hover(&row_key), interact::press(&row_key));
     let title_color = if playing { theme::accent() } else { theme::text() };
     let t_menu = track.clone();
     let t_fav = track.clone();
@@ -419,7 +487,7 @@ pub fn track_row(
             }))
     };
 
-    div()
+    let row = div()
         .id(("track", ix))
         .h(sc(theme::ROW_H))
         .px(sc(8.))
@@ -427,10 +495,22 @@ pub fn track_row(
         .items_center()
         .gap(sc(12.))
         .rounded(sc(4.))
+        .relative()
         .group(group.clone())
-        .hover(|s| s.bg(theme::hover()))
-        .active(|s| s.bg(theme::active()))
-        .when(playing, |d| d.bg(theme::accent_dim()))
+        // Hover fades the row in; pressing deepens it.
+        .bg(if playing { theme::accent_dim() } else { super::fx::with_alpha(theme::hover(), h * 0.8 + 0.1 * p) })
+        .when(p > 0.0, |d| d.bg(interact::mix(super::fx::with_alpha(theme::hover(), h), theme::active(), p)))
+        // An accent strip grows from the middle of the left edge.
+        .child(
+            div()
+                .absolute()
+                .left(sc(0.))
+                .top(sc(9.))
+                .bottom(sc(9.))
+                .w(sc(2.))
+                .rounded(sc(1.))
+                .bg(super::fx::with_alpha(theme::accent(), 0.85 * h)),
+        )
         .when(!track.streamable, |d| d.opacity(0.4))
         // Reorder by dragging (own playlists only).
         .when_some(drag, |d, dt| d.on_drag(dt, |dt, _, _, cx| cx.new(|_| dt.clone())))
@@ -512,7 +592,20 @@ pub fn track_row(
                 .flex()
                 .items_center()
                 .gap(sc(10.))
-                .when(style.cover, |d| d.child(cover(track.cover(80), 32., false, cx)))
+                .when(style.cover, |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .rounded(sc(4.))
+                            .shadow(vec![gpui::BoxShadow {
+                                color: gpui::Hsla::from(super::fx::with_alpha(gpui::rgb(0x000000), 0.4 * h)),
+                                offset: gpui::point(sc(0.), sc(2. * h)),
+                                blur_radius: sc(8.),
+                                spread_radius: sc(0.),
+                            }])
+                            .child(cover(track.cover(80), 32., false, cx)),
+                    )
+                })
                 .child(
                     div()
                         .flex_1()
@@ -585,7 +678,8 @@ pub fn track_row(
                         .id(("add", ix))
                         .cursor_pointer()
                         .active(|s| s.opacity(0.5))
-                        .child(Icon::Plus.el(15., theme::text_secondary()))
+                        .group(SharedString::from(format!("row-add-{ix}")))
+                        .child(Icon::Plus.el(15., theme::text_secondary()).group_hover(SharedString::from(format!("row-add-{ix}")), |s| s.size(sc(18.)).text_color(theme::text())))
                         .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                             cx.stop_propagation();
                             this.menu = Some((ev.position(), MenuTarget::AddToPlaylist(vec![t_add.clone()])));
@@ -597,10 +691,11 @@ pub fn track_row(
                         .id(("fav", ix))
                         .cursor_pointer()
                         .active(|s| s.opacity(0.5))
+                        .group(SharedString::from(format!("row-fav-{ix}")))
                         .child(if fav {
                             Icon::HeartFilled.el(15. * view.heart_scale(track.id), theme::text())
                         } else {
-                            Icon::Heart.el(15., theme::text_secondary())
+                            Icon::Heart.el(15., theme::text_secondary()).group_hover(SharedString::from(format!("row-fav-{ix}")), |s| s.size(sc(18.)).text_color(theme::text()))
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -624,7 +719,8 @@ pub fn track_row(
                         ),
                 ),
         )
-        .into_any_element()
+        ;
+    interact::track(row, row_key, cx).into_any_element()
 }
 
 /// A labelled round action under a page header: icon with a small caption.
@@ -636,7 +732,10 @@ pub fn action(
     on_click: impl Fn(&mut AppView, &ClickEvent, &mut Window, &mut Context<AppView>) + 'static,
     cx: &mut Context<AppView>,
 ) -> AnyElement {
-    div()
+    let id: ElementId = id.into();
+    let key = format!("act-{id}");
+    let (h, p) = (interact::hover(&key), interact::press(&key));
+    let el = div()
         .id(id)
         .flex_none()
         .w(sc(56.))
@@ -646,9 +745,9 @@ pub fn action(
         .items_center()
         .gap(sc(5.))
         .cursor_pointer()
-        .rounded(sc(6.))
-        .hover(|s| s.bg(theme::hover()))
-        .active(|s| s.opacity(0.6))
+        .rounded(sc(8.))
+        .bg(super::fx::with_alpha(gpui::rgb(0xffffff), 0.05 * h))
+        .opacity(1.0 - 0.22 * p)
         .child(icon.el(18., if active { theme::accent() } else { theme::text() }))
         .child(
             div()
@@ -657,8 +756,8 @@ pub fn action(
                 .text_color(if active { theme::accent() } else { theme::text() })
                 .child(label.into()),
         )
-        .on_click(cx.listener(on_click))
-        .into_any_element()
+        .on_click(cx.listener(on_click));
+    interact::track(el, key, cx).into_any_element()
 }
 
 pub fn section_title(title: impl Into<SharedString>) -> AnyElement {
@@ -754,8 +853,11 @@ fn stars_for(album: bool, scope: &'static str, id: u64, size: f32, view: &AppVie
 pub fn shortcut(id: (&'static str, usize), item: &Item, cx: &mut Context<AppView>) -> AnyElement {
     let (title, subtitle, url, _) = item_text(item);
     let open = item.clone();
-    div()
+    let sk = format!("sc-{}-{}", id.0, id.1);
+    let (sh, sp) = (interact::hover(&sk), interact::press(&sk));
+    let el = div()
         .id(id)
+        .group(SharedString::from(format!("sc-{}-{}", id.0, id.1)))
         .w(gpui::relative(0.328))
         .h(sc(46.))
         .flex_none()
@@ -765,10 +867,15 @@ pub fn shortcut(id: (&'static str, usize), item: &Item, cx: &mut Context<AppView
         .pr(sc(10.))
         .rounded(sc(6.))
         .overflow_hidden()
-        .bg(theme::surface())
         .cursor_pointer()
-        .hover(|s| s.bg(theme::hover()))
-        .active(|s| s.bg(theme::active()))
+        .bg(interact::mix(theme::surface(), gpui::rgb(0x222227), sh))
+        .shadow(vec![gpui::BoxShadow {
+            color: gpui::Hsla::from(super::fx::with_alpha(gpui::rgb(0x000000), 0.3 * sh)),
+            offset: gpui::point(sc(0.), sc(4. * sh)),
+            blur_radius: sc(16.),
+            spread_radius: sc(-2.),
+        }])
+        .opacity(1.0 - 0.15 * sp)
         .child(match &url {
             Some(_) => cover(url.clone(), 46., false, cx),
             None => div()
@@ -796,5 +903,6 @@ pub fn shortcut(id: (&'static str, usize), item: &Item, cx: &mut Context<AppView
                 .when(!subtitle.is_empty(), |d| d.child(div().truncate().text_size(sc(10.)).text_color(theme::text_dim()).child(subtitle))),
         )
         .on_click(cx.listener(move |this, _, _, cx| this.open_item(&open, cx)))
-        .into_any_element()
+        ;
+    interact::track(el, sk, cx).into_any_element()
 }

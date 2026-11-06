@@ -62,7 +62,9 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                 let t_fav = t.clone();
                 let rated = view.ratings.get(t.id);
                 let group: SharedString = format!("inl-{i}").into();
-                div()
+                let rk = format!("irow-{id}-{i}");
+                let (h, p) = (super::interact::hover(&rk), super::interact::press(&rk));
+                let row = div()
                     .id(("inline-track", i))
                     .h(sc(34.))
                     .px(sc(10.))
@@ -72,9 +74,19 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                     .rounded(sc(6.))
                     .cursor_pointer()
                     .group(group.clone())
-                    .when(current, |d| d.bg(theme::accent_dim()))
-                    .hover(|s| s.bg(theme::hover()))
-                    .active(|s| s.bg(theme::active()))
+                    .relative()
+                    // Hover fades in, press deepens; the accent strip grows from the middle.
+                    .bg(if current { theme::accent_dim() } else { super::interact::mix(super::fx::with_alpha(theme::hover(), h), theme::active(), p) })
+                    .child(
+                        div()
+                            .absolute()
+                            .left(sc(0.))
+                            .top(sc(9.))
+                            .bottom(sc(9.))
+                            .w(sc(2.))
+                            .rounded(sc(1.))
+                            .bg(super::fx::with_alpha(theme::accent(), 0.85 * h)),
+                    )
                     // Track number, replaced by a play arrow on hover.
                     .child(
                         div()
@@ -168,7 +180,8 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                             cx.notify();
                         }),
                     )
-                    .into_any_element()
+                    ;
+                super::interact::track(row, rk, cx).into_any_element()
             };
             // Adapt to the room: as many columns as fit (>= 260 px each), but only as
             // many as the album needs (about 10 rows per column), so long albums

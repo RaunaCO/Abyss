@@ -4,7 +4,7 @@
 //! labels.
 
 use super::sc;
-use gpui::{div, prelude::*, px, AnyElement, AnyView, App, Context, FontWeight, SharedString, Window};
+use gpui::{div, prelude::*, px, AnimationExt, AnyElement, AnyView, App, Context, FontWeight, SharedString, Window};
 
 use super::icons::Icon;
 use super::widgets::cover;
@@ -81,6 +81,9 @@ fn nav_item(entry: NavEntry, collapsed: bool, view: &AppView, cx: &mut Context<A
     let active = view.page == page;
     let color = if active { theme::text() } else { theme::text_secondary() };
     let target = page.clone();
+    let key = format!("nav-{id}");
+    let (h, p) = (super::interact::hover(&key), super::interact::press(&key));
+    let color = super::interact::mix(color, theme::text(), h);
     let base = div()
         .id(id)
         .h(sc(32.))
@@ -88,14 +91,13 @@ fn nav_item(entry: NavEntry, collapsed: bool, view: &AppView, cx: &mut Context<A
         .flex()
         .items_center()
         .cursor_pointer()
-        .when(active, |d| d.bg(theme::elevated()))
-        .hover(|s| s.bg(theme::hover()).text_color(theme::text()))
-        .active(|s| s.opacity(0.7))
+        .bg(super::fx::with_alpha(gpui::rgb(0xffffff), 0.05 * h + 0.04 * p))
         .on_click(cx.listener(move |this, _, _, cx| {
             this.pulse(id);
             this.navigate(target.clone(), cx)
         }));
     let pop = view.pulse_scale(id);
+    let base = super::interact::track(base, key, cx);
     if collapsed {
         base.mx(sc((RAIL_W - 32.) / 2.))
             .justify_center()
@@ -148,7 +150,8 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
                     .when(active, |d| d.bg(theme::elevated()))
                     .hover(|s| s.bg(theme::hover()))
                     .active(|s| s.opacity(0.7))
-                    .child(view.playlist_cover(&p, 30., cx))
+                    .group(SharedString::from(format!("plc-{i}")))
+                    .child(div().rounded(sc(5.)).group_hover(SharedString::from(format!("plc-{i}")), |s| s.shadow_lg()).child(view.playlist_cover(&p, 30., cx)))
                     .tooltip(tip(p.title.clone()))
                     .on_click(open)
                     .into_any_element()
@@ -207,14 +210,44 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
     let main: Vec<AnyElement> = NAV_MAIN.iter().map(|e| nav_item(*e, collapsed, view, cx)).collect();
     let collection: Vec<AnyElement> = NAV_COLLECTION.iter().map(|e| nav_item(*e, collapsed, view, cx)).collect();
 
+    // The active item's highlight slides from the previous item to the new one.
+    let target = NAV_MAIN
+        .iter()
+        .position(|e| (e.3)() == view.page)
+        .map(|i| 6.0 + i as f32 * 32.0)
+        .or_else(|| NAV_COLLECTION.iter().position(|e| (e.3)() == view.page).map(|i| 6.0 + 64.0 + 19.0 + i as f32 * 32.0));
+    let (from, to, at) = view.nav_hl;
+    let hl_target = target.unwrap_or(-1.0);
+    if hl_target != to {
+        let shown = if to < 0.0 || from < 0.0 { hl_target } else { from + (to - from) * super::motion::ease_out(super::motion::progress(at, std::time::Duration::from_millis(260))) };
+        view.nav_hl = (shown, hl_target, std::time::Instant::now());
+    }
+    let (from, to, _) = view.nav_hl;
+    let highlight = (to >= 0.0).then(|| {
+        let mx = if collapsed { (RAIL_W - 32.) / 2. } else { 10. };
+        div()
+            .absolute()
+            .left(sc(mx))
+            .right(sc(mx))
+            .h(sc(32.))
+            .rounded(sc(8.))
+            .bg(theme::elevated())
+            .with_animation(
+                ("nav-hl", to as usize),
+                gpui::Animation::new(std::time::Duration::from_millis(260)).with_easing(super::motion::ease_out),
+                move |d, t| d.top(sc(from + (to - from) * t)),
+            )
+    });
     div()
         .w(sc(view.sidebar_width_animated()))
         .flex_none()
         .h_full()
+        .relative()
         .overflow_hidden()
         .flex()
         .flex_col()
         .pt(sc(6.))
+        .children(highlight)
         .children(main)
         .child(divider(collapsed))
         .children(collection)

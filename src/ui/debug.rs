@@ -80,6 +80,12 @@ impl AppView {
                         .detach();
                     }
                     this.toggle_now_playing(cx);
+                    if let Some((x, y)) = std::env::var("TIDE_TILT").ok().and_then(|v| {
+                        let (a, b) = v.split_once(',')?;
+                        Some((a.parse::<f32>().ok()?, b.parse::<f32>().ok()?))
+                    }) {
+                        this.np_tilt.point(x, y);
+                    }
                     this.np_tab = match tab.as_str() {
                         "nowplaying-credits" => super::now_playing::NpTab::Credits,
                         "nowplaying-queue" => {

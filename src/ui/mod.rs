@@ -42,6 +42,8 @@ mod settings;
 mod appmenu;
 mod haptics;
 mod scrollbar;
+mod tilt;
+mod interact;
 mod sidebar;
 pub mod theme;
 mod widgets;
@@ -287,6 +289,11 @@ pub struct AppView {
     pub nav_dir: f32,
     /// The page scrollbar is being dragged.
     pub scrollbar_drag: bool,
+    /// Now Playing cover tilt (follows the mouse) and where the cover is.
+    pub np_tilt: tilt::Tilt,
+    pub np_cover_bounds: Bounds<Pixels>,
+    /// Sliding highlight of the sidebar: (from y, to y, start).
+    pub nav_hl: (f32, f32, std::time::Instant),
     /// State of the rotating Now Playing / player-bar background.
     pub bg_spin: fx::BgSpin,
     /// Its angle for the current frame (computed once per render).
@@ -507,6 +514,9 @@ impl AppView {
             haptics: Default::default(),
             nav_dir: 1.0,
             scrollbar_drag: false,
+            np_tilt: Default::default(),
+            np_cover_bounds: Bounds::default(),
+            nav_hl: (-1.0, -1.0, std::time::Instant::now()),
             bg_spin: fx::BgSpin::Stopped(0.0),
             bg_angle_now: 0.0,
             recents: crate::recents::load(),
@@ -1813,6 +1823,7 @@ impl Render for AppView {
                 }
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                interact::release_all();
                 this.scrollbar_drag = false;
                 if this.win_drag.take().is_some() {
                     winctl::drag_end();
@@ -1820,6 +1831,7 @@ impl Render for AppView {
                 this.end_drag(cx)
             }))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                interact::release_all();
                 this.scrollbar_drag = false;
                 if this.win_drag.take().is_some() {
                     winctl::drag_end();

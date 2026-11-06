@@ -9,6 +9,9 @@ use gpui::{svg, AssetSource, Rgba, SharedString, Styled, Svg, px};
 pub enum Icon {
     Play,
     Pause,
+    PlayRound,
+    ChevUp,
+    PauseRound,
     Next,
     Prev,
     Shuffle,
@@ -59,6 +62,9 @@ impl Icon {
         match self {
             Icon::Play => "play",
             Icon::Pause => "pause",
+            Icon::PlayRound => "play_round",
+            Icon::ChevUp => "chev_up",
+            Icon::PauseRound => "pause_round",
             Icon::Next => "next",
             Icon::Prev => "prev",
             Icon::Shuffle => "shuffle",
@@ -106,7 +112,9 @@ impl Icon {
     }
 
     pub fn el(self, size: f32, color: Rgba) -> Svg {
-        svg().path(SharedString::from(format!("icons/{}.svg", self.name()))).size(sc(size)).flex_none().text_color(color)
+        // Whole device pixels: crisp edges, and the rasterised glyph is reused.
+        let px_size = (size * super::zoom()).round().max(1.0);
+        svg().path(SharedString::from(format!("icons/{}.svg", self.name()))).size(px(px_size)).flex_none().text_color(color)
     }
 }
 
@@ -114,6 +122,9 @@ fn path(name: &str) -> Option<&'static str> {
     Some(match name {
         "play" => "M8 5v14l11-7z",
         "pause" => "M6 5h4v14H6zM14 5h4v14h-4z",
+        "chev_up" => "M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z",
+        "play_round" => "M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z",
+        "pause_round" => "M8 19c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2s-2 .9-2 2v10c0 1.1.9 2 2 2zm6-12v10c0 1.1.9 2 2 2s2-.9 2-2V7c0-1.1-.9-2-2-2s-2 .9-2 2z",
         "next" => "M6 6l8.5 6L6 18zM16 6h2v12h-2z",
         "prev" => "M18 6l-8.5 6L18 18zM6 6h2v12H6z",
         "shuffle" => "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z",

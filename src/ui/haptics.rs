@@ -9,7 +9,7 @@
 use std::time::{Duration, Instant};
 
 use super::sc;
-use gpui::{div, prelude::*, AnyElement, ClickEvent, Context, ElementId, Rgba, Window};
+use gpui::{div, prelude::*, AnyElement, ClickEvent, Context, ElementId, Rgba, SharedString, Window};
 
 use super::icons::Icon;
 use super::{theme, AppView};
@@ -30,7 +30,7 @@ fn spring(t: f32) -> f32 {
     if t >= 1.0 {
         return 1.0;
     }
-    1.0 + 0.24 * (t * std::f32::consts::PI * 1.6).sin() * (-3.2 * t).exp()
+    1.0 + 0.14 * (t * std::f32::consts::PI * 1.6).sin() * (-3.2 * t).exp()
 }
 
 /// The play button: it sinks under the finger (to 78 %) and springs back past
@@ -42,10 +42,10 @@ fn press_spring(t: f32) -> f32 {
     }
     if t < DOWN {
         let k = t / DOWN;
-        return 1.0 - 0.22 * (1.0 - (1.0 - k).powi(2));
+        return 1.0 - 0.14 * (1.0 - (1.0 - k).powi(2));
     }
     let u = (t - DOWN) / (1.0 - DOWN);
-    1.0 - 0.22 * (u * 9.0).cos() * (-5.0 * u).exp()
+    1.0 - 0.14 * (u * 9.0).cos() * (-5.0 * u).exp()
 }
 
 #[derive(Default)]
@@ -139,7 +139,9 @@ pub fn button(
     cx: &mut Context<AppView>,
 ) -> AnyElement {
     let scale = view.pulse_scale(id);
-    div()
+    let key = format!("hb-{id}");
+    let (h, p) = (super::interact::hover(&key), super::interact::press(&key));
+    let el = div()
         .id(ElementId::Name(id.into()))
         .flex_none()
         .size(sc(size + 12.))
@@ -148,16 +150,16 @@ pub fn button(
         .justify_center()
         .rounded(sc(999.))
         .cursor_pointer()
-        .hover(|s| s.bg(theme::hover()))
-        .active(|s| s.bg(theme::active()))
-        .child(icon.el(size * scale, color))
+        // Hover: a soft disc fades in and the glyph grows; press: it sinks.
+        .bg(super::fx::with_alpha(gpui::rgb(0xffffff), 0.055 * h + 0.045 * p))
+        .child(icon.el(size * scale, color).opacity(0.8 + 0.2 * h - 0.2 * p))
         .on_click(cx.listener(move |this, ev, window, cx| {
             cx.stop_propagation();
             this.pulse(id);
             on_click(this, ev, window, cx);
             cx.notify();
-        }))
-        .into_any_element()
+        }));
+    super::interact::track(el, key, cx).into_any_element()
 }
 
 /// The ring that spreads from the play button when it is pressed.

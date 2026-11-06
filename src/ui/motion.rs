@@ -105,6 +105,10 @@ impl AppView {
         if self.haptics.active() {
             running = true;
         }
+        // Hover / press / follow transitions still gliding.
+        if super::interact::animating() {
+            running = true;
+        }
         if running || playing || self.scroll_animating {
             window.request_animation_frame();
         }

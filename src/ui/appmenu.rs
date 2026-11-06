@@ -235,7 +235,7 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         .rounded(sc(6.))
                         .cursor_pointer()
                         .text_size(sc(13.))
-                        .hover(|s| s.bg(gpui::rgb(0x2c2c31)))
+                        .hover(|s| s.bg(gpui::rgb(0x2c2c31)).pl(sc(14.)))
                         .active(|s| s.opacity(0.7))
                         .child(div().flex_1().whitespace_nowrap().child(label.clone()))
                         .when(!shortcut.is_empty(), |d| d.child(div().text_size(sc(12.)).text_color(theme::text_secondary()).child(*shortcut)))

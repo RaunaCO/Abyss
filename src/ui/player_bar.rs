@@ -44,9 +44,29 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
             d.child(
                 div()
                     .id("np-cover")
+                    .relative()
                     .flex_none()
                     .cursor_pointer()
+                    .rounded(sc(4.))
+                    .group("bar-cover")
+                    .group_hover("bar-cover", |s| s.shadow_lg())
                     .child(cover(track.cover(160), 42., false, cx))
+                    // Hover: the cover dims and shows where a click leads (Now Playing).
+                    .child(
+                        div()
+                            .absolute()
+                            .top(sc(0.))
+                            .left(sc(0.))
+                            .size(sc(42.))
+                            .rounded(sc(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .invisible()
+                            .bg(gpui::rgba(0x0000008c))
+                            .group_hover("bar-cover", |s| s.visible())
+                            .child(Icon::ChevUp.el(20., theme::text())),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
                         this.toggle_now_playing(cx)
@@ -128,6 +148,8 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
     let repeat_icon = if view.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
     let repeat_color = if view.repeat == Repeat::Off { theme::text_secondary() } else { theme::accent() };
     let e1 = entity.clone();
+    let hp = super::interact::hover("progress").max(if view.drag == Some(Drag::Progress) { 1.0 } else { 0.0 });
+    let hv = super::interact::hover("volume").max(if view.drag == Some(Drag::Volume) { 1.0 } else { 0.0 });
     let progress = div()
         .id("progress")
         .relative()
@@ -145,11 +167,22 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         .child(
             div()
                 .w_full()
-                .h(sc(3.))
+                .h(sc(4.))
                 .rounded(sc(2.))
-                .bg(theme::active())
-                .group_hover("progress", |s| s.h(sc(5.)))
+                .bg(interact_track_bg(hp))
                 .child(div().h_full().w(relative(frac)).rounded(sc(2.)).bg(theme::text())),
+        )
+        // Knob that appears on hover (and while dragging) at the play position.
+        .child(
+            div()
+                .absolute()
+                .left(relative(frac))
+                .ml(sc(-6. * hp))
+                .size(sc(12. * hp))
+                .rounded(sc(6.))
+                .bg(theme::text())
+                .shadow_md()
+                .when(hp < 0.02, |d| d.invisible()),
         )
         // Gesture: the wheel over the bar seeks 5 s per notch.
         .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _, cx| {
@@ -174,7 +207,7 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
             }),
         );
 
-    let play_icon = if playing { Icon::Pause } else { Icon::Play };
+    let progress = super::interact::track(progress, "progress", cx);
     let center = div()
         .flex_1()
         .min_w(sc(0.))
@@ -189,7 +222,37 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
                 .gap(sc(10.))
                 .child(super::haptics::button(view, "shuffle", Icon::Shuffle, 15., shuffle_color, |this, _, _, cx| this.toggle_shuffle(cx), cx))
                 .child(super::haptics::button(view, "prev", Icon::Prev, 18., theme::text(), |this, _, _, cx| this.prev(cx), cx))
-                .child(super::haptics::button(view, "playpause", play_icon, 24., theme::text(), |this, _, _, cx| this.toggle_play(cx), cx))
+                .child({
+                    // Clean play / pause: rounded glyph, no background; it sinks and springs
+                    // back when pressed and cross-fades into the other glyph.
+                    let pop = view.pulse_scale("playpause");
+                    div()
+                        .id("playpause")
+                        .flex_none()
+                        .size(sc(40.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child((if playing { Icon::PauseRound } else { Icon::PlayRound }).el(30. * pop, theme::text()))
+                                .with_animation(
+                                    ("pp-morph", playing as usize),
+                                    gpui::Animation::new(std::time::Duration::from_millis(180)).with_easing(super::motion::ease_out),
+                                    |d, t| d.opacity(0.25 + 0.75 * t),
+                                ),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.pulse("playpause");
+                            this.toggle_play(cx);
+                            cx.notify();
+                        }))
+                })
                 .child(super::haptics::button(view, "next", Icon::Next, 18., theme::text(), |this, _, _, cx| this.next(cx), cx))
                 .child(super::haptics::button(view, "repeat", repeat_icon, 15., repeat_color, |this, _, _, cx| this.cycle_repeat(cx), cx)),
         )
@@ -240,7 +303,14 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
             .text_size(sc(10.))
             .font_weight(FontWeight::BOLD)
             .cursor_pointer()
-            .hover(|s| s.opacity(0.85))
+            .hover(move |s| {
+                s.bg(super::fx::with_alpha(fg, 0.2)).shadow(vec![gpui::BoxShadow {
+                    color: gpui::Hsla::from(super::fx::with_alpha(fg, 0.35)),
+                    offset: gpui::point(sc(0.), sc(0.)),
+                    blur_radius: sc(14.),
+                    spread_radius: sc(0.),
+                }])
+            })
             .active(|s| s.opacity(0.6))
             .child(detail)
             .on_click(cx.listener(|this, _, _, cx| {
@@ -281,6 +351,8 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         .flex()
         .items_center()
         .cursor_pointer()
+        .relative()
+        .group("vol")
         .child(
             canvas(move |b, _, cx| e2.update(cx, |v, _| v.volume_bounds = b), |_, _, _, _| {})
                 .absolute()
@@ -289,10 +361,21 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         .child(
             div()
                 .w_full()
-                .h(sc(3.))
+                .h(sc(4.))
                 .rounded(sc(2.))
-                .bg(theme::active())
+                .bg(interact_track_bg(hv))
                 .child(div().h_full().w(relative(vol)).rounded(sc(2.)).bg(theme::text())),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(relative(vol))
+                .ml(sc(-5. * hv))
+                .size(sc(10. * hv))
+                .rounded(sc(5.))
+                .bg(theme::text())
+                .shadow_md()
+                .when(hv < 0.02, |d| d.invisible()),
         )
         .on_mouse_down(
             MouseButton::Left,
@@ -303,6 +386,7 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
             }),
         );
 
+    let volume = super::interact::track(volume, "volume", cx);
     // Toggles that are on get a rounded highlight, as in the original.
     let (pop_queue, pop_lyrics) = (view.pulse_scale("queue"), view.pulse_scale("lyrics"));
     let toggle = move |id: &'static str, icon: Icon, on: bool, cx: &mut Context<AppView>, f: fn(&mut AppView, &mut Context<AppView>)| {
@@ -406,4 +490,9 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         .child(center)
         .child(right)
         .into_any_element()
+}
+
+/// Slider track colour: a touch lighter while hovered.
+fn interact_track_bg(h: f32) -> gpui::Rgba {
+    super::interact::mix(theme::active(), gpui::rgb(0x45454d), h)
 }

@@ -651,17 +651,20 @@ impl AppView {
                 .border_b_1()
                 .border_color(theme::border())
                 .children(tabs.into_iter().enumerate().map(|(i, t)| {
-                    div()
+                    let k = format!("htab-{i}");
+                    let h = super::interact::hover(&k);
+                    let el = div()
                         .id(("home-tab", i))
                         .pb(sc(9.))
                         .text_size(sc(12.))
                         .font_weight(FontWeight::BOLD)
                         .cursor_pointer()
-                        .text_color(if i == active { theme::text() } else { theme::text_dim() })
-                        .hover(|s| s.text_color(theme::text()))
-                        .when(i == active, |d| d.border_b_2().border_color(theme::text()))
+                        .text_color(if i == active { theme::text() } else { super::interact::mix(theme::text_dim(), theme::text(), h) })
+                        .border_b_2()
+                        .border_color(if i == active { theme::text() } else { super::fx::with_alpha(theme::text_dim(), h) })
                         .child(t)
-                        .on_click(cx.listener(move |this, _, _, cx| this.set_home_tab(i, cx)))
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_home_tab(i, cx)));
+                    super::interact::track(el, k, cx)
                 }))
                 .into_any_element(),
             Block::ShortcutsTitled(title, items) => div()
@@ -1519,19 +1522,22 @@ pub fn overlays(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVi
                         }))
                         .children((0..n).map(|i| {
                             let e = entries.clone();
-                            div()
+                            let k = format!("mi-{i}");
+                            let h = super::interact::hover(&k);
+                            let el = div()
                                 .id(("menu-item", i))
                                 .px(sc(14.))
                                 .py(sc(8.))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(theme::hover()))
+                                .bg(super::fx::with_alpha(theme::hover(), 0.9 * h))
                                 .truncate()
                                 .child(e[i].0.clone())
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.menu = None;
                                     (e[i].1)(this, window, cx);
                                     cx.notify();
-                                }))
+                                }));
+                            super::interact::track(el, k, cx)
                         }))
                         // Menus drop in with a quick fade.
                         .with_animation(

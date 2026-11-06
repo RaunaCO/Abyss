@@ -194,6 +194,8 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .bg(theme::surface())
                 .border_1()
                 .border_color(if search_focused { theme::text_dim() } else { theme::surface() })
+                .cursor_text()
+                .hover(|s| s.border_color(theme::border()).bg(theme::hover()))
                 .child(Icon::Search.el(14., theme::text_secondary()))
                 .child(view.search_input.clone())
                 .on_click(cx.listener(|this, _, window, cx| {

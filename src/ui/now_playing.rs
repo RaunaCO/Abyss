@@ -4,7 +4,7 @@
 //! the top right. The player bar stays underneath, transparent.
 
 use super::sc;
-use gpui::{div, prelude::*, px, relative, AnimationExt, AnyElement, Context, FontWeight, SharedString, Window};
+use gpui::{canvas, div, prelude::*, px, relative, AnimationExt, AnyElement, Context, FontWeight, SharedString, Window};
 
 use super::icons::Icon;
 use super::widgets::{cover, fmt_time};
@@ -445,6 +445,9 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
     // The background drifts on its own; it no longer reacts to the audio.
     let vis = [0.5f32; 3];
     let view_blur = view.settings.lock().np_blur;
+    if view.np_tilt.step() {
+        window.request_animation_frame();
+    }
     let frames = if view_blur { track.cover(640).and_then(|u| super::images::frames(&u, cx)) } else { None };
     let angle = view.bg_angle_now;
     let amount = view.now_playing_amount();
@@ -633,9 +636,45 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                                         .id("np-big-cover")
                                         .relative()
                                         .flex_none()
+                                        .size(sc(size))
                                         .rounded(sc(4.))
-                                        .shadow(super::fx::glow(ambient, 0.9, 80.))
-                                        .child(cover(track.cover(1280), size, false, cx))
+                                        // The shadow stays on the flat footprint while the cover tilts above it.
+                                        .shadow(view.np_tilt.shadow(ambient))
+                                        .child(
+                                            canvas(
+                                                {
+                                                    let e = cx.entity();
+                                                    move |b, _, cx| e.update(cx, |v, _| v.np_cover_bounds = b)
+                                                },
+                                                |_, _, _, _| {},
+                                            )
+                                            .absolute()
+                                            .size_full(),
+                                        )
+                                        .child(match (view.np_tilt.tilted(), track.cover(1280).and_then(|u| super::images::get(&u, cx))) {
+                                            (true, Some(image)) => view.np_tilt.cover_3d(image, size),
+                                            _ => cover(track.cover(1280), size, false, cx),
+                                        })
+                                        // The cover follows the mouse (3D tilt and glare).
+                                        .child(div().absolute().top(sc(0.)).left(sc(0.)).size(sc(size)).rounded(sc(4.)).overflow_hidden().children(view.np_tilt.overlays(size)))
+                                        .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
+                                            // Screenshot tests pin the tilt (TIDE_TILT) and ignore the mouse.
+                                            if std::env::var_os("TIDE_TILT").is_some() {
+                                                return;
+                                            }
+                                            let b = this.np_cover_bounds;
+                                            let (w, h) = (f32::from(b.size.width).max(1.0), f32::from(b.size.height).max(1.0));
+                                            let x = (f32::from(ev.position.x) - f32::from(b.origin.x)) / w;
+                                            let y = (f32::from(ev.position.y) - f32::from(b.origin.y)) / h;
+                                            this.np_tilt.point(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+                                            cx.notify();
+                                        }))
+                                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                            if !*hovered && std::env::var_os("TIDE_TILT").is_none() {
+                                                this.np_tilt.leave();
+                                                cx.notify();
+                                            }
+                                        }))
                                         // Gesture: double-click the cover to like the track (big heart).
                                         .children(super::haptics::heart_overlay(view, size))
                                         .on_click({
