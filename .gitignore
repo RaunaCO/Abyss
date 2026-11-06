@@ -8,3 +8,9 @@ graphify-out/memory/
 graphify-out/.graphify_root
 graphify-out/*.pending.json
 graphify-out/*.sig
+
+# Local documentation tools (kept on disk, not in the repo)
+vault/
+graphify-out/
+docs/GRAPH.md
+.graphifyignore

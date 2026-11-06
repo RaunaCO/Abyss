@@ -40,6 +40,8 @@ mod sort;
 pub mod fx;
 mod settings;
 mod appmenu;
+mod haptics;
+mod scrollbar;
 mod sidebar;
 pub mod theme;
 mod widgets;
@@ -279,6 +281,12 @@ pub struct AppView {
     pub rating_hover: Option<(bool, u64, u8)>,
     /// Smoothed, compressed band levels (0..1) that gently modulate the backgrounds.
     pub vis: [f32; 3],
+    /// Press pops, ripples, heart burst and swipe state.
+    pub haptics: haptics::Haptics,
+    /// Direction of the last navigation (1 forward / new page, -1 back), for the page slide.
+    pub nav_dir: f32,
+    /// The page scrollbar is being dragged.
+    pub scrollbar_drag: bool,
     /// State of the rotating Now Playing / player-bar background.
     pub bg_spin: fx::BgSpin,
     /// Its angle for the current frame (computed once per render).
@@ -297,6 +305,7 @@ pub struct AppView {
     pub lyrics_scroll: ScrollHandle,
     /// Synced line last scrolled to (auto-follow).
     pub lyrics_line: Option<usize>,
+    pub lyrics_scroll_at: std::time::Instant,
     /// Previous active lyric line and a counter, to fade lines in and out.
     pub lyrics_prev: Option<usize>,
     pub lyrics_changes: usize,
@@ -312,10 +321,13 @@ pub struct AppView {
     pub bar_click_block: bool,
     /// Title bar press waiting to turn into a window drag.
     pub title_press: Option<Point<Pixels>>,
+    /// Window being moved by its title bar.
+    pub win_drag: Option<winctl::WinDrag>,
     /// Second press of a title bar double-click (acted on at release).
     pub title_double: bool,
     pub volume_hint_until: Option<std::time::Instant>,
     pub scroll_animating: bool,
+    pub scroll_last: std::time::Instant,
     autoplay_jump: bool,
     media: Option<media::Media>,
     pub discord: crate::discord::Discord,
@@ -492,6 +504,9 @@ impl AppView {
             ratings: crate::ratings::Ratings::load(),
             rating_hover: None,
             vis: [0.0; 3],
+            haptics: Default::default(),
+            nav_dir: 1.0,
+            scrollbar_drag: false,
             bg_spin: fx::BgSpin::Stopped(0.0),
             bg_angle_now: 0.0,
             recents: crate::recents::load(),
@@ -502,6 +517,7 @@ impl AppView {
             lyrics_offset: HashMap::new(),
             lyrics_scroll: ScrollHandle::new(),
             lyrics_line: None,
+            lyrics_scroll_at: std::time::Instant::now(),
             lyrics_prev: None,
             lyrics_changes: 0,
             snap_at: std::time::Instant::now(),
@@ -510,9 +526,11 @@ impl AppView {
             page_anim: 0,
             bar_click_block: false,
             title_press: None,
+            win_drag: None,
             title_double: false,
             volume_hint_until: None,
             scroll_animating: false,
+            scroll_last: std::time::Instant::now(),
             autoplay_jump: false,
             media: media::Media::new(window),
             discord,
@@ -728,6 +746,7 @@ impl AppView {
 
     pub fn navigate(&mut self, page: Page, cx: &mut Context<Self>) {
         log::info!("navigate -> {page:?}");
+        self.nav_dir = 1.0;
         if page == self.page {
             return;
         }
@@ -742,6 +761,7 @@ impl AppView {
 
     pub fn go_back(&mut self, cx: &mut Context<Self>) {
         log::info!("go_back (history: {})", self.back.len());
+        self.nav_dir = -1.0;
         if let Some(p) = self.back.pop() {
             let old = std::mem::replace(&mut self.page, p);
             self.forward.push(old);
@@ -776,6 +796,7 @@ impl AppView {
 
     pub fn go_forward(&mut self, cx: &mut Context<Self>) {
         log::info!("go_forward (history: {})", self.forward.len());
+        self.nav_dir = 1.0;
         if let Some(p) = self.forward.pop() {
             let old = std::mem::replace(&mut self.page, p);
             self.back.push(old);
@@ -1478,6 +1499,7 @@ impl AppView {
                 "discord" => s.discord = !s.discord,
                 "audio_metadata" => s.audio_metadata = !s.audio_metadata,
                 "show_ratings" => s.show_ratings = !s.show_ratings,
+                "lyrics_romanize" => s.lyrics_romanize = !s.lyrics_romanize,
                 "hide_uploads" => {
                     s.hide_uploads = !s.hide_uploads;
                     if s.hide_uploads && self.home_tab == 2 {
@@ -1688,8 +1710,9 @@ impl Render for AppView {
         if !self.signed_in {
             return pages::login_screen(self, cx).into_any_element();
         }
+        let perf_t0 = std::time::Instant::now();
+        self.step_smooth_scroll();
         self.drive_animations(window);
-        self.update_vis();
         self.bg_angle_now = self.bg_angle(window);
         let np_overlay = if self.now_playing_open && self.now.is_some() { Some(now_playing::render(self, window, cx)) } else { None };
         let blocks = self.blocks(window);
@@ -1709,6 +1732,7 @@ impl Render for AppView {
         }
         self.list_len = blocks.len();
         self.current_blocks = blocks;
+        perf_note(perf_t0.elapsed());
 
         div()
             .id("root")
@@ -1758,7 +1782,24 @@ impl Render for AppView {
                 let fh = this.search_input.focus_handle(cx);
                 window.focus(&fh);
             }))
-            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
+                if this.scrollbar_drag {
+                    if ev.pressed_button == Some(MouseButton::Left) {
+                        this.scrollbar_to(ev.position);
+                        cx.notify();
+                        return;
+                    }
+                    this.scrollbar_drag = false;
+                    cx.notify();
+                }
+                if let Some(d) = this.win_drag {
+                    if ev.pressed_button == Some(MouseButton::Left) {
+                        winctl::drag_move(window, d);
+                        return;
+                    }
+                    this.win_drag = None;
+                    winctl::drag_end();
+                }
                 if this.drag.is_some() {
                     // Button released outside the window: finish the drag
                     // instead of letting every later move change the value.
@@ -1771,8 +1812,20 @@ impl Render for AppView {
                     this.drag_to(ev.position, cx);
                 }
             }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.end_drag(cx)))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| this.end_drag(cx)))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                this.scrollbar_drag = false;
+                if this.win_drag.take().is_some() {
+                    winctl::drag_end();
+                }
+                this.end_drag(cx)
+            }))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                this.scrollbar_drag = false;
+                if this.win_drag.take().is_some() {
+                    winctl::drag_end();
+                }
+                this.end_drag(cx)
+            }))
             .size_full()
             .flex()
             .flex_col()
@@ -1803,7 +1856,30 @@ impl Render for AppView {
             .child(player_bar::render(self, window, cx))
             .children(pages::overlays(self, window, cx))
             .children(appmenu::overlay(self, window, cx))
+            .children(haptics::swipe_indicator(self))
             .children(playlists::dialog_overlay(self, cx))
             .into_any_element()
     }
+}
+
+/// `TIDE_PERF=1`: log once a second how many frames were rendered and what the
+/// view's own render work cost (layout and paint are not included).
+fn perf_note(spent: std::time::Duration) {
+    use std::cell::RefCell;
+    thread_local!(static ACC: RefCell<(std::time::Instant, u32, f64, f64)> = RefCell::new((std::time::Instant::now(), 0, 0.0, 0.0)));
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("TIDE_PERF").is_ok()) {
+        return;
+    }
+    ACC.with(|a| {
+        let mut a = a.borrow_mut();
+        let ms = spent.as_secs_f64() * 1000.0;
+        a.1 += 1;
+        a.2 += ms;
+        a.3 = a.3.max(ms);
+        if a.0.elapsed().as_secs_f64() >= 1.0 {
+            log::info!("perf: {} frames/s, render avg {:.2} ms, max {:.2} ms", a.1, a.2 / a.1 as f64, a.3);
+            *a = (std::time::Instant::now(), 0, 0.0, 0.0);
+        }
+    });
 }

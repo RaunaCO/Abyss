@@ -10,3 +10,6 @@
 - Typeface: Inter (SIL OFL 1.1). Apple's "SF" is not used because its license
   forbids use outside Apple platforms.
 - Lyrics may come from LRCLIB; their terms apply.
+- Lyrics romanization: lindera (MIT) with the embedded IPADIC dictionary
+  (IPADIC licence, permissive) for Japanese; `pinyin` (MIT) for Chinese.
+  kakasi was not used because it is GPL-3.0.

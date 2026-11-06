@@ -30,6 +30,8 @@ symphonia = { version = "0.5.4", default-features = false, features = ["flac", "
 rubato = "0.16"
 cpal = "0.15.3"
 rtrb = "0.3"
+pinyin = "0.11.0"
+lindera = { version = "6.2.0", default-features = false, features = ["embed-ipadic"] }
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.15"

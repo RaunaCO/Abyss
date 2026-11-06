@@ -912,6 +912,7 @@ impl Tidal {
             .map(parse_lrc)
             .unwrap_or_default();
         Ok(Lyrics {
+            roman: Vec::new(),
             text: v.get("lyrics").and_then(Value::as_str).unwrap_or("").to_string(),
             synced,
             provider: v.get("lyricsProvider").and_then(Value::as_str).unwrap_or("").to_string(),
@@ -1075,6 +1076,9 @@ pub struct Lyrics {
     /// (seconds, line)
     pub synced: Vec<(f64, String)>,
     pub provider: String,
+    /// Latin pronunciation of each synced line (romaji, pinyin, Korean romanization);
+    /// empty when the lyrics need none.
+    pub roman: Vec<Option<String>>,
 }
 
 fn parse_lrc(text: &str) -> Vec<(f64, String)> {

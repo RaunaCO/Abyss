@@ -73,7 +73,7 @@ fn drag_area(el: Stateful<Div>, cx: &mut Context<AppView>) -> Stateful<Div> {
         let moved = (f32::from(ev.position.x) - f32::from(start.x)).abs() + (f32::from(ev.position.y) - f32::from(start.y)).abs();
         if moved > 4.0 {
             this.title_press = None;
-            winctl::start_drag(window);
+            this.win_drag = winctl::drag_begin(window);
         }
     }))
     .on_mouse_up(

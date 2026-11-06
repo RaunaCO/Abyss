@@ -3,59 +3,56 @@
 //! native, already-smooth behaviour.
 
 use super::sc;
-use std::time::Duration;
 
 use gpui::{canvas, px, Bounds, Context, DispatchPhase, Entity, IntoElement, Pixels, ScrollDelta, ScrollWheelEvent, Styled};
 
 use super::AppView;
 
-/// Pixels per wheel line: same distance as gpui's native list scrolling.
-const PX_PER_LINE: f32 = 20.0;
-/// Fraction of the remaining distance covered each frame (ease-out).
-const EASE: f32 = 0.2;
-const FRAME: Duration = Duration::from_millis(7);
+/// Pixels per wheel line (a notch is 3 lines, ~100 px, like Chromium / TIDAL).
+const PX_PER_LINE: f32 = 33.0;
+/// Time constant of the glide: 63 % of the distance is covered in this time.
+const GLIDE_TAU_S: f32 = 0.075;
 
 impl AppView {
+    /// Queue a wheel distance; the glide itself runs in `step_smooth_scroll`, once
+    /// per displayed frame, so it is in step with the screen at any refresh rate
+    /// (a timer-driven glide stuttered: Windows timers tick every ~15 ms).
     pub fn smooth_scroll(&mut self, distance: f32, cx: &mut Context<Self>) {
         // Reversing direction cancels the rest of the previous glide.
         if self.scroll_pending.signum() != distance.signum() {
             self.scroll_pending = 0.0;
         }
         self.scroll_pending += distance;
-        if self.scroll_animating {
+        if !self.scroll_animating {
+            self.scroll_animating = true;
+            self.scroll_last = std::time::Instant::now();
+        }
+        cx.notify();
+    }
+
+    /// Advance the glide by the time since the last frame (exponential ease-out).
+    pub fn step_smooth_scroll(&mut self) {
+        if !self.scroll_animating {
             return;
         }
-        self.scroll_animating = true;
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(FRAME).await;
-            let more = this
-                .update(cx, |this, cx| {
-                    let rest = this.scroll_pending;
-                    let step = if rest.abs() <= 1.0 { rest } else { rest * EASE };
-                    this.scroll_pending -= step;
-                    // Stop at the top instead of eating the rest of the glide.
-                    let top = this.list.logical_scroll_top();
-                    let at_top = top.item_ix == 0 && top.offset_in_item <= sc(0.);
-                    if step < 0.0 && at_top {
-                        this.scroll_pending = 0.0;
-                    } else {
-                        this.list.scroll_by(sc(step));
-                        cx.notify();
-                    }
-                    if this.scroll_pending.abs() < 0.5 {
-                        this.scroll_pending = 0.0;
-                        this.scroll_animating = false;
-                        false
-                    } else {
-                        true
-                    }
-                })
-                .unwrap_or(false);
-            if !more {
-                break;
-            }
-        })
-        .detach();
+        let now = std::time::Instant::now();
+        let dt = now.duration_since(self.scroll_last).as_secs_f32().min(0.05);
+        self.scroll_last = now;
+        let rest = self.scroll_pending;
+        let step = if rest.abs() <= 0.5 { rest } else { rest * (1.0 - (-dt / GLIDE_TAU_S).exp()) };
+        self.scroll_pending -= step;
+        // Stop at the top instead of eating the rest of the glide.
+        let top = self.list.logical_scroll_top();
+        let at_top = top.item_ix == 0 && top.offset_in_item <= sc(0.);
+        if step < 0.0 && at_top {
+            self.scroll_pending = 0.0;
+        } else if step != 0.0 {
+            self.list.scroll_by(sc(step));
+        }
+        if self.scroll_pending.abs() < 0.5 {
+            self.scroll_pending = 0.0;
+            self.scroll_animating = false;
+        }
     }
 
     pub fn stop_smooth_scroll(&mut self) {
@@ -98,6 +95,16 @@ pub fn wheel_catcher(view: Entity<AppView>) -> impl IntoElement {
             let view = view.clone();
             window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, _, cx| {
                 if phase != DispatchPhase::Capture || !bounds.contains(&ev.position) {
+                    return;
+                }
+                // Gesture: horizontal touchpad swipe / tilt wheel = back / forward.
+                let (dx, dy) = match ev.delta {
+                    ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y)),
+                    ScrollDelta::Lines(l) => (l.x * 60.0, l.y),
+                };
+                if dx != 0.0 && dx.abs() > dy.abs() * 1.5 && !ev.modifiers.shift {
+                    view.update(cx, |v, cx| v.swipe(dx, cx));
+                    cx.stop_propagation();
                     return;
                 }
                 let ScrollDelta::Lines(lines) = ev.delta else { return };

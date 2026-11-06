@@ -102,6 +102,9 @@ impl AppView {
             running = true;
         }
         let playing = self.now.is_some() && !self.snap.paused && !self.ended;
+        if self.haptics.active() {
+            running = true;
+        }
         if running || playing || self.scroll_animating {
             window.request_animation_frame();
         }

@@ -53,15 +53,16 @@ pub fn delayed(delay: f32) -> impl Fn(f32) -> f32 {
 
 /// Cards fade and rise in one after another.
 pub fn stagger(id: impl Into<ElementId>, index: usize, el: AnyElement) -> AnyElement {
-    let delay = (index as f32 * 0.07).min(0.6);
+    // A light cascade: short, so content never feels like it is waiting.
+    let delay = (index as f32 * 0.035).min(0.25);
     div()
         .relative()
         .flex_none()
         .child(el)
         .with_animation(
             id,
-            Animation::new(Duration::from_millis(520)).with_easing(delayed(delay)),
-            |d, t| d.opacity(t).top(sc((1.0 - t) * 22.0)),
+            Animation::new(Duration::from_millis(320)).with_easing(delayed(delay)),
+            |d, t| d.opacity(t).top(sc((1.0 - t) * 10.0)),
         )
         .into_any_element()
 }

@@ -42,7 +42,6 @@ See [AUDIO.md](AUDIO.md). `mod.rs` is the engine (queue, gapless, seek),
 - `ratings.rs`: local star ratings for tracks and albums.
 - `recents.rs`: albums played in TIDE, for the home shortcuts.
 
-A generated map of every module and call: [GRAPH.md](GRAPH.md).
 
 ## Conventions
 - All UI sizes go through `sc()` so zoom applies everywhere.

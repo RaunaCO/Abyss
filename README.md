@@ -68,8 +68,6 @@ authorize it in your browser). Tokens are stored locally in
 - [Roadmap](docs/ROADMAP.md)
 - [Discord integration](docs/DISCORD.md)
 - [Legal notes](docs/LEGAL.md)
-- [Code graph (graphify)](docs/GRAPH.md)
-- Knowledge base as an [Obsidian](https://obsidian.md) vault: open the [`vault/`](vault) folder (start at `Home.md`; the code map is in `vault/Code Graph/`).
 
 ## Project name
 

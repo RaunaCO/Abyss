@@ -193,6 +193,11 @@ pub fn explicit_badge() -> AnyElement {
         .into_any_element()
 }
 
+/// Title of a card item.
+pub fn item_title(item: &Item) -> String {
+    item_text(item).0
+}
+
 fn item_text(item: &Item) -> (String, String, Option<String>, bool) {
     match item {
         Item::Album(a) => (a.title.clone(), a.artist_names(), a.cover(320), false),
@@ -239,6 +244,9 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
             div()
                 .relative()
                 .size(sc(width))
+                .rounded(sc(if round { width / 2. } else { 4. }))
+                // Hover: the cover lifts off the page.
+                .group_hover(group.clone(), |s| s.shadow_lg())
                 .child(cover(url, width, round, cx))
                 // Hover: the cover dims slightly and a play button appears.
                 .child(
@@ -439,6 +447,14 @@ pub fn track_row(
                 p1(this, ix, cx)
             }
         }))
+        // Gesture: middle click adds the track to the end of the queue.
+        .on_mouse_down(MouseButton::Middle, {
+            let t = track.clone();
+            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                this.add_to_queue(t.clone(), false, cx);
+                this.pulse("queue");
+            })
+        })
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
@@ -678,6 +694,8 @@ fn stars_for(album: bool, scope: &'static str, id: u64, size: f32, view: &AppVie
         _ => actual,
     };
     let kind = if album { "album" } else { "track" };
+    let pop_key = format!("stars-{scope}-{kind}-{id}");
+    let pop = view.pulse_scale(&pop_key);
     div()
         .flex()
         .items_center()
@@ -711,6 +729,7 @@ fn stars_for(album: bool, scope: &'static str, id: u64, size: f32, view: &AppVie
                     }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
+                        this.pulse(format!("stars-{scope}-{kind}-{id}"));
                         let now = if album { this.ratings.get_album(id) } else { this.ratings.get(id) };
                         let next = if now == v { 0 } else { v };
                         if album {
@@ -724,7 +743,7 @@ fn stars_for(album: bool, scope: &'static str, id: u64, size: f32, view: &AppVie
                 .relative()
                 .size(sc(size))
                 .flex_none()
-                .child(icon.el(size, color))
+                .child(icon.el(size * pop, color))
                 .child(hit(half, true, cx))
                 .child(hit(full, false, cx))
         }))

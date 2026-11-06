@@ -7,6 +7,7 @@ mod config;
 mod discord;
 mod ratings;
 mod recents;
+mod romanize;
 mod tidal;
 mod ui;
 

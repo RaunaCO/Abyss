@@ -202,6 +202,8 @@ fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Contex
     match view.lyrics.get(&id) {
         Some(Load::Ready(l)) if !l.synced.is_empty() => {
             let l = l.clone();
+            let roman = l.roman.clone();
+            let show_roman = view.settings.lock().lyrics_romanize;
             let offset = view.lyrics_offset.get(&id).copied().unwrap_or(0.0);
             let current = l.synced.iter().rposition(|(t, _)| *t + offset <= pos + 0.2);
             if current != view.lyrics_line {
@@ -219,13 +221,17 @@ fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Contex
                 let child = current.map(|c| c + 1).unwrap_or(0);
                 if let Some(b) = handle.bounds_for_item(child) {
                     let vp = handle.bounds();
-                    let want_top = f32::from(vp.top()) + f32::from(vp.size.height) * 0.32;
-                    let delta = f32::from(b.top()) - want_top;
+                    // Child bounds are layout positions, before the scroll offset is applied:
+                    // the offset that puts the line at 32 % of the height is absolute.
+                    let line_top = f32::from(b.top()) - f32::from(vp.top());
                     let off = handle.offset();
                     let max = f32::from(handle.max_offset().height);
-                    let target = (f32::from(off.y) - delta).clamp(-max, 0.0);
-                    let step = (target - f32::from(off.y)) * 0.14;
-                    if step.abs() > 0.4 {
+                    let target = -(line_top - f32::from(vp.size.height) * 0.32).clamp(0.0, max);
+                    // Time-based ease (tau 140 ms), so it glides the same at any refresh rate.
+                    let dt = view.lyrics_scroll_at.elapsed().as_secs_f32().min(0.05);
+                    view.lyrics_scroll_at = std::time::Instant::now();
+                    let step = (target - f32::from(off.y)) * (1.0 - (-dt / 0.14).exp());
+                    if (target - f32::from(off.y)).abs() > 0.6 {
                         handle.set_offset(gpui::point(off.x, gpui::px(f32::from(off.y) + step)));
                         window.request_animation_frame();
                     } else if (target - f32::from(off.y)).abs() > 0.0 {
@@ -290,7 +296,13 @@ fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Contex
                         .text_size(sc(32.))
                         .line_height(sc(46.))
                         .font_weight(FontWeight::SEMIBOLD)
+                        .flex()
+                        .flex_col()
                         .child(if line.is_empty() { "♪".to_string() } else { line.clone() })
+                        // Pronunciation in Latin letters under Asian scripts.
+                        .when_some(roman.get(i).cloned().flatten().filter(|_| show_roman), |d, r| {
+                            d.child(div().text_size(sc(19.)).line_height(sc(26.)).font_weight(FontWeight::MEDIUM).opacity(0.8).child(r))
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.lyrics_follow = true;
                             this.seek(at.max(0.0), cx)
@@ -618,10 +630,26 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                                 .items_center()
                                 .child(
                                     div()
+                                        .id("np-big-cover")
+                                        .relative()
                                         .flex_none()
                                         .rounded(sc(4.))
                                         .shadow(super::fx::glow(ambient, 0.9, 80.))
                                         .child(cover(track.cover(1280), size, false, cx))
+                                        // Gesture: double-click the cover to like the track (big heart).
+                                        .children(super::haptics::heart_overlay(view, size))
+                                        .on_click({
+                                            let t = track.clone();
+                                            cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
+                                                if ev.click_count() >= 2 {
+                                                    if !this.fav_ids.contains(&t.id) {
+                                                        this.toggle_favorite(&t, cx);
+                                                    }
+                                                    this.heart_burst();
+                                                    cx.notify();
+                                                }
+                                            })
+                                        })
                                         .with_animation(
                                             ("np-cover", track.id as usize),
                                             gpui::Animation::new(std::time::Duration::from_millis(600)).with_easing(super::motion::ease_out),

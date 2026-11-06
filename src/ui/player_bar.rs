@@ -151,6 +151,18 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
                 .group_hover("progress", |s| s.h(sc(5.)))
                 .child(div().h_full().w(relative(frac)).rounded(sc(2.)).bg(theme::text())),
         )
+        // Gesture: the wheel over the bar seeks 5 s per notch.
+        .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _, cx| {
+            let dy = match ev.delta {
+                gpui::ScrollDelta::Lines(l) => l.y,
+                gpui::ScrollDelta::Pixels(p) => f32::from(p.y) / 40.0,
+            };
+            if this.now.is_some() && dy != 0.0 {
+                cx.stop_propagation();
+                let p = (this.snap.position + 5.0 * dy.signum() as f64).clamp(0.0, this.duration().max(0.0));
+                this.seek(p, cx);
+            }
+        }))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, ev: &MouseDownEvent, _, cx| {
@@ -175,11 +187,11 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
                 .flex()
                 .items_center()
                 .gap(sc(10.))
-                .child(icon_button("shuffle", Icon::Shuffle, 15., shuffle_color, |this, _, _, cx| this.toggle_shuffle(cx), cx))
-                .child(icon_button("prev", Icon::Prev, 18., theme::text(), |this, _, _, cx| this.prev(cx), cx))
-                .child(icon_button("playpause", play_icon, 24., theme::text(), |this, _, _, cx| this.toggle_play(cx), cx))
-                .child(icon_button("next", Icon::Next, 18., theme::text(), |this, _, _, cx| this.next(cx), cx))
-                .child(icon_button("repeat", repeat_icon, 15., repeat_color, |this, _, _, cx| this.cycle_repeat(cx), cx)),
+                .child(super::haptics::button(view, "shuffle", Icon::Shuffle, 15., shuffle_color, |this, _, _, cx| this.toggle_shuffle(cx), cx))
+                .child(super::haptics::button(view, "prev", Icon::Prev, 18., theme::text(), |this, _, _, cx| this.prev(cx), cx))
+                .child(super::haptics::button(view, "playpause", play_icon, 24., theme::text(), |this, _, _, cx| this.toggle_play(cx), cx))
+                .child(super::haptics::button(view, "next", Icon::Next, 18., theme::text(), |this, _, _, cx| this.next(cx), cx))
+                .child(super::haptics::button(view, "repeat", repeat_icon, 15., repeat_color, |this, _, _, cx| this.cycle_repeat(cx), cx)),
         )
         .child(
             div()
@@ -292,7 +304,9 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         );
 
     // Toggles that are on get a rounded highlight, as in the original.
-    let toggle = |id: &'static str, icon: Icon, on: bool, cx: &mut Context<AppView>, f: fn(&mut AppView, &mut Context<AppView>)| {
+    let (pop_queue, pop_lyrics) = (view.pulse_scale("queue"), view.pulse_scale("lyrics"));
+    let toggle = move |id: &'static str, icon: Icon, on: bool, cx: &mut Context<AppView>, f: fn(&mut AppView, &mut Context<AppView>)| {
+        let pop = if id == "queue" { pop_queue } else { pop_lyrics };
         div()
             .id(id)
             .flex_none()
@@ -305,9 +319,10 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
             .when(on, |d| d.bg(theme::elevated()))
             .hover(|s| s.bg(theme::hover()))
             .active(|s| s.opacity(0.6))
-            .child(icon.el(16., if on { theme::text() } else { theme::text_secondary() }))
+            .child(icon.el(16. * pop, if on { theme::text() } else { theme::text_secondary() }))
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
+                this.pulse(id);
                 f(this, cx)
             }))
     };

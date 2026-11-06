@@ -258,7 +258,9 @@ impl AppView {
                 Some(Load::Ready((pl, tracks))) => {
                     let total: u64 = tracks.iter().map(|t| t.duration as u64).sum();
                     b.push(Block::PlaylistHeader(pl.clone(), tracks.len() as u32, total));
-                    let style = RowStyle { date: true, bpm: self.settings.lock().audio_metadata, rating: self.settings.lock().show_ratings, ..RowStyle::new(true, true, false) };
+                    // One lock: taking the settings lock twice in a statement deadlocks.
+                    let (bpm, rating) = { let st = self.settings.lock(); (st.audio_metadata, st.show_ratings) };
+                    let style = RowStyle { date: true, bpm, rating, ..RowStyle::new(true, true, false) };
                     b.push(Block::FilterBar);
                     b.push(Block::TrackHeader(style));
                     for (i, t) in tracks.iter().enumerate() {
@@ -371,7 +373,8 @@ impl AppView {
                 match &self.fav_tracks {
                     Load::Ready(l) if l.is_empty() => b.push(Block::Message("Aún no tienes pistas favoritas.".into())),
                     Load::Ready(l) => {
-                        let style = RowStyle { date: true, bpm: self.settings.lock().audio_metadata, rating: self.settings.lock().show_ratings, sortable: Some("tracks"), ..RowStyle::new(true, true, false) };
+                        let (bpm, rating) = { let st = self.settings.lock(); (st.audio_metadata, st.show_ratings) };
+                        let style = RowStyle { date: true, bpm, rating, sortable: Some("tracks"), ..RowStyle::new(true, true, false) };
                         b.push(Block::Actions(TrackSrc::Favorites));
                         b.push(Block::FilterBar);
                         b.push(Block::TrackHeader(style));
@@ -1175,11 +1178,16 @@ pub fn content(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         .min_h(sc(0.)),
                 )
                 .child(super::smooth::wheel_catcher(cx.entity()))
-                // Page transition: fade in while sliding up a little.
+                .children(super::scrollbar::render(view, cx))
+                // Page transition: fade in while sliding in from the side you are
+                // heading to (from the right for a new page, from the left going back).
                 .with_animation(
                     ("page", view.page_anim),
-                    Animation::new(std::time::Duration::from_millis(200)).with_easing(super::motion::ease_out),
-                    |el, t| el.opacity(t).top(sc((1.0 - t) * 14.0)),
+                    Animation::new(std::time::Duration::from_millis(240)).with_easing(super::motion::ease_out),
+                    {
+                        let dir = view.nav_dir;
+                        move |el, t| el.opacity(t).left(sc((1.0 - t) * 26.0 * dir))
+                    },
                 ),
         )
         .into_any_element()

@@ -360,6 +360,7 @@ impl AppView {
         let display1 = vec![
             player_bg,
             self.toggle_row("audio-meta", "Metadatos de audio", "Muestra campos adicionales (p. ej. BPM) en las listas de pistas.", s.audio_metadata, |this, cx| this.toggle_setting("audio_metadata", cx), cx),
+            self.toggle_row("lyrics-roman", "Pronunciación de letras", "Muestra la lectura en alfabeto latino bajo las letras en japonés (romaji), chino (pinyin) y coreano.", s.lyrics_romanize, |this, cx| this.toggle_setting("lyrics_romanize", cx), cx),
             self.toggle_row("show-ratings", "Valoraciones", "Muestra la columna de estrellas en las listas de pistas.", s.show_ratings, |this, cx| this.toggle_setting("show_ratings", cx), cx),
         ];
         let display2 = vec![self.toggle_row("hide-uploads", "Ocultar la pestaña Uploads", "Quita la pestaña Uploads del Inicio.", s.hide_uploads, |this, cx| this.toggle_setting("hide_uploads", cx), cx)];
@@ -501,6 +502,8 @@ impl AppView {
             ("rubato", "MIT: remuestreo sinc"),
             ("cpal / wasapi", "Apache-2.0 / MIT: salida de audio"),
             ("reqwest, serde, image, roxmltree", "MIT / Apache-2.0"),
+            ("lindera + IPADIC", "MIT / licencia IPADIC: lectura de kanji (romaji)"),
+            ("pinyin", "MIT: pinyin del chino"),
             ("Inter", "SIL OFL 1.1: tipografía"),
             ("Material Icons", "Apache-2.0: iconos"),
         ];

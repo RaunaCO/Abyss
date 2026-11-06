@@ -84,6 +84,8 @@ pub struct Settings {
     pub audio_metadata: bool,
     pub show_ratings: bool,
     pub hide_uploads: bool,
+    /// Show the Latin pronunciation under lyrics in Asian scripts.
+    pub lyrics_romanize: bool,
     /// Application ID of the Discord application named TIDE.
     pub discord_client_id: String,
 
@@ -128,6 +130,7 @@ impl Default for Settings {
             audio_metadata: true,
             show_ratings: true,
             hide_uploads: false,
+            lyrics_romanize: true,
             discord_client_id: String::new(),
             // Replaced by whichever client the user signed in with.
             client_id: DEVICE_CLIENT_ID.into(),

@@ -91,11 +91,15 @@ fn nav_item(entry: NavEntry, collapsed: bool, view: &AppView, cx: &mut Context<A
         .when(active, |d| d.bg(theme::elevated()))
         .hover(|s| s.bg(theme::hover()).text_color(theme::text()))
         .active(|s| s.opacity(0.7))
-        .on_click(cx.listener(move |this, _, _, cx| this.navigate(target.clone(), cx)));
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.pulse(id);
+            this.navigate(target.clone(), cx)
+        }));
+    let pop = view.pulse_scale(id);
     if collapsed {
         base.mx(sc((RAIL_W - 32.) / 2.))
             .justify_center()
-            .child(icon.el(16., color))
+            .child(icon.el(16. * pop, color))
             .tooltip(tip(label))
             .into_any_element()
     } else {
@@ -105,7 +109,7 @@ fn nav_item(entry: NavEntry, collapsed: bool, view: &AppView, cx: &mut Context<A
             .text_size(sc(13.))
             .text_color(color)
             .font_weight(if active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-            .child(icon.el(16., color))
+            .child(icon.el(16. * pop, color))
             .child(label)
             .into_any_element()
     }
