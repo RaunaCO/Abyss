@@ -162,11 +162,24 @@ pub fn drag_move(window: &mut Window, drag: WinDrag) {
     }
 }
 
-pub fn drag_end() {
+/// Finish a drag. Dropped at the top edge of the screen, the window maximises
+/// (like Windows' Aero Snap).
+pub fn drag_end(window: &mut Window) {
     #[cfg(windows)]
     unsafe {
         win32::ReleaseCapture();
+        let mut c = win32::Point::default();
+        win32::GetCursorPos(&mut c);
+        if c.y <= 2 {
+            if let Some(h) = hwnd(window) {
+                if win32::IsZoomed(h) == 0 {
+                    win32::PostMessageW(h, win32::WM_SYSCOMMAND, win32::SC_MAXIMIZE, 0);
+                }
+            }
+        }
     }
+    #[cfg(not(windows))]
+    let _ = window;
 }
 
 /// Hand the drag over to Windows/// Hand the drag over to Windows, as if the native title bar was grabbed

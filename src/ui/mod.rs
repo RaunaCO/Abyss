@@ -68,7 +68,8 @@ use input::{InputEvent, TextInput};
 actions!(app, [OpenSettings, GoHome, ToggleShuffle, PlayPause, NextTrack, PrevTrack, FocusSearch, SeekForward, SeekBack, VolumeUp, VolumeDown, ToggleMute, GoBack, GoForward, ZoomIn, ZoomOut, ZoomReset]);
 
 pub fn bindings() -> Vec<KeyBinding> {
-    let ctx = Some("App");
+    // Single-key shortcuts must not fire while typing in a text field.
+    let ctx = Some("App && !TextInput");
     vec![
         KeyBinding::new("space", PlayPause, ctx),
         KeyBinding::new("ctrl-right", NextTrack, ctx),
@@ -1808,7 +1809,7 @@ impl Render for AppView {
                         return;
                     }
                     this.win_drag = None;
-                    winctl::drag_end();
+                    winctl::drag_end(window);
                 }
                 if this.drag.is_some() {
                     // Button released outside the window: finish the drag
@@ -1822,19 +1823,19 @@ impl Render for AppView {
                     this.drag_to(ev.position, cx);
                 }
             }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, window, cx| {
                 interact::release_all();
                 this.scrollbar_drag = false;
                 if this.win_drag.take().is_some() {
-                    winctl::drag_end();
+                    winctl::drag_end(window);
                 }
                 this.end_drag(cx)
             }))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| {
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, window, cx| {
                 interact::release_all();
                 this.scrollbar_drag = false;
                 if this.win_drag.take().is_some() {
-                    winctl::drag_end();
+                    winctl::drag_end(window);
                 }
                 this.end_drag(cx)
             }))
