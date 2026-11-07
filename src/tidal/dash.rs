@@ -13,8 +13,17 @@ pub struct Mpd {
     pub sample_rate: Option<u32>,
 }
 
+/// Upper bound on segments in one manifest. A 4-hour track in 4 s segments is
+/// 3600; anything far above that is a malformed manifest, not a real track.
+const MAX_SEGMENTS: u64 = 20_000;
+
 pub fn parse(xml: &str) -> Result<Mpd> {
     let doc = roxmltree::Document::parse(xml)?;
+    // TIDE only plays streams the account receives unencrypted. A protected
+    // (DRM) representation is refused outright, never worked around.
+    if doc.descendants().any(|n| n.has_tag_name("ContentProtection")) {
+        return Err(anyhow!("protected (DRM) stream is not supported"));
+    }
     // Pick the representation with the highest bandwidth.
     let rep = doc
         .descendants()
@@ -25,9 +34,7 @@ pub fn parse(xml: &str) -> Result<Mpd> {
     let template = rep
         .descendants()
         .find(|n| n.has_tag_name("SegmentTemplate"))
-        .or_else(|| {
-            rep.parent()?.children().find(|n| n.has_tag_name("SegmentTemplate"))
-        })
+        .or_else(|| rep.parent()?.children().find(|n| n.has_tag_name("SegmentTemplate")))
         .ok_or_else(|| anyhow!("MPD without SegmentTemplate"))?;
 
     let rep_id = rep.attribute("id").unwrap_or("");
@@ -51,14 +58,24 @@ pub fn parse(xml: &str) -> Result<Mpd> {
         for s in tl.children().filter(|n| n.has_tag_name("S")) {
             let r: i64 = s.attribute("r").and_then(|r| r.parse().ok()).unwrap_or(0);
             let d: f64 = s.attribute("d").and_then(|d| d.parse().ok()).unwrap_or(0.0);
+            count += 1 + r.max(0) as u64;
+            if count > MAX_SEGMENTS {
+                return Err(anyhow!("MPD with too many segments ({count})"));
+            }
             for _ in 0..=r.max(0) {
                 seg_secs.push(d / timescale);
             }
-            count += 1 + r.max(0) as u64;
         }
     }
     if count == 0 {
         return Err(anyhow!("MPD without segment timeline"));
+    }
+    if timescale.is_nan() || timescale <= 0.0 {
+        return Err(anyhow!("MPD with invalid timescale"));
+    }
+    // Audio is only fetched over TLS.
+    if !init.starts_with("https://") || !media.starts_with("https://") {
+        return Err(anyhow!("MPD with non-HTTPS segment URLs"));
     }
 
     let mut urls = Vec::with_capacity(count as usize + 1);
@@ -67,22 +84,12 @@ pub fn parse(xml: &str) -> Result<Mpd> {
         urls.push(fill(media, Some(n)));
     }
 
-    let codec = rep
-        .attribute("codecs")
-        .or_else(|| rep.parent()?.attribute("codecs"))
-        .unwrap_or("flac")
-        .to_string();
+    let codec = rep.attribute("codecs").or_else(|| rep.parent()?.attribute("codecs")).unwrap_or("flac").to_string();
     let sample_rate = rep.attribute("audioSamplingRate").and_then(|s| s.parse().ok());
     // TIDAL ids look like "FLAC,96000,24".
     let bit_depth = rep_id.split(',').nth(2).and_then(|b| b.trim().parse().ok());
 
-    Ok(Mpd {
-        urls,
-        seg_secs,
-        codec: if codec.starts_with("mp4a") { "AAC".into() } else { codec.to_uppercase() },
-        bit_depth,
-        sample_rate,
-    })
+    Ok(Mpd { urls, seg_secs, codec: if codec.starts_with("mp4a") { "AAC".into() } else { codec.to_uppercase() }, bit_depth, sample_rate })
 }
 
 #[cfg(test)]
@@ -98,5 +105,36 @@ mod tests {
         assert_eq!(m.urls[5], "https://x/5.mp4");
         assert_eq!(m.bit_depth, Some(24));
         assert_eq!(m.sample_rate, Some(96000));
+    }
+
+    fn mpd(extra: &str, s: &str, url: &str) -> String {
+        format!(
+            r#"<MPD><Period><AdaptationSet>{extra}<Representation id="FLAC,44100,16" bandwidth="1"><SegmentTemplate timescale="44100" initialization="{url}/0.mp4" media="{url}/$Number$.mp4"><SegmentTimeline>{s}</SegmentTimeline></SegmentTemplate></Representation></AdaptationSet></Period></MPD>"#
+        )
+    }
+
+    #[test]
+    fn refuses_drm() {
+        let xml = mpd(r#"<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011"/>"#, r#"<S d="1"/>"#, "https://x");
+        assert!(super::parse(&xml).is_err());
+    }
+
+    #[test]
+    fn refuses_huge_repeat() {
+        // Would otherwise allocate trillions of entries.
+        let xml = mpd("", r#"<S d="1" r="999999999999"/>"#, "https://x");
+        assert!(super::parse(&xml).is_err());
+    }
+
+    #[test]
+    fn refuses_plain_http() {
+        let xml = mpd("", r#"<S d="1"/>"#, "http://x");
+        assert!(super::parse(&xml).is_err());
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert!(super::parse("not xml").is_err());
+        assert!(super::parse("<MPD/>").is_err());
     }
 }

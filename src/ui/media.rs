@@ -110,11 +110,8 @@ impl Media {
             self.playing = Some(playing);
             self.last_pos = Instant::now();
             let progress = Some(MediaPosition(Duration::from_secs_f64(position.max(0.0))));
-            let _ = self.controls.set_playback(if playing {
-                MediaPlayback::Playing { progress }
-            } else {
-                MediaPlayback::Paused { progress }
-            });
+            let _ =
+                self.controls.set_playback(if playing { MediaPlayback::Playing { progress } } else { MediaPlayback::Paused { progress } });
         }
     }
 }

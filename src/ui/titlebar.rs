@@ -16,7 +16,6 @@ use super::widgets::{cover, icon_button};
 use super::winctl;
 use super::{theme, AppView, Page};
 
-
 #[derive(Clone, Copy)]
 enum WinButton {
     Min,
@@ -92,7 +91,7 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
     let fwd_c = if view.can_go_forward() { theme::text() } else { theme::text_dim() };
     let search_focused = view.search_input.read(cx).focus_handle(cx).is_focused(window);
     let maximized = winctl::is_maximized(window);
-    let side_w = view.sidebar_width_animated();
+    let _side_w = view.sidebar_width_animated();
     let avatar = view.settings.lock().user_picture.clone().map(|p| crate::tidal::image_url(&p, 80));
 
     // Row 1: window caption: menu, name, drag area, window buttons.
@@ -146,26 +145,20 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
         .flex()
         .items_center()
         .child(
-            div()
-                .w(sc(RAIL_W))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .id("sidebar-toggle")
-                        .size(sc(30.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(sc(8.))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::hover()))
-                        .active(|s| s.opacity(0.6))
-                        .child(Icon::Collapse.el(18., theme::text_secondary()))
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
-                ),
+            div().w(sc(RAIL_W)).flex_none().flex().items_center().justify_center().child(
+                div()
+                    .id("sidebar-toggle")
+                    .size(sc(30.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(sc(8.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::hover()))
+                    .active(|s| s.opacity(0.6))
+                    .child(Icon::Collapse.el(18., theme::text_secondary()))
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+            ),
         )
         .child(
             div()
@@ -217,13 +210,5 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Settings, cx))),
         );
 
-    div()
-        .id("titlebar")
-        .flex_none()
-        .w_full()
-        .flex()
-        .flex_col()
-        .child(caption)
-        .child(header)
-        .into_any_element()
+    div().id("titlebar").flex_none().w_full().flex().flex_col().child(caption).child(header).into_any_element()
 }

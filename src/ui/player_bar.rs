@@ -4,7 +4,7 @@
 //! quality pill on the right.
 
 use super::sc;
-use gpui::{canvas, div, AnimationExt, prelude::*, px, relative, AnyElement, Context, FontWeight, MouseButton, MouseDownEvent, Window};
+use gpui::{canvas, div, prelude::*, px, relative, AnimationExt, AnyElement, Context, FontWeight, MouseButton, MouseDownEvent, Window};
 
 use super::icons::Icon;
 use super::widgets::{cover, explicit_badge, fmt_time, icon_button};
@@ -14,8 +14,8 @@ use crate::config::Repeat;
 
 pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
     let entity = cx.entity();
-    let ambient = view.ambient(cx);
-    let palette = view.palette(cx);
+    let _ambient = view.ambient(cx);
+    let _palette = view.palette(cx);
     let bar_frames = if view.settings.lock().np_blur {
         view.now.as_ref().and_then(|n| n.track.cover(640)).and_then(|u| super::images::frames(&u, cx))
     } else {
@@ -29,119 +29,112 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
     let fav = now.as_ref().map(|(t, _)| view.fav_ids.contains(&t.id)).unwrap_or(false);
 
     // ---------------------------------------------------------- left
-    let left = div()
-        .w(sc(410.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(sc(12.))
-        .min_w(sc(0.))
-        .when_some(now.clone(), |d, (track, _)| {
-            let album = track.album.as_ref().map(|a| a.id);
-            let artist = track.artists.first().map(|a| a.id);
-            let t_fav = track.clone();
-            let t_more = track.clone();
-            d.child(
-                div()
-                    .id("np-cover")
-                    .relative()
-                    .flex_none()
-                    .cursor_pointer()
-                    .rounded(sc(4.))
-                    .group("bar-cover")
-                    .group_hover("bar-cover", |s| s.shadow_lg())
-                    .child(cover(track.cover(160), 42., false, cx))
-                    // Hover: the cover dims and shows where a click leads (Now Playing).
-                    .child(
-                        div()
-                            .absolute()
-                            .top(sc(0.))
-                            .left(sc(0.))
-                            .size(sc(42.))
-                            .rounded(sc(4.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .invisible()
-                            .bg(gpui::rgba(0x0000008c))
-                            .group_hover("bar-cover", |s| s.visible())
-                            .child(Icon::ChevUp.el(20., theme::text())),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.toggle_now_playing(cx)
-                    })),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(sc(0.))
-                    .flex()
-                    .flex_col()
-                    .gap(sc(3.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(sc(6.))
-                            .min_w(sc(0.))
-                            .child(
-                                div()
-                                    .id("np-title")
-                                    .min_w(sc(0.))
-                                    .truncate()
-                                    .text_size(sc(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .cursor_pointer()
-                                    .hover(|s| s.underline())
-                                    .child(track.display_title())
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        if let Some(id) = album {
-                                            this.navigate(Page::Album(id), cx)
-                                        }
-                                    })),
-                            )
-                            .when(track.explicit, |d| d.child(explicit_badge())),
-                    )
-                    .child(
-                        div()
-                            .id("np-artist")
-                            .truncate()
-                            .text_size(sc(11.))
-                            .text_color(theme::text_secondary())
-                            .cursor_pointer()
-                            .hover(|s| s.underline().text_color(theme::text()))
-                            .child(track.artist_names())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                if let Some(id) = artist {
-                                    this.navigate(Page::Artist(id), cx)
-                                }
-                            })),
-                    ),
-            )
-            .child(icon_button(
-                "np-fav",
-                if fav { Icon::HeartFilled } else { Icon::Heart },
-                15. * view.heart_scale(track.id),
-                if fav { theme::text() } else { theme::text_secondary() },
-                move |this, _, _, cx| this.toggle_favorite(&t_fav, cx),
-                cx,
-            ))
-            .child(icon_button(
-                "np-more",
-                Icon::More,
-                15.,
-                theme::text_secondary(),
-                move |this, ev: &gpui::ClickEvent, _, cx| {
-                    this.menu = Some((ev.position(), MenuTarget::Track(t_more.clone())));
-                    cx.notify();
-                },
-                cx,
-            ))
-            .child(super::widgets::stars("bar", track.id, 13., view, cx))
-        });
+    let left = div().w(sc(410.)).flex_none().flex().items_center().gap(sc(12.)).min_w(sc(0.)).when_some(now.clone(), |d, (track, _)| {
+        let album = track.album.as_ref().map(|a| a.id);
+        let artist = track.artists.first().map(|a| a.id);
+        let t_fav = track.clone();
+        let t_more = track.clone();
+        d.child(
+            div()
+                .id("np-cover")
+                .relative()
+                .flex_none()
+                .cursor_pointer()
+                .rounded(sc(4.))
+                .group("bar-cover")
+                .group_hover("bar-cover", |s| s.shadow_lg())
+                .child(cover(track.cover(160), 42., false, cx))
+                // Hover: the cover dims and shows where a click leads (Now Playing).
+                .child(
+                    div()
+                        .absolute()
+                        .top(sc(0.))
+                        .left(sc(0.))
+                        .size(sc(42.))
+                        .rounded(sc(4.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .invisible()
+                        .bg(gpui::rgba(0x0000008c))
+                        .group_hover("bar-cover", |s| s.visible())
+                        .child(Icon::ChevUp.el(20., theme::text())),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_now_playing(cx)
+                })),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(sc(0.))
+                .flex()
+                .flex_col()
+                .gap(sc(3.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(sc(6.))
+                        .min_w(sc(0.))
+                        .child(
+                            div()
+                                .id("np-title")
+                                .min_w(sc(0.))
+                                .truncate()
+                                .text_size(sc(12.))
+                                .font_weight(FontWeight::BOLD)
+                                .cursor_pointer()
+                                .hover(|s| s.underline())
+                                .child(track.display_title())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(id) = album {
+                                        this.navigate(Page::Album(id), cx)
+                                    }
+                                })),
+                        )
+                        .when(track.explicit, |d| d.child(explicit_badge())),
+                )
+                .child(
+                    div()
+                        .id("np-artist")
+                        .truncate()
+                        .text_size(sc(11.))
+                        .text_color(theme::text_secondary())
+                        .cursor_pointer()
+                        .hover(|s| s.underline().text_color(theme::text()))
+                        .child(track.artist_names())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(id) = artist {
+                                this.navigate(Page::Artist(id), cx)
+                            }
+                        })),
+                ),
+        )
+        .child(icon_button(
+            "np-fav",
+            if fav { Icon::HeartFilled } else { Icon::Heart },
+            15. * view.heart_scale(track.id),
+            if fav { theme::text() } else { theme::text_secondary() },
+            move |this, _, _, cx| this.toggle_favorite(&t_fav, cx),
+            cx,
+        ))
+        .child(icon_button(
+            "np-more",
+            Icon::More,
+            15.,
+            theme::text_secondary(),
+            move |this, ev: &gpui::ClickEvent, _, cx| {
+                this.menu = Some((ev.position(), MenuTarget::Track(t_more.clone())));
+                cx.notify();
+            },
+            cx,
+        ))
+        .child(super::widgets::stars("bar", track.id, 13., view, cx))
+    });
 
     // -------------------------------------------------------- centre
     let shuffle_color = if view.shuffle { theme::accent() } else { theme::text_secondary() };
@@ -159,11 +152,7 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         .items_center()
         .cursor_pointer()
         .group("progress")
-        .child(
-            canvas(move |b, _, cx| e1.update(cx, |v, _| v.progress_bounds = b), |_, _, _, _| {})
-                .absolute()
-                .size_full(),
-        )
+        .child(canvas(move |b, _, cx| e1.update(cx, |v, _| v.progress_bounds = b), |_, _, _, _| {}).absolute().size_full())
         .child(
             div()
                 .w_full()
@@ -220,7 +209,15 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
                 .flex()
                 .items_center()
                 .gap(sc(10.))
-                .child(super::haptics::button(view, "shuffle", Icon::Shuffle, 15., shuffle_color, |this, _, _, cx| this.toggle_shuffle(cx), cx))
+                .child(super::haptics::button(
+                    view,
+                    "shuffle",
+                    Icon::Shuffle,
+                    15.,
+                    shuffle_color,
+                    |this, _, _, cx| this.toggle_shuffle(cx),
+                    cx,
+                ))
                 .child(super::haptics::button(view, "prev", Icon::Prev, 18., theme::text(), |this, _, _, cx| this.prev(cx), cx))
                 .child({
                     // Clean play / pause: rounded glyph, no background; it sinks and springs
@@ -353,11 +350,7 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
         .cursor_pointer()
         .relative()
         .group("vol")
-        .child(
-            canvas(move |b, _, cx| e2.update(cx, |v, _| v.volume_bounds = b), |_, _, _, _| {})
-                .absolute()
-                .size_full(),
-        )
+        .child(canvas(move |b, _, cx| e2.update(cx, |v, _| v.volume_bounds = b), |_, _, _, _| {}).absolute().size_full())
         .child(
             div()
                 .w_full()
@@ -430,13 +423,9 @@ pub fn render(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView
             cx.notify();
         }))
         // Lyrics live in the full Now Playing view, as in the original.
-        .child(toggle(
-            "lyrics",
-            Icon::Lyrics,
-            view.now_playing_open && view.np_tab == super::now_playing::NpTab::Lyrics,
-            cx,
-            |this, cx| this.open_np_tab(super::now_playing::NpTab::Lyrics, cx),
-        ))
+        .child(toggle("lyrics", Icon::Lyrics, view.now_playing_open && view.np_tab == super::now_playing::NpTab::Lyrics, cx, |this, cx| {
+            this.open_np_tab(super::now_playing::NpTab::Lyrics, cx)
+        }))
         .child(icon_button(
             "mute",
             if vol <= 0.001 { Icon::VolumeOff } else { Icon::VolumeUp },

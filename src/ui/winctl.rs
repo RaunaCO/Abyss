@@ -137,7 +137,15 @@ pub fn drag_begin(window: &mut Window) -> Option<WinDrag> {
                 drag.off_x = (w as f32 * ratio) as i32;
                 drag.off_y = (c.y - r.top).min(20);
                 win32::ShowWindow(h, win32::SW_RESTORE);
-                win32::SetWindowPos(h, 0, c.x - drag.off_x, c.y - drag.off_y, 0, 0, win32::SWP_NOSIZE | win32::SWP_NOZORDER | win32::SWP_NOACTIVATE);
+                win32::SetWindowPos(
+                    h,
+                    0,
+                    c.x - drag.off_x,
+                    c.y - drag.off_y,
+                    0,
+                    0,
+                    win32::SWP_NOSIZE | win32::SWP_NOZORDER | win32::SWP_NOACTIVATE,
+                );
             }
             // Keep getting mouse moves even if the cursor outruns the window.
             win32::SetCapture(h);
@@ -157,7 +165,15 @@ pub fn drag_move(window: &mut Window, drag: WinDrag) {
         unsafe {
             let mut c = win32::Point::default();
             win32::GetCursorPos(&mut c);
-            win32::SetWindowPos(h, 0, c.x - drag.off_x, c.y - drag.off_y, 0, 0, win32::SWP_NOSIZE | win32::SWP_NOZORDER | win32::SWP_NOACTIVATE);
+            win32::SetWindowPos(
+                h,
+                0,
+                c.x - drag.off_x,
+                c.y - drag.off_y,
+                0,
+                0,
+                win32::SWP_NOSIZE | win32::SWP_NOZORDER | win32::SWP_NOACTIVATE,
+            );
         }
     }
 }

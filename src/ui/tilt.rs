@@ -51,7 +51,15 @@ pub struct Tilt {
 
 impl Default for Tilt {
     fn default() -> Self {
-        Self { rx: Spring::at(0.0), ry: Spring::at(0.0), gx: Spring::at(0.5), gy: Spring::at(0.5), glow: Spring::at(0.0), last: Instant::now(), moving: false }
+        Self {
+            rx: Spring::at(0.0),
+            ry: Spring::at(0.0),
+            gx: Spring::at(0.5),
+            gy: Spring::at(0.5),
+            glow: Spring::at(0.0),
+            last: Instant::now(),
+            moving: false,
+        }
     }
 }
 
@@ -184,7 +192,8 @@ impl Tilt {
                 };
                 let n = TILES;
                 let nf = n as f32;
-                let grid: Vec<Vec<(f32, f32, f32)>> = (0..=n).map(|j| (0..=n).map(|i| project(i as f32 / nf, j as f32 / nf)).collect()).collect();
+                let grid: Vec<Vec<(f32, f32, f32)>> =
+                    (0..=n).map(|j| (0..=n).map(|i| project(i as f32 / nf, j as f32 / nf)).collect()).collect();
                 for j in 0..n {
                     for i in 0..n {
                         let (a, b, c, d) = (grid[j][i], grid[j][i + 1], grid[j + 1][i], grid[j + 1][i + 1]);
@@ -204,7 +213,10 @@ impl Tilt {
                             gpui::size(gpui::px(size_px * sx), gpui::px(size_px * sy)),
                         );
                         // A hair of overlap so no background shows between cells.
-                        let cell = gpui::Bounds::new(gpui::point(gpui::px(left - 0.25), gpui::px(top - 0.25)), gpui::size(gpui::px(w + 0.5), gpui::px(h + 0.5)));
+                        let cell = gpui::Bounds::new(
+                            gpui::point(gpui::px(left - 0.25), gpui::px(top - 0.25)),
+                            gpui::size(gpui::px(w + 0.5), gpui::px(h + 0.5)),
+                        );
                         let depth = (a.2 + b.2 + c.2 + d.2) / 4.0 / half;
                         let shade = (-depth * 0.26).clamp(0.0, 0.24);
                         window.with_content_mask(Some(gpui::ContentMask { bounds: cell }), |window| {

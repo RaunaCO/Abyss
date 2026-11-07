@@ -94,19 +94,23 @@ fn netease(t: &Tidal, track: &Track) -> Result<Lyrics> {
     let lrc = lyr.get("lrc").and_then(|l| l.get("lyric")).and_then(Value::as_str).unwrap_or("");
     // Drop the credit lines NetEase puts first ("作词 : …", "Composer : …").
     let credit = |line: &str| {
-        let l = line.split(']').last().unwrap_or("").trim();
+        let l = line.split(']').next_back().unwrap_or("").trim();
         ["作词", "作曲", "编曲", "制作", "混音", "母带", "Lyricist", "Composer", "Arranger", "Producer"]
             .iter()
             .any(|k| l.starts_with(k) && (l.contains(':') || l.contains('：')))
     };
-    let cleaned: String = lrc.lines().filter(|l| !credit(l)).collect::<Vec<_>>().join("
-");
+    let cleaned: String = lrc.lines().filter(|l| !credit(l)).collect::<Vec<_>>().join(
+        "
+",
+    );
     let synced = parse_lrc(&cleaned);
     if synced.is_empty() {
         return Err(anyhow!("NetEase: no synced lyrics"));
     }
-    let text = synced.iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>().join("
-");
+    let text = synced.iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>().join(
+        "
+",
+    );
     Ok(Lyrics { text, synced, provider: "NetEase".into(), roman: Vec::new() })
 }
 
@@ -143,7 +147,9 @@ impl Tidal {
             l
         });
         let providers: [&dyn Fn() -> Result<Lyrics>; 3] = [&|| lrclib(self, track), &|| netease(self, track), &|| lyrics_ovh(self, track)];
-        for l in std::iter::once(tidal.ok_or_else(|| anyhow!("none"))).chain(providers.iter().map(|p| p())) {
+        // Third-party lookups are optional (they disclose what is playing).
+        let external = if self.settings.lock().external_lyrics { &providers[..] } else { &providers[..0] };
+        for l in std::iter::once(tidal.ok_or_else(|| anyhow!("none"))).chain(external.iter().map(|p| p())) {
             match l {
                 Ok(l) if !l.synced.is_empty() => return Ok(l),
                 Ok(l) if plain.is_none() && !l.text.is_empty() => plain = Some(l),

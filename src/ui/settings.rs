@@ -25,9 +25,9 @@ fn card(rows: Vec<AnyElement>) -> AnyElement {
         .overflow_hidden()
         .flex()
         .flex_col()
-        .children(rows.into_iter().enumerate().map(|(i, r)| {
-            div().when(i > 0, |d| d.border_t_1().border_color(gpui::rgba(0xffffff0f))).child(r)
-        }))
+        .children(
+            rows.into_iter().enumerate().map(|(i, r)| div().when(i > 0, |d| d.border_t_1().border_color(gpui::rgba(0xffffff0f))).child(r)),
+        )
         .into_any_element()
 }
 
@@ -43,16 +43,13 @@ fn row_text(title: impl Into<SharedString>, desc: Option<SharedString>) -> AnyEl
         .into_any_element()
 }
 
-fn row(id: impl Into<ElementId>, title: impl Into<SharedString>, desc: Option<SharedString>, right: Option<AnyElement>) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .px(sc(16.))
-        .py(sc(14.))
-        .flex()
-        .items_center()
-        .gap(sc(16.))
-        .child(row_text(title, desc))
-        .children(right)
+fn row(
+    id: impl Into<ElementId>,
+    title: impl Into<SharedString>,
+    desc: Option<SharedString>,
+    right: Option<AnyElement>,
+) -> gpui::Stateful<gpui::Div> {
+    div().id(id).px(sc(16.)).py(sc(14.)).flex().items_center().gap(sc(16.)).child(row_text(title, desc)).children(right)
 }
 
 fn switch(on: bool, key: &str) -> AnyElement {
@@ -121,12 +118,8 @@ impl AppView {
 
     pub fn settings_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let tab = self.settings_tab;
-        let tabs = div()
-            .flex()
-            .gap(sc(24.))
-            .border_b_1()
-            .border_color(gpui::rgba(0xffffff12))
-            .children(["General", "Cuenta", "Acerca de"].into_iter().enumerate().map(|(i, t)| {
+        let tabs = div().flex().gap(sc(24.)).border_b_1().border_color(gpui::rgba(0xffffff12)).children(
+            ["General", "Cuenta", "Acerca de"].into_iter().enumerate().map(|(i, t)| {
                 let k = format!("stab-{i}");
                 let h = super::interact::hover(&k);
                 let el = div()
@@ -145,7 +138,8 @@ impl AppView {
                         cx.notify();
                     }));
                 super::interact::track(el, k, cx)
-            }));
+            }),
+        );
         let body = match tab {
             1 => self.settings_account(cx),
             2 => self.settings_about(cx),
@@ -204,9 +198,7 @@ impl AppView {
                 .hover(|st| st.bg(gpui::rgba(0xffffff0d)))
                 .child(dot(selected))
                 .child(row_text(q.label(), Some(sub.into())))
-                .when(q == Quality::Low, |d| {
-                    d.child(small_button(("q-low-detail", 0usize), "AAC 320 kbps", false))
-                })
+                .when(q == Quality::Low, |d| d.child(small_button(("q-low-detail", 0usize), "AAC 320 kbps", false)))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_quality(q, cx)))
                 .into_any_element()
         })
@@ -216,7 +208,14 @@ impl AppView {
         let device_label = s.output_device.clone().unwrap_or_else(|| "Predeterminado del sistema".into());
         let device_open = self.settings_dev_open;
         let mut playback = vec![
-            self.toggle_row("normalize", "Normalizar volumen", "Iguala el volumen de todas las pistas con los datos de ganancia de TIDAL.", s.normalize, |this, cx| this.toggle_setting("normalize", cx), cx),
+            self.toggle_row(
+                "normalize",
+                "Normalizar volumen",
+                "Iguala el volumen de todas las pistas con los datos de ganancia de TIDAL.",
+                s.normalize,
+                |this, cx| this.toggle_setting("normalize", cx),
+                cx,
+            ),
             row(
                 "sound-output",
                 "Salida de sonido",
@@ -346,7 +345,13 @@ impl AppView {
                         .border_color(if selected { theme::text() } else { gpui::rgba(0x00000000) })
                         .child(preview),
                 )
-                .child(div().text_size(sc(11.)).font_weight(FontWeight::BOLD).text_color(if selected { theme::text() } else { theme::text_secondary() }).child(label))
+                .child(
+                    div()
+                        .text_size(sc(11.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(if selected { theme::text() } else { theme::text_secondary() })
+                        .child(label),
+                )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings.lock().np_blur = blur;
                     this.settings.lock().save();
@@ -366,16 +371,24 @@ impl AppView {
         let display1 = vec![
             player_bg,
             self.toggle_row("audio-meta", "Metadatos de audio", "Muestra campos adicionales (p. ej. BPM) en las listas de pistas.", s.audio_metadata, |this, cx| this.toggle_setting("audio_metadata", cx), cx),
+            self.toggle_row("lyrics-ext", "Letras de otros proveedores", "Si TIDAL no tiene la letra, la busca en LRCLIB, NetEase y lyrics.ovh enviándoles el título, artista y álbum de la canción.", s.external_lyrics, |this, cx| this.toggle_setting("external_lyrics", cx), cx),
             self.toggle_row("lyrics-roman", "Pronunciación de letras", "Muestra la lectura en alfabeto latino bajo las letras en japonés (romaji), chino (pinyin) y coreano.", s.lyrics_romanize, |this, cx| this.toggle_setting("lyrics_romanize", cx), cx),
             self.toggle_row("show-ratings", "Valoraciones", "Muestra la columna de estrellas en las listas de pistas.", s.show_ratings, |this, cx| this.toggle_setting("show_ratings", cx), cx),
         ];
-        let display2 = vec![self.toggle_row("hide-uploads", "Ocultar la pestaña Uploads", "Quita la pestaña Uploads del Inicio.", s.hide_uploads, |this, cx| this.toggle_setting("hide_uploads", cx), cx)];
+        let display2 = vec![self.toggle_row(
+            "hide-uploads",
+            "Ocultar la pestaña Uploads",
+            "Quita la pestaña Uploads del Inicio.",
+            s.hide_uploads,
+            |this, cx| this.toggle_setting("hide_uploads", cx),
+            cx,
+        )];
 
         // ------------------------------------------------ connect
         let connect = vec![self.toggle_row(
             "discord",
             "Discord",
-            "Muestra «Escuchando TIDE» en tu perfil, con la portada y la barra de progreso, igual que Spotify.",
+            "Muestra «Escuchando TIDE» en tu perfil de Discord (visible para tus contactos y servidores): canción, artista, álbum, portada y progreso.",
             s.discord,
             |this, cx| this.toggle_setting("discord", cx),
             cx,
@@ -474,7 +487,11 @@ impl AppView {
                 "signout",
                 "Cerrar sesión",
                 Some("Borra la sesión guardada en este equipo.".into()),
-                Some(small_button("signout-btn", "Cerrar sesión", true).on_click(cx.listener(|this, _, _, cx| this.sign_out(cx))).into_any_element()),
+                Some(
+                    small_button("signout-btn", "Cerrar sesión", true)
+                        .on_click(cx.listener(|this, _, _, cx| this.sign_out(cx)))
+                        .into_any_element(),
+                ),
             )
             .into_any_element(),
         ];
@@ -500,7 +517,10 @@ impl AppView {
             .items_center()
             .gap(sc(16.))
             .child(gpui::img(super::images::logo()).size(sc(56.)).rounded(sc(12.)))
-            .child(row_text("Versión", Some(format!("TIDE {} · cliente no oficial de TIDAL, hecho con Rust y GPUI", env!("CARGO_PKG_VERSION")).into())))
+            .child(row_text(
+                "Versión",
+                Some(format!("TIDE {} · cliente no oficial de TIDAL, hecho con Rust y GPUI", env!("CARGO_PKG_VERSION")).into()),
+            ))
             .into_any_element();
         const CREDITS: &[(&str, &str)] = &[
             ("GPUI", "Apache-2.0: interfaz"),

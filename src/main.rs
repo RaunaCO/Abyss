@@ -8,6 +8,7 @@ mod discord;
 mod ratings;
 mod recents;
 mod romanize;
+mod secure;
 mod tidal;
 mod ui;
 
@@ -17,9 +18,12 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("tide=info")).init();
     // A panic inside a window callback aborts the process without a trace; keep the message.
     std::panic::set_hook(Box::new(|info| {
-        let text = format!("{info}
+        let text = format!(
+            "{info}
 {}
-", std::backtrace::Backtrace::force_capture());
+",
+            std::backtrace::Backtrace::force_capture()
+        );
         let _ = std::fs::create_dir_all(config::config_dir());
         let _ = std::fs::write(config::config_dir().join("crash.log"), &text);
         eprintln!("{text}");
@@ -80,16 +84,28 @@ fn main() {
         // Decode test: resolve in Max, download, decode 20 s, then seek.
         match t.stream(id, config::Quality::Max) {
             Ok(info) => {
-                println!("stream: {} {} {:?}", info.tier(), info.detail(), match &info.source {
-                    tidal::StreamSource::Single(_) => "single file".to_string(),
-                    tidal::StreamSource::Segments(u) => format!("{} DASH segments", u.len()),
-                });
+                println!(
+                    "stream: {} {} {:?}",
+                    info.tier(),
+                    info.detail(),
+                    match &info.source {
+                        tidal::StreamSource::Single(_) => "single file".to_string(),
+                        tidal::StreamSource::Segments(u) => format!("{} DASH segments", u.len()),
+                    }
+                );
                 let mp4 = matches!(info.source, tidal::StreamSource::Segments(_)) || !info.codec.eq_ignore_ascii_case("flac");
                 let start = std::time::Instant::now();
                 let buf = audio::stream::start(t.http().clone(), info.source.clone(), info.seg_secs.clone());
                 match audio::decode::Decoder::open(buf.clone(), mp4) {
                     Ok(mut d) => {
-                        println!("decoder: {} Hz, {:?} bit, {} ch, duration {:?}, opened in {:?}", d.sample_rate, d.bits_per_sample, d.channels, d.duration, start.elapsed());
+                        println!(
+                            "decoder: {} Hz, {:?} bit, {} ch, duration {:?}, opened in {:?}",
+                            d.sample_rate,
+                            d.bits_per_sample,
+                            d.channels,
+                            d.duration,
+                            start.elapsed()
+                        );
                         let mut frames = 0usize;
                         let mut peak = 0f32;
                         while frames < d.sample_rate as usize * 20 {
@@ -105,7 +121,11 @@ fn main() {
                                 }
                             }
                         }
-                        println!("decoded {:.1} s, peak {peak:.3}, first audio after {:?}", frames as f64 / d.sample_rate as f64, start.elapsed());
+                        println!(
+                            "decoded {:.1} s, peak {peak:.3}, first audio after {:?}",
+                            frames as f64 / d.sample_rate as f64,
+                            start.elapsed()
+                        );
                         let st = std::time::Instant::now();
                         match audio::do_seek(&mut d, &buf, mp4, 150.0) {
                             Ok(at) => println!("seek to 150 s -> {at:.2} s in {:?}", st.elapsed()),

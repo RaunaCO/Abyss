@@ -23,31 +23,31 @@ pub fn sc(v: f32) -> gpui::Pixels {
 
 /// Zoom levels, as in a browser.
 pub const ZOOM_STEPS: [f32; 11] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+mod album_inline;
+mod appmenu;
+mod debug;
+pub mod fx;
+mod haptics;
 pub mod images;
 pub mod input;
+mod interact;
+mod media;
+mod motion;
+pub mod now_playing;
 mod pages;
 mod player_bar;
 pub mod playlists;
-pub mod now_playing;
-mod debug;
-mod media;
-mod smooth;
-mod motion;
-mod titlebar;
-mod winctl;
-mod album_inline;
-mod sort;
-pub mod fx;
-mod settings;
-mod appmenu;
-mod haptics;
 mod scrollbar;
-mod tilt;
-mod interact;
 mod search_menu;
+mod settings;
 mod sidebar;
+mod smooth;
+mod sort;
 pub mod theme;
+mod tilt;
+mod titlebar;
 mod widgets;
+mod winctl;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::Receiver;
@@ -56,8 +56,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    actions, div, prelude::*, px, App, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, ListAlignment,
-    ListState, MouseButton, MouseMoveEvent, Pixels, Point, ScrollHandle, Window,
+    actions, div, prelude::*, px, App, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, ListAlignment, ListState, MouseButton,
+    MouseMoveEvent, Pixels, Point, ScrollHandle, Window,
 };
 use parking_lot::Mutex;
 
@@ -66,7 +66,28 @@ use crate::config::{Quality, Repeat, Settings};
 use crate::tidal::*;
 use input::{InputEvent, TextInput};
 
-actions!(app, [OpenSettings, GoHome, ToggleShuffle, PlayPause, NextTrack, PrevTrack, FocusSearch, SeekForward, SeekBack, VolumeUp, VolumeDown, ToggleMute, GoBack, GoForward, ZoomIn, ZoomOut, ZoomReset]);
+actions!(
+    app,
+    [
+        OpenSettings,
+        GoHome,
+        ToggleShuffle,
+        PlayPause,
+        NextTrack,
+        PrevTrack,
+        FocusSearch,
+        SeekForward,
+        SeekBack,
+        VolumeUp,
+        VolumeDown,
+        ToggleMute,
+        GoBack,
+        GoForward,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset
+    ]
+);
 
 pub fn bindings() -> Vec<KeyBinding> {
     // Single-key shortcuts must not fire while typing in a text field.
@@ -118,17 +139,13 @@ pub enum Page {
     Settings,
 }
 
+#[derive(Default)]
 pub enum Load<T> {
+    #[default]
     Idle,
     Loading,
     Ready(T),
     Failed(String),
-}
-
-impl<T> Default for Load<T> {
-    fn default() -> Self {
-        Load::Idle
-    }
 }
 
 impl<T> Load<T> {
@@ -171,7 +188,11 @@ pub enum MenuTarget {
     /// Sort options of a collection section.
     Sort(&'static str),
     /// A track inside one of the user's own playlists (can be removed).
-    PlaylistTrack { uuid: String, index: usize, track: Track },
+    PlaylistTrack {
+        uuid: String,
+        index: usize,
+        track: Track,
+    },
     /// Pick a playlist to add these tracks to.
     AddToPlaylist(Vec<Track>),
 }
@@ -363,9 +384,7 @@ fn now_secs() -> u64 {
 impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = Arc::new(Mutex::new(Settings::load()));
-        set_zoom(
-            std::env::var("TIDE_ZOOM").ok().and_then(|z| z.parse().ok()).unwrap_or_else(|| settings.lock().zoom).clamp(0.5, 2.0),
-        );
+        set_zoom(std::env::var("TIDE_ZOOM").ok().and_then(|z| z.parse().ok()).unwrap_or_else(|| settings.lock().zoom).clamp(0.5, 2.0));
         if std::env::var("TIDE_RAIL").is_ok() {
             settings.lock().sidebar_collapsed = true;
         }
@@ -638,18 +657,22 @@ impl AppView {
         }
         let login = login.clone();
         self.login_busy = true;
-        self.fetch(cx, move |t| t.finish_pkce_login(&login, &pasted), |this, r, cx| {
-            this.login_busy = false;
-            match r {
-                Ok(()) => {
-                    this.login = LoginState::Idle;
-                    this.signed_in = true;
-                    this.reset_data();
-                    this.after_login(cx);
+        self.fetch(
+            cx,
+            move |t| t.finish_pkce_login(&login, &pasted),
+            |this, r, cx| {
+                this.login_busy = false;
+                match r {
+                    Ok(()) => {
+                        this.login = LoginState::Idle;
+                        this.signed_in = true;
+                        this.reset_data();
+                        this.after_login(cx);
+                    }
+                    Err(e) => this.notify_toast(format!("{e:#}"), cx),
                 }
-                Err(e) => this.notify_toast(format!("{e:#}"), cx),
-            }
-        });
+            },
+        );
     }
 
     fn reset_data(&mut self) {
@@ -676,14 +699,18 @@ impl AppView {
 
     pub fn start_login(&mut self, cx: &mut Context<Self>) {
         self.login = LoginState::Idle;
-        self.fetch(cx, |t| t.start_device_login(), |this, r, cx| match r {
-            Ok(code) => {
-                let _ = open::that(&code.verification_uri);
-                this.login = LoginState::Waiting(code.clone());
-                this.poll_login(code, cx);
-            }
-            Err(e) => this.login = LoginState::Failed(format!("{e:#}")),
-        });
+        self.fetch(
+            cx,
+            |t| t.start_device_login(),
+            |this, r, cx| match r {
+                Ok(code) => {
+                    let _ = open::that(&code.verification_uri);
+                    this.login = LoginState::Waiting(code.clone());
+                    this.poll_login(code, cx);
+                }
+                Err(e) => this.login = LoginState::Failed(format!("{e:#}")),
+            },
+        );
     }
 
     fn poll_login(&mut self, code: DeviceCode, cx: &mut Context<Self>) {
@@ -751,18 +778,26 @@ impl AppView {
     pub fn load_library(&mut self, cx: &mut Context<Self>) {
         self.my_playlists = Load::Loading;
         self.fetch(cx, |t| t.my_playlists(), |this, r, _| this.my_playlists = into_load(r));
-        self.fetch(cx, |t| t.favorite_ids(), |this, r, _| {
-            if let Ok((ids, artists)) = r {
-                this.fav_ids = ids.into_iter().collect();
-                this.fav_artist_ids = artists.into_iter().collect();
-            }
-        });
-        self.fetch(cx, |t| t.favorite_albums(), |this, r, _| {
-            if let Ok(a) = &r {
-                this.fav_album_ids = a.iter().map(|a| a.id).collect();
-            }
-            this.fav_albums = into_load(r);
-        });
+        self.fetch(
+            cx,
+            |t| t.favorite_ids(),
+            |this, r, _| {
+                if let Ok((ids, artists)) = r {
+                    this.fav_ids = ids.into_iter().collect();
+                    this.fav_artist_ids = artists.into_iter().collect();
+                }
+            },
+        );
+        self.fetch(
+            cx,
+            |t| t.favorite_albums(),
+            |this, r, _| {
+                if let Ok(a) = &r {
+                    this.fav_album_ids = a.iter().map(|a| a.id).collect();
+                }
+                this.fav_albums = into_load(r);
+            },
+        );
     }
 
     // -------------------------------------------------------- navigation
@@ -878,20 +913,28 @@ impl AppView {
             // Coming back to Home after a while: refresh quietly, keeping what is shown.
             Page::Home if self.home_tab == 0 && self.home_loaded.is_some_and(|t| t.elapsed() > Duration::from_secs(90)) => {
                 self.home_loaded = Some(std::time::Instant::now());
-                self.fetch(cx, |t| t.home_feed("static"), |this, r, _| {
-                    if let Ok(rows) = r {
-                        this.home = Load::Ready(rows);
-                        this.content_changed_pub();
-                    }
-                });
+                self.fetch(
+                    cx,
+                    |t| t.home_feed("static"),
+                    |this, r, _| {
+                        if let Ok(rows) = r {
+                            this.home = Load::Ready(rows);
+                            this.content_changed_pub();
+                        }
+                    },
+                );
             }
             Page::Home if self.home_tab > 0 && !self.home_extra.contains_key(&self.home_tab) => {
                 let tab = self.home_tab;
                 self.home_extra.insert(tab, Load::Loading);
                 let vibe = if tab == 1 { "editorial" } else { "uploads" };
-                self.fetch(cx, move |t| t.home_feed(vibe), move |this, r, _| {
-                    this.home_extra.insert(tab, into_load(r));
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.home_feed(vibe),
+                    move |this, r, _| {
+                        this.home_extra.insert(tab, into_load(r));
+                    },
+                );
             }
             Page::Explore if self.explore.is_idle() => {
                 self.explore = Load::Loading;
@@ -899,51 +942,79 @@ impl AppView {
             }
             Page::Album(id) if !self.albums.contains_key(&id) => {
                 self.albums.insert(id, Load::Loading);
-                self.fetch(cx, move |t| t.album(id), move |this, r, cx| {
-                    if let Ok((album, _)) = &r {
-                        if let Some(artist) = album.artists.first().map(|a| a.id) {
-                            this.album_extra.insert(id, Load::Loading);
-                            this.fetch(cx, move |t| t.album_extras(artist, id), move |this, r, _| {
-                                this.album_extra.insert(id, into_load(r));
-                            });
+                self.fetch(
+                    cx,
+                    move |t| t.album(id),
+                    move |this, r, cx| {
+                        if let Ok((album, _)) = &r {
+                            if let Some(artist) = album.artists.first().map(|a| a.id) {
+                                this.album_extra.insert(id, Load::Loading);
+                                this.fetch(
+                                    cx,
+                                    move |t| t.album_extras(artist, id),
+                                    move |this, r, _| {
+                                        this.album_extra.insert(id, into_load(r));
+                                    },
+                                );
+                            }
                         }
-                    }
-                    this.albums.insert(id, into_load(r));
-                });
+                        this.albums.insert(id, into_load(r));
+                    },
+                );
             }
             Page::Browse(path, _) if !self.browse.contains_key(&path) => {
                 self.browse.insert(path.clone(), Load::Loading);
                 let p = path.clone();
-                self.fetch(cx, move |t| t.page(&p), move |this, r, _| {
-                    this.browse.insert(path, into_load(r));
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.page(&p),
+                    move |this, r, _| {
+                        this.browse.insert(path, into_load(r));
+                    },
+                );
             }
             Page::Playlist(uuid) if !self.playlists.contains_key(&uuid) => {
                 self.playlists.insert(uuid.clone(), Load::Loading);
                 let u = uuid.clone();
-                self.fetch(cx, move |t| t.playlist(&u), move |this, r, _| {
-                    this.playlists.insert(uuid, into_load(r));
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.playlist(&u),
+                    move |this, r, _| {
+                        this.playlists.insert(uuid, into_load(r));
+                    },
+                );
             }
             Page::Artist(id) if !self.artists.contains_key(&id) => {
                 self.artists.insert(id, Load::Loading);
-                self.fetch(cx, move |t| t.artist(id), move |this, r, _| {
-                    this.artists.insert(id, into_load(r));
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.artist(id),
+                    move |this, r, _| {
+                        this.artists.insert(id, into_load(r));
+                    },
+                );
             }
             Page::Mix(id) if !self.mixes.contains_key(&id) => {
                 self.mixes.insert(id.clone(), Load::Loading);
                 let i = id.clone();
-                self.fetch(cx, move |t| t.mix(&i), move |this, r, _| {
-                    this.mixes.insert(id, into_load(r));
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.mix(&i),
+                    move |this, r, _| {
+                        this.mixes.insert(id, into_load(r));
+                    },
+                );
             }
             Page::Search(q) if !q.trim().is_empty() && !self.search.contains_key(&q) => {
                 self.search.insert(q.clone(), Load::Loading);
                 let qq = q.clone();
-                self.fetch(cx, move |t| t.search(&qq), move |this, r, _| {
-                    this.search.insert(q, into_load(r));
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.search(&qq),
+                    move |this, r, _| {
+                        this.search.insert(q, into_load(r));
+                    },
+                );
             }
             Page::MyTracks if self.fav_tracks.is_idle() => {
                 self.fav_tracks = Load::Loading;
@@ -994,14 +1065,16 @@ impl AppView {
             Item::Link(l) => self.navigate(Page::Browse(l.path.clone(), l.title.clone()), cx),
             Item::Promo(p) => match p.kind.as_str() {
                 "PLAYLIST" => self.navigate(Page::Playlist(p.target.clone()), cx),
-                "ALBUM" => match p.target.parse() {
-                    Ok(id) => self.navigate(Page::Album(id), cx),
-                    Err(_) => {}
-                },
-                "ARTIST" => match p.target.parse() {
-                    Ok(id) => self.navigate(Page::Artist(id), cx),
-                    Err(_) => {}
-                },
+                "ALBUM" => {
+                    if let Ok(id) = p.target.parse() {
+                        self.navigate(Page::Album(id), cx)
+                    }
+                }
+                "ARTIST" => {
+                    if let Ok(id) = p.target.parse() {
+                        self.navigate(Page::Artist(id), cx)
+                    }
+                }
                 _ => self.notify_toast("Este contenido solo está disponible en la web de TIDAL", cx),
             },
             // In the collection, albums unfold in place (MusicBee style).
@@ -1024,39 +1097,55 @@ impl AppView {
                     let t = tracks.clone();
                     self.play_tracks(t, 0, cx);
                 } else {
-                    self.fetch(cx, move |t| t.album(a.id), move |this, r, cx| {
-                        if let Ok((al, tracks)) = r {
-                            this.play_tracks(tracks.clone(), 0, cx);
-                            this.albums.insert(al.id, Load::Ready((al, tracks)));
-                        }
-                    });
+                    self.fetch(
+                        cx,
+                        move |t| t.album(a.id),
+                        move |this, r, cx| {
+                            if let Ok((al, tracks)) = r {
+                                this.play_tracks(tracks.clone(), 0, cx);
+                                this.albums.insert(al.id, Load::Ready((al, tracks)));
+                            }
+                        },
+                    );
                 }
             }
             Item::Playlist(p) => {
                 let u = p.uuid.clone();
-                self.fetch(cx, move |t| t.playlist(&u), move |this, r, cx| {
-                    if let Ok((pl, tracks)) = r {
-                        this.play_tracks(tracks.clone(), 0, cx);
-                        this.playlists.insert(pl.uuid.clone(), Load::Ready((pl, tracks)));
-                    }
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.playlist(&u),
+                    move |this, r, cx| {
+                        if let Ok((pl, tracks)) = r {
+                            this.play_tracks(tracks.clone(), 0, cx);
+                            this.playlists.insert(pl.uuid.clone(), Load::Ready((pl, tracks)));
+                        }
+                    },
+                );
             }
             Item::Mix(m) => {
                 let id = m.id.clone();
-                self.fetch(cx, move |t| t.mix(&id), move |this, r, cx| {
-                    if let Ok((mix, tracks)) = r {
-                        this.play_tracks(tracks.clone(), 0, cx);
-                        this.mixes.insert(mix.id.clone(), Load::Ready((mix, tracks)));
-                    }
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.mix(&id),
+                    move |this, r, cx| {
+                        if let Ok((mix, tracks)) = r {
+                            this.play_tracks(tracks.clone(), 0, cx);
+                            this.mixes.insert(mix.id.clone(), Load::Ready((mix, tracks)));
+                        }
+                    },
+                );
             }
             Item::Artist(a) => {
-                self.fetch(cx, move |t| t.artist(a.id), move |this, r, cx| {
-                    if let Ok(page) = r {
-                        this.play_tracks(page.top_tracks.clone(), 0, cx);
-                        this.artists.insert(page.artist.id, Load::Ready(page));
-                    }
-                });
+                self.fetch(
+                    cx,
+                    move |t| t.artist(a.id),
+                    move |this, r, cx| {
+                        if let Ok(page) = r {
+                            this.play_tracks(page.top_tracks.clone(), 0, cx);
+                            this.artists.insert(page.artist.id, Load::Ready(page));
+                        }
+                    },
+                );
             }
         }
     }
@@ -1128,19 +1217,23 @@ impl AppView {
         self.snap.position = 0.0;
         let quality = self.settings.lock().quality;
         let id = item.track.id;
-        self.fetch(cx, move |t| t.stream(id, quality), move |this, r, cx| {
-            let Some(now) = this.now.as_mut().filter(|n| n.key == key) else { return };
-            match r {
-                Ok(info) => {
-                    now.info = Some(info.clone());
-                    this.player.send(Cmd::Play { key, info, start, paused });
+        self.fetch(
+            cx,
+            move |t| t.stream(id, quality),
+            move |this, r, cx| {
+                let Some(now) = this.now.as_mut().filter(|n| n.key == key) else { return };
+                match r {
+                    Ok(info) => {
+                        now.info = Some(info.clone());
+                        this.player.send(Cmd::Play { key, info, start, paused });
+                    }
+                    Err(e) => {
+                        this.notify_toast(format!("No se pudo reproducir «{}»: {e:#}", item.track.title), cx);
+                        this.skip_after_error(key, cx);
+                    }
                 }
-                Err(e) => {
-                    this.notify_toast(format!("No se pudo reproducir «{}»: {e:#}", item.track.title), cx);
-                    this.skip_after_error(key, cx);
-                }
-            }
-        });
+            },
+        );
         if let Some(t) = &self.now {
             if self.wants_lyrics() {
                 self.load_lyrics(t.track.id, cx);
@@ -1181,18 +1274,22 @@ impl AppView {
         let key = self.next_key;
         self.queued_next = Some((key, idx));
         let quality = self.settings.lock().quality;
-        self.fetch(cx, move |t| t.stream(item.track.id, quality), move |this, r, _| {
-            if this.queued_next.map(|q| q.0) != Some(key) {
-                return;
-            }
-            match r {
-                Ok(info) => {
-                    this.next_info = Some((key, info.clone()));
-                    this.player.send(Cmd::Queue { key, info });
+        self.fetch(
+            cx,
+            move |t| t.stream(item.track.id, quality),
+            move |this, r, _| {
+                if this.queued_next.map(|q| q.0) != Some(key) {
+                    return;
                 }
-                Err(_) => this.queued_next = None,
-            }
-        });
+                match r {
+                    Ok(info) => {
+                        this.next_info = Some((key, info.clone()));
+                        this.player.send(Cmd::Queue { key, info });
+                    }
+                    Err(_) => this.queued_next = None,
+                }
+            },
+        );
     }
 
     /// The queue changed around the current track: re-queue the next one.
@@ -1211,33 +1308,43 @@ impl AppView {
         let Some(seed) = self.queue.last().map(|q| q.track.clone()) else { return };
         self.autoplay_loading = true;
         let id = seed.id;
-        self.fetch(cx, move |t| t.track_radio(id), |this, r, cx| {
-            this.autoplay_loading = false;
-            let Ok(tracks) = r else { return };
-            let known: HashSet<u64> = this.queue.iter().map(|q| q.track.id).collect();
-            let fresh: Vec<Track> = tracks.into_iter().filter(|t| t.streamable && !known.contains(&t.id)).take(25).collect();
-            if fresh.is_empty() {
-                return;
-            }
-            for track in fresh {
-                let uid = this.new_uid();
-                this.queue.push(QItem { uid, track });
-            }
-            if this.ended || std::mem::take(&mut this.autoplay_jump) {
-                // Playback stopped, or the user pressed next: continue right away.
-                if let Some(i) = this.now.as_ref().map(|n| n.index + 1) {
-                    this.play_index(i, 0.0, false, cx);
+        self.fetch(
+            cx,
+            move |t| t.track_radio(id),
+            |this, r, cx| {
+                this.autoplay_loading = false;
+                let Ok(tracks) = r else { return };
+                let known: HashSet<u64> = this.queue.iter().map(|q| q.track.id).collect();
+                let fresh: Vec<Track> = tracks.into_iter().filter(|t| t.streamable && !known.contains(&t.id)).take(25).collect();
+                if fresh.is_empty() {
+                    return;
                 }
-            } else {
-                this.queue_next(cx);
-            }
-        });
+                for track in fresh {
+                    let uid = this.new_uid();
+                    this.queue.push(QItem { uid, track });
+                }
+                if this.ended || std::mem::take(&mut this.autoplay_jump) {
+                    // Playback stopped, or the user pressed next: continue right away.
+                    if let Some(i) = this.now.as_ref().map(|n| n.index + 1) {
+                        this.play_index(i, 0.0, false, cx);
+                    }
+                } else {
+                    this.queue_next(cx);
+                }
+            },
+        );
     }
 
     pub fn next(&mut self, cx: &mut Context<Self>) {
         let Some(now) = &self.now else { return };
         let idx = now.index;
-        let next = if idx + 1 < self.queue.len() { Some(idx + 1) } else if self.repeat == Repeat::All { Some(0) } else { None };
+        let next = if idx + 1 < self.queue.len() {
+            Some(idx + 1)
+        } else if self.repeat == Repeat::All {
+            Some(0)
+        } else {
+            None
+        };
         match next {
             Some(n) => self.play_index(n, 0.0, false, cx),
             None => {
@@ -1262,7 +1369,7 @@ impl AppView {
         if self.now.is_none() || self.ended {
             let i = self.now.as_ref().map(|n| n.index).unwrap_or(0);
             if !self.queue.is_empty() {
-                self.play_index(if self.ended { 0.max(i) } else { 0 }, 0.0, false, cx);
+                self.play_index(if self.ended { i } else { 0 }, 0.0, false, cx);
             }
             return;
         }
@@ -1421,13 +1528,17 @@ impl AppView {
             }
         }
         self.content_changed();
-        self.fetch(cx, move |t| t.set_favorite_track(id, fav), move |this, r, cx| {
-            if let Err(e) = r {
-                this.notify_toast(format!("Error: {e:#}"), cx);
-            } else {
-                this.notify_toast(if fav { "Añadida a Mi colección" } else { "Eliminada de Mi colección" }, cx);
-            }
-        });
+        self.fetch(
+            cx,
+            move |t| t.set_favorite_track(id, fav),
+            move |this, r, cx| {
+                if let Err(e) = r {
+                    this.notify_toast(format!("Error: {e:#}"), cx);
+                } else {
+                    this.notify_toast(if fav { "Añadida a Mi colección" } else { "Eliminada de Mi colección" }, cx);
+                }
+            },
+        );
         cx.notify();
     }
 
@@ -1440,25 +1551,33 @@ impl AppView {
             self.fav_album_ids.remove(&id);
         }
         self.fav_albums = Load::Idle;
-        self.fetch(cx, move |t| t.set_favorite_album(id, fav), move |this, r, cx| {
-            if let Err(e) = r {
-                this.notify_toast(format!("Error: {e:#}"), cx);
-            }
-        });
+        self.fetch(
+            cx,
+            move |t| t.set_favorite_album(id, fav),
+            move |this, r, cx| {
+                if let Err(e) = r {
+                    this.notify_toast(format!("Error: {e:#}"), cx);
+                }
+            },
+        );
         cx.notify();
     }
 
     pub fn start_radio(&mut self, track: &Track, cx: &mut Context<Self>) {
         let first = track.clone();
         let id = track.id;
-        self.fetch(cx, move |t| t.track_radio(id), move |this, r, cx| match r {
-            Ok(mut tracks) => {
-                tracks.retain(|t| t.id != first.id);
-                tracks.insert(0, first);
-                this.play_tracks(tracks, 0, cx);
-            }
-            Err(e) => this.notify_toast(format!("Radio no disponible: {e:#}"), cx),
-        });
+        self.fetch(
+            cx,
+            move |t| t.track_radio(id),
+            move |this, r, cx| match r {
+                Ok(mut tracks) => {
+                    tracks.retain(|t| t.id != first.id);
+                    tracks.insert(0, first);
+                    this.play_tracks(tracks, 0, cx);
+                }
+                Err(e) => this.notify_toast(format!("Radio no disponible: {e:#}"), cx),
+            },
+        );
     }
 
     pub fn load_lyrics(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -1508,6 +1627,7 @@ impl AppView {
                 "audio_metadata" => s.audio_metadata = !s.audio_metadata,
                 "show_ratings" => s.show_ratings = !s.show_ratings,
                 "lyrics_romanize" => s.lyrics_romanize = !s.lyrics_romanize,
+                "external_lyrics" => s.external_lyrics = !s.external_lyrics,
                 "hide_uploads" => {
                     s.hide_uploads = !s.hide_uploads;
                     if s.hide_uploads && self.home_tab == 2 {
@@ -1779,14 +1899,8 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.step_zoom(-1, cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.set_zoom_level(1.0, cx)))
             // The mouse's back / forward buttons.
-            .on_mouse_down(
-                MouseButton::Navigate(gpui::NavigationDirection::Back),
-                cx.listener(|this, _, _, cx| this.go_back(cx)),
-            )
-            .on_mouse_down(
-                MouseButton::Navigate(gpui::NavigationDirection::Forward),
-                cx.listener(|this, _, _, cx| this.go_forward(cx)),
-            )
+            .on_mouse_down(MouseButton::Navigate(gpui::NavigationDirection::Back), cx.listener(|this, _, _, cx| this.go_back(cx)))
+            .on_mouse_down(MouseButton::Navigate(gpui::NavigationDirection::Forward), cx.listener(|this, _, _, cx| this.go_forward(cx)))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 let fh = this.search_input.focus_handle(cx);
                 window.focus(&fh);
@@ -1829,24 +1943,30 @@ impl Render for AppView {
                     this.drag_to(ev.position, cx);
                 }
             }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, window, cx| {
-                interact::release_all();
-                this.search_sb_drag = false;
-                this.scrollbar_drag = false;
-                if this.win_drag.take().is_some() {
-                    winctl::drag_end(window);
-                }
-                this.end_drag(cx)
-            }))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, window, cx| {
-                interact::release_all();
-                this.search_sb_drag = false;
-                this.scrollbar_drag = false;
-                if this.win_drag.take().is_some() {
-                    winctl::drag_end(window);
-                }
-                this.end_drag(cx)
-            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    interact::release_all();
+                    this.search_sb_drag = false;
+                    this.scrollbar_drag = false;
+                    if this.win_drag.take().is_some() {
+                        winctl::drag_end(window);
+                    }
+                    this.end_drag(cx)
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    interact::release_all();
+                    this.search_sb_drag = false;
+                    this.scrollbar_drag = false;
+                    if this.win_drag.take().is_some() {
+                        winctl::drag_end(window);
+                    }
+                    this.end_drag(cx)
+                }),
+            )
             .size_full()
             .flex()
             .flex_col()
@@ -1861,15 +1981,7 @@ impl Render for AppView {
                     .flex_1()
                     .min_h(sc(0.))
                     .child(sidebar::render(self, cx))
-                    .child(
-                        div()
-                            .relative()
-                            .flex_1()
-                            .min_w(sc(0.))
-                            .h_full()
-                            .flex()
-                            .child(pages::content(self, window, cx)),
-                    )
+                    .child(div().relative().flex_1().min_w(sc(0.)).h_full().flex().child(pages::content(self, window, cx)))
                     .when(self.show_queue || self.show_lyrics, |d| d.child(pages::side_panel(self, cx))),
             )
             .child(smooth::zoom_catcher(cx.entity()))

@@ -3,12 +3,11 @@
 //! lindera), Chinese → pinyin with tone marks, Korean → Revised Romanization.
 //! All offline; libraries are MIT-licensed (kakasi was ruled out: GPL).
 
-use std::borrow::Cow;
-use std::sync::OnceLock;
+#[cfg(feature = "kanji-romaji")]
+use std::{borrow::Cow, sync::OnceLock};
 
-use lindera::dictionary::load_dictionary;
-use lindera::mode::Mode;
-use lindera::segmenter::Segmenter;
+#[cfg(feature = "kanji-romaji")]
+use lindera::{dictionary::load_dictionary, mode::Mode, segmenter::Segmenter};
 
 fn is_kana(c: char) -> bool {
     ('\u{3040}'..='\u{30ff}').contains(&c) || ('\u{31f0}'..='\u{31ff}').contains(&c) || c == 'ー'
@@ -83,8 +82,12 @@ fn chinese(line: &str) -> String {
 
 fn korean(line: &str) -> String {
     const INITIAL: [&str; 19] = ["g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h"];
-    const VOWEL: [&str; 21] = ["a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"];
-    const FINAL: [&str; 28] = ["", "k", "k", "k", "n", "n", "n", "t", "l", "k", "m", "p", "l", "l", "p", "l", "m", "p", "p", "t", "t", "ng", "t", "t", "k", "t", "p", "t"];
+    const VOWEL: [&str; 21] =
+        ["a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"];
+    const FINAL: [&str; 28] = [
+        "", "k", "k", "k", "n", "n", "n", "t", "l", "k", "m", "p", "l", "l", "p", "l", "m", "p", "p", "t", "t", "ng", "t", "t", "k", "t",
+        "p", "t",
+    ];
     let mut out = String::new();
     for c in line.chars() {
         let u = c as u32;
@@ -102,6 +105,13 @@ fn korean(line: &str) -> String {
 
 // ------------------------------------------------------------------ Japanese
 
+#[cfg(not(feature = "kanji-romaji"))]
+fn japanese(line: &str) -> String {
+    // Built without the dictionary: kana are romanized, kanji pass through.
+    kana_to_romaji(line)
+}
+
+#[cfg(feature = "kanji-romaji")]
 fn segmenter() -> Option<&'static Segmenter> {
     static SEG: OnceLock<Option<Segmenter>> = OnceLock::new();
     SEG.get_or_init(|| {
@@ -111,6 +121,7 @@ fn segmenter() -> Option<&'static Segmenter> {
     .as_ref()
 }
 
+#[cfg(feature = "kanji-romaji")]
 fn japanese(line: &str) -> String {
     let Some(seg) = segmenter() else { return kana_to_romaji(line) };
     let Ok(mut tokens) = seg.segment(Cow::Borrowed(line)) else { return kana_to_romaji(line) };
@@ -207,44 +218,148 @@ fn push_syllable(out: &mut String, r: &str, double_next: &mut bool) {
 
 fn combo(p: &str) -> Option<&'static str> {
     Some(match p {
-        "きゃ" => "kya", "きゅ" => "kyu", "きょ" => "kyo",
-        "ぎゃ" => "gya", "ぎゅ" => "gyu", "ぎょ" => "gyo",
-        "しゃ" => "sha", "しゅ" => "shu", "しょ" => "sho", "しぇ" => "she",
-        "じゃ" => "ja", "じゅ" => "ju", "じょ" => "jo", "じぇ" => "je",
-        "ちゃ" => "cha", "ちゅ" => "chu", "ちょ" => "cho", "ちぇ" => "che",
-        "にゃ" => "nya", "にゅ" => "nyu", "にょ" => "nyo",
-        "ひゃ" => "hya", "ひゅ" => "hyu", "ひょ" => "hyo",
-        "びゃ" => "bya", "びゅ" => "byu", "びょ" => "byo",
-        "ぴゃ" => "pya", "ぴゅ" => "pyu", "ぴょ" => "pyo",
-        "みゃ" => "mya", "みゅ" => "myu", "みょ" => "myo",
-        "りゃ" => "rya", "りゅ" => "ryu", "りょ" => "ryo",
-        "ふぁ" => "fa", "ふぃ" => "fi", "ふぇ" => "fe", "ふぉ" => "fo",
-        "てぃ" => "ti", "でぃ" => "di", "とぅ" => "tu", "どぅ" => "du",
-        "うぃ" => "wi", "うぇ" => "we", "うぉ" => "wo",
-        "ゔぁ" => "va", "ゔぃ" => "vi", "ゔぇ" => "ve", "ゔぉ" => "vo",
-        "つぁ" => "tsa", "つぇ" => "tse", "つぉ" => "tso",
+        "きゃ" => "kya",
+        "きゅ" => "kyu",
+        "きょ" => "kyo",
+        "ぎゃ" => "gya",
+        "ぎゅ" => "gyu",
+        "ぎょ" => "gyo",
+        "しゃ" => "sha",
+        "しゅ" => "shu",
+        "しょ" => "sho",
+        "しぇ" => "she",
+        "じゃ" => "ja",
+        "じゅ" => "ju",
+        "じょ" => "jo",
+        "じぇ" => "je",
+        "ちゃ" => "cha",
+        "ちゅ" => "chu",
+        "ちょ" => "cho",
+        "ちぇ" => "che",
+        "にゃ" => "nya",
+        "にゅ" => "nyu",
+        "にょ" => "nyo",
+        "ひゃ" => "hya",
+        "ひゅ" => "hyu",
+        "ひょ" => "hyo",
+        "びゃ" => "bya",
+        "びゅ" => "byu",
+        "びょ" => "byo",
+        "ぴゃ" => "pya",
+        "ぴゅ" => "pyu",
+        "ぴょ" => "pyo",
+        "みゃ" => "mya",
+        "みゅ" => "myu",
+        "みょ" => "myo",
+        "りゃ" => "rya",
+        "りゅ" => "ryu",
+        "りょ" => "ryo",
+        "ふぁ" => "fa",
+        "ふぃ" => "fi",
+        "ふぇ" => "fe",
+        "ふぉ" => "fo",
+        "てぃ" => "ti",
+        "でぃ" => "di",
+        "とぅ" => "tu",
+        "どぅ" => "du",
+        "うぃ" => "wi",
+        "うぇ" => "we",
+        "うぉ" => "wo",
+        "ゔぁ" => "va",
+        "ゔぃ" => "vi",
+        "ゔぇ" => "ve",
+        "ゔぉ" => "vo",
+        "つぁ" => "tsa",
+        "つぇ" => "tse",
+        "つぉ" => "tso",
         _ => return None,
     })
 }
 
 fn single(c: char) -> Option<&'static str> {
     Some(match c {
-        'あ' => "a", 'い' => "i", 'う' => "u", 'え' => "e", 'お' => "o",
-        'ぁ' => "a", 'ぃ' => "i", 'ぅ' => "u", 'ぇ' => "e", 'ぉ' => "o",
-        'か' => "ka", 'き' => "ki", 'く' => "ku", 'け' => "ke", 'こ' => "ko",
-        'が' => "ga", 'ぎ' => "gi", 'ぐ' => "gu", 'げ' => "ge", 'ご' => "go",
-        'さ' => "sa", 'し' => "shi", 'す' => "su", 'せ' => "se", 'そ' => "so",
-        'ざ' => "za", 'じ' => "ji", 'ず' => "zu", 'ぜ' => "ze", 'ぞ' => "zo",
-        'た' => "ta", 'ち' => "chi", 'つ' => "tsu", 'て' => "te", 'と' => "to",
-        'だ' => "da", 'ぢ' => "ji", 'づ' => "zu", 'で' => "de", 'ど' => "do",
-        'な' => "na", 'に' => "ni", 'ぬ' => "nu", 'ね' => "ne", 'の' => "no",
-        'は' => "ha", 'ひ' => "hi", 'ふ' => "fu", 'へ' => "he", 'ほ' => "ho",
-        'ば' => "ba", 'び' => "bi", 'ぶ' => "bu", 'べ' => "be", 'ぼ' => "bo",
-        'ぱ' => "pa", 'ぴ' => "pi", 'ぷ' => "pu", 'ぺ' => "pe", 'ぽ' => "po",
-        'ま' => "ma", 'み' => "mi", 'む' => "mu", 'め' => "me", 'も' => "mo",
-        'や' => "ya", 'ゆ' => "yu", 'よ' => "yo", 'ゃ' => "ya", 'ゅ' => "yu", 'ょ' => "yo",
-        'ら' => "ra", 'り' => "ri", 'る' => "ru", 'れ' => "re", 'ろ' => "ro",
-        'わ' => "wa", 'ゐ' => "wi", 'ゑ' => "we", 'を' => "o", 'ん' => "n", 'ゔ' => "vu",
+        'あ' => "a",
+        'い' => "i",
+        'う' => "u",
+        'え' => "e",
+        'お' => "o",
+        'ぁ' => "a",
+        'ぃ' => "i",
+        'ぅ' => "u",
+        'ぇ' => "e",
+        'ぉ' => "o",
+        'か' => "ka",
+        'き' => "ki",
+        'く' => "ku",
+        'け' => "ke",
+        'こ' => "ko",
+        'が' => "ga",
+        'ぎ' => "gi",
+        'ぐ' => "gu",
+        'げ' => "ge",
+        'ご' => "go",
+        'さ' => "sa",
+        'し' => "shi",
+        'す' => "su",
+        'せ' => "se",
+        'そ' => "so",
+        'ざ' => "za",
+        'じ' => "ji",
+        'ず' => "zu",
+        'ぜ' => "ze",
+        'ぞ' => "zo",
+        'た' => "ta",
+        'ち' => "chi",
+        'つ' => "tsu",
+        'て' => "te",
+        'と' => "to",
+        'だ' => "da",
+        'ぢ' => "ji",
+        'づ' => "zu",
+        'で' => "de",
+        'ど' => "do",
+        'な' => "na",
+        'に' => "ni",
+        'ぬ' => "nu",
+        'ね' => "ne",
+        'の' => "no",
+        'は' => "ha",
+        'ひ' => "hi",
+        'ふ' => "fu",
+        'へ' => "he",
+        'ほ' => "ho",
+        'ば' => "ba",
+        'び' => "bi",
+        'ぶ' => "bu",
+        'べ' => "be",
+        'ぼ' => "bo",
+        'ぱ' => "pa",
+        'ぴ' => "pi",
+        'ぷ' => "pu",
+        'ぺ' => "pe",
+        'ぽ' => "po",
+        'ま' => "ma",
+        'み' => "mi",
+        'む' => "mu",
+        'め' => "me",
+        'も' => "mo",
+        'や' => "ya",
+        'ゆ' => "yu",
+        'よ' => "yo",
+        'ゃ' => "ya",
+        'ゅ' => "yu",
+        'ょ' => "yo",
+        'ら' => "ra",
+        'り' => "ri",
+        'る' => "ru",
+        'れ' => "re",
+        'ろ' => "ro",
+        'わ' => "wa",
+        'ゐ' => "wi",
+        'ゑ' => "we",
+        'を' => "o",
+        'ん' => "n",
+        'ゔ' => "vu",
         _ => return None,
     })
 }
@@ -268,6 +383,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "kanji-romaji")]
     fn japanese_kanji() {
         let r = lines(&["私は猫です".to_string()]).unwrap();
         assert_eq!(r[0].as_deref(), Some("watashi wa neko desu"));

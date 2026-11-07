@@ -53,7 +53,7 @@ impl OutShared {
         let mut lp1 = f32::from_bits(self.lp[0].load(Ordering::Relaxed));
         let mut lp2 = f32::from_bits(self.lp[1].load(Ordering::Relaxed));
         let (mut e0, mut e1, mut e2) = (0f32, 0f32, 0f32);
-        for f in samples.chunks_exact(2) {
+        for f in samples.as_chunks::<2>().0 {
             let x = 0.5 * (f[0] + f[1]);
             lp1 += 0.02 * (x - lp1);
             lp2 += 0.22 * (x - lp2);
@@ -95,9 +95,7 @@ enum Keep {
 
 pub fn device_names() -> Vec<String> {
     let host = cpal::default_host();
-    host.output_devices()
-        .map(|d| d.filter_map(|d| d.name().ok()).collect())
-        .unwrap_or_default()
+    host.output_devices().map(|d| d.filter_map(|d| d.name().ok()).collect()).unwrap_or_default()
 }
 
 fn ring(rate: u32) -> (rtrb::Producer<f32>, rtrb::Consumer<f32>) {
@@ -146,11 +144,7 @@ fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], app
 fn find_device(name: Option<&str>) -> Result<cpal::Device> {
     let host = cpal::default_host();
     if let Some(name) = name {
-        if let Some(d) = host
-            .output_devices()
-            .ok()
-            .and_then(|mut it| it.find(|d| d.name().map(|n| n == name).unwrap_or(false)))
-        {
+        if let Some(d) = host.output_devices().ok().and_then(|mut it| it.find(|d| d.name().map(|n| n == name).unwrap_or(false))) {
             return Ok(d);
         }
         log::warn!("output device {name:?} not found, using default");
@@ -192,18 +186,14 @@ pub fn open_shared(device: Option<&str>, shared: Arc<OutShared>) -> Result<Outpu
         )?,
         cpal::SampleFormat::I16 => dev.build_output_stream(
             &stream_cfg,
-            move |data: &mut [i16], _| {
-                render(data.len() / channels, &mut |i, v| data[i] = (v.clamp(-1.0, 1.0) * 32767.0) as i16)
-            },
+            move |data: &mut [i16], _| render(data.len() / channels, &mut |i, v| data[i] = (v.clamp(-1.0, 1.0) * 32767.0) as i16),
             on_err,
             None,
         )?,
         cpal::SampleFormat::I32 => dev.build_output_stream(
             &stream_cfg,
             move |data: &mut [i32], _| {
-                render(data.len() / channels, &mut |i, v| {
-                    data[i] = (v.clamp(-1.0, 1.0) as f64 * 2147483647.0) as i32
-                })
+                render(data.len() / channels, &mut |i, v| data[i] = (v.clamp(-1.0, 1.0) as f64 * 2147483647.0) as i32)
             },
             on_err,
             None,
@@ -249,13 +239,7 @@ impl Drop for ExclusiveHandle {
 }
 
 #[cfg(windows)]
-pub fn open_exclusive(
-    device: Option<&str>,
-    rate: u32,
-    source_bits: u32,
-    shared: Arc<OutShared>,
-    apply_gain: bool,
-) -> Result<Output> {
+pub fn open_exclusive(device: Option<&str>, rate: u32, source_bits: u32, shared: Arc<OutShared>, apply_gain: bool) -> Result<Output> {
     use wasapi::{Direction, SampleType, ShareMode, WaveFormat};
 
     let (producer, mut cons) = ring(rate);
@@ -264,108 +248,102 @@ pub fn open_exclusive(
     let device = device.map(str::to_string);
     let stop2 = stop.clone();
 
-    let thread = std::thread::Builder::new()
-        .name("wasapi-exclusive".into())
-        .spawn(move || {
-            let mut run = || -> Result<(), String> {
-                let _ = wasapi::initialize_mta();
-                let dev = match &device {
-                    Some(name) => wasapi::DeviceCollection::new(&Direction::Render)
-                        .and_then(|c| c.get_device_with_name(name))
-                        .or_else(|_| wasapi::get_default_device(&Direction::Render)),
-                    None => wasapi::get_default_device(&Direction::Render),
-                }
-                .map_err(|e| e.to_string())?;
-                let name = dev.get_friendlyname().unwrap_or_default();
+    let thread = std::thread::Builder::new().name("wasapi-exclusive".into()).spawn(move || {
+        let mut run = || -> Result<(), String> {
+            let _ = wasapi::initialize_mta();
+            let dev = match &device {
+                Some(name) => wasapi::DeviceCollection::new(&Direction::Render)
+                    .and_then(|c| c.get_device_with_name(name))
+                    .or_else(|_| wasapi::get_default_device(&Direction::Render)),
+                None => wasapi::get_default_device(&Direction::Render),
+            }
+            .map_err(|e| e.to_string())?;
+            let name = dev.get_friendlyname().unwrap_or_default();
 
-                // Formats in order of preference: as close to the source as possible.
-                let mut candidates: Vec<(usize, usize, SampleType)> = Vec::new();
-                if source_bits > 16 {
-                    candidates.extend([(32, 24, SampleType::Int), (24, 24, SampleType::Int), (32, 32, SampleType::Int)]);
-                } else {
-                    candidates.extend([(16, 16, SampleType::Int), (32, 24, SampleType::Int), (24, 24, SampleType::Int), (32, 32, SampleType::Int)]);
-                }
-                candidates.push((32, 32, SampleType::Float));
+            // Formats in order of preference: as close to the source as possible.
+            let mut candidates: Vec<(usize, usize, SampleType)> = Vec::new();
+            if source_bits > 16 {
+                candidates.extend([(32, 24, SampleType::Int), (24, 24, SampleType::Int), (32, 32, SampleType::Int)]);
+            } else {
+                candidates.extend([
+                    (16, 16, SampleType::Int),
+                    (32, 24, SampleType::Int),
+                    (24, 24, SampleType::Int),
+                    (32, 32, SampleType::Int),
+                ]);
+            }
+            candidates.push((32, 32, SampleType::Float));
 
-                let mut client = None;
-                let mut last_err = String::from("no format accepted");
-                for (container, valid, kind) in candidates {
-                    let wanted = WaveFormat::new(container, valid, &kind, rate as usize, 2, None);
-                    let mut ac = dev.get_iaudioclient().map_err(|e| e.to_string())?;
-                    let fmt = match ac.is_supported_exclusive_with_quirks(&wanted) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            last_err = e.to_string();
-                            continue;
-                        }
-                    };
-                    let (_def, min) = ac.get_periods().map_err(|e| e.to_string())?;
-                    let period = ac
-                        .calculate_aligned_period_near(min.max(30_000), Some(128), &fmt)
-                        .unwrap_or(min);
-                    match ac.initialize_client(&fmt, period, &Direction::Render, &ShareMode::Exclusive, false) {
-                        Ok(()) => {
-                            client = Some((ac, fmt, kind, valid));
-                            break;
-                        }
-                        Err(e) => {
-                            // Unaligned buffer: retry with the size the driver proposes.
-                            if let Ok(frames) = ac.get_bufferframecount() {
-                                let aligned = wasapi::calculate_period_100ns(frames as i64, rate as i64);
-                                if let Ok(mut ac2) = dev.get_iaudioclient() {
-                                    if ac2
-                                        .initialize_client(&fmt, aligned, &Direction::Render, &ShareMode::Exclusive, false)
-                                        .is_ok()
-                                    {
-                                        client = Some((ac2, fmt, kind, valid));
-                                        break;
-                                    }
+            let mut client = None;
+            let mut last_err = String::from("no format accepted");
+            for (container, valid, kind) in candidates {
+                let wanted = WaveFormat::new(container, valid, &kind, rate as usize, 2, None);
+                let mut ac = dev.get_iaudioclient().map_err(|e| e.to_string())?;
+                let fmt = match ac.is_supported_exclusive_with_quirks(&wanted) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        last_err = e.to_string();
+                        continue;
+                    }
+                };
+                let (_def, min) = ac.get_periods().map_err(|e| e.to_string())?;
+                let period = ac.calculate_aligned_period_near(min.max(30_000), Some(128), &fmt).unwrap_or(min);
+                match ac.initialize_client(&fmt, period, &Direction::Render, &ShareMode::Exclusive, false) {
+                    Ok(()) => {
+                        client = Some((ac, fmt, kind, valid));
+                        break;
+                    }
+                    Err(e) => {
+                        // Unaligned buffer: retry with the size the driver proposes.
+                        if let Ok(frames) = ac.get_bufferframecount() {
+                            let aligned = wasapi::calculate_period_100ns(frames as i64, rate as i64);
+                            if let Ok(mut ac2) = dev.get_iaudioclient() {
+                                if ac2.initialize_client(&fmt, aligned, &Direction::Render, &ShareMode::Exclusive, false).is_ok() {
+                                    client = Some((ac2, fmt, kind, valid));
+                                    break;
                                 }
                             }
-                            last_err = e.to_string();
                         }
+                        last_err = e.to_string();
                     }
                 }
-                let (ac, fmt, kind, valid) = client.ok_or_else(|| format!("exclusive mode refused: {last_err}"))?;
-                let block = fmt.get_blockalign() as usize;
-                let bytes_per_sample = block / 2;
-                let event = ac.set_get_eventhandle().map_err(|e| e.to_string())?;
-                let render = ac.get_audiorenderclient().map_err(|e| e.to_string())?;
-                let float = matches!(kind, SampleType::Float);
-                let _ = ready_tx.send(Ok(format!(
-                    "{name} · exclusivo {}-bit {} kHz",
-                    if float { 32 } else { valid },
-                    fmt_khz(rate)
-                )));
-
-                let mut scratch = Vec::<f32>::new();
-                let mut bytes = Vec::<u8>::new();
-                ac.start_stream().map_err(|e| e.to_string())?;
-                while !stop2.load(Ordering::Relaxed) {
-                    let frames = ac.get_available_space_in_frames().map_err(|e| e.to_string())? as usize;
-                    if frames > 0 {
-                        scratch.resize(frames * 2, 0.0);
-                        fill(&mut cons, &shared, &mut scratch, apply_gain);
-                        bytes.clear();
-                        bytes.reserve(frames * block);
-                        for &s in &scratch {
-                            write_sample(&mut bytes, s, bytes_per_sample, valid, float);
-                        }
-                        render.write_to_device(frames, &bytes, None).map_err(|e| e.to_string())?;
-                    }
-                    if event.wait_for_event(1000).is_err() {
-                        return Err("exclusive output stalled".into());
-                    }
-                }
-                let _ = ac.stop_stream();
-                Ok(())
-            };
-            if let Err(e) = run() {
-                log::error!("exclusive output: {e}");
-                shared.failed.store(true, Ordering::Relaxed);
-                let _ = ready_tx.send(Err(e));
             }
-        })?;
+            let (ac, fmt, kind, valid) = client.ok_or_else(|| format!("exclusive mode refused: {last_err}"))?;
+            let block = fmt.get_blockalign() as usize;
+            let bytes_per_sample = block / 2;
+            let event = ac.set_get_eventhandle().map_err(|e| e.to_string())?;
+            let render = ac.get_audiorenderclient().map_err(|e| e.to_string())?;
+            let float = matches!(kind, SampleType::Float);
+            let _ = ready_tx.send(Ok(format!("{name} · exclusivo {}-bit {} kHz", if float { 32 } else { valid }, fmt_khz(rate))));
+
+            let mut scratch = Vec::<f32>::new();
+            let mut bytes = Vec::<u8>::new();
+            ac.start_stream().map_err(|e| e.to_string())?;
+            while !stop2.load(Ordering::Relaxed) {
+                let frames = ac.get_available_space_in_frames().map_err(|e| e.to_string())? as usize;
+                if frames > 0 {
+                    scratch.resize(frames * 2, 0.0);
+                    fill(&mut cons, &shared, &mut scratch, apply_gain);
+                    bytes.clear();
+                    bytes.reserve(frames * block);
+                    for &s in &scratch {
+                        write_sample(&mut bytes, s, bytes_per_sample, valid, float);
+                    }
+                    render.write_to_device(frames, &bytes, None).map_err(|e| e.to_string())?;
+                }
+                if event.wait_for_event(1000).is_err() {
+                    return Err("exclusive output stalled".into());
+                }
+            }
+            let _ = ac.stop_stream();
+            Ok(())
+        };
+        if let Err(e) = run() {
+            log::error!("exclusive output: {e}");
+            shared.failed.store(true, Ordering::Relaxed);
+            let _ = ready_tx.send(Err(e));
+        }
+    })?;
 
     match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
         Ok(Ok(description)) => Ok(Output {
@@ -400,12 +378,6 @@ fn write_sample(out: &mut Vec<u8>, s: f32, bytes: usize, valid: usize, float: bo
 }
 
 #[cfg(not(windows))]
-pub fn open_exclusive(
-    device: Option<&str>,
-    _rate: u32,
-    _bits: u32,
-    shared: Arc<OutShared>,
-    _apply_gain: bool,
-) -> Result<Output> {
+pub fn open_exclusive(device: Option<&str>, _rate: u32, _bits: u32, shared: Arc<OutShared>, _apply_gain: bool) -> Result<Output> {
     open_shared(device, shared)
 }

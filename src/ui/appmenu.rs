@@ -187,7 +187,9 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
             .iter()
             .enumerate()
             .map(|(i, e)| match e {
-                Entry::Sep => div().h(sc(SEP_H)).flex().items_center().child(div().h(sc(1.)).w_full().bg(gpui::rgba(0xffffff12))).into_any_element(),
+                Entry::Sep => {
+                    div().h(sc(SEP_H)).flex().items_center().child(div().h(sc(1.)).w_full().bg(gpui::rgba(0xffffff12))).into_any_element()
+                }
                 Entry::Sub { label, .. } => {
                     let open = path.get(depth) == Some(&i);
                     div()
@@ -236,7 +238,9 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         .hover(|s| s.bg(gpui::rgb(0x2c2c31)).pl(sc(14.)))
                         .active(|s| s.opacity(0.7))
                         .child(div().flex_1().whitespace_nowrap().child(label.clone()))
-                        .when(!shortcut.is_empty(), |d| d.child(div().text_size(sc(12.)).text_color(theme::text_secondary()).child(*shortcut)))
+                        .when(!shortcut.is_empty(), |d| {
+                            d.child(div().text_size(sc(12.)).text_color(theme::text_secondary()).child(*shortcut))
+                        })
                         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                             if *hovered {
                                 if let Some(p) = this.app_menu.as_mut() {
@@ -265,24 +269,20 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
 
     Some(
         deferred(
-            div()
-                .absolute()
-                .left(sc(8.))
-                .top(sc(theme::CAPTION_H + 2.))
-                .child(
-                    div()
-                        .id("app-menu")
-                        .occlude()
-                        .flex()
-                        .items_start()
-                        .gap(sc(4.))
-                        .font_weight(FontWeight::NORMAL)
-                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                            this.app_menu = None;
-                            cx.notify();
-                        }))
-                        .children(columns),
-                ),
+            div().absolute().left(sc(8.)).top(sc(theme::CAPTION_H + 2.)).child(
+                div()
+                    .id("app-menu")
+                    .occlude()
+                    .flex()
+                    .items_start()
+                    .gap(sc(4.))
+                    .font_weight(FontWeight::NORMAL)
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.app_menu = None;
+                        cx.notify();
+                    }))
+                    .children(columns),
+            ),
         )
         .with_priority(3)
         .into_any_element(),

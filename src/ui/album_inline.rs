@@ -3,7 +3,9 @@
 //! opening the album page.
 
 use super::sc;
-use gpui::{div, prelude::*, px, AnyElement, Animation, AnimationExt, ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, SharedString};
+use gpui::{
+    div, prelude::*, px, Animation, AnimationExt, AnyElement, ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, SharedString,
+};
 
 use super::icons::Icon;
 use super::widgets::{cover, fmt_long, fmt_time, icon_button, pill, quality_badge};
@@ -19,11 +21,15 @@ impl AppView {
             self.expanded_album = Some(album.id);
             self.inline_anim += 1;
             let id = album.id;
-            if !self.albums.contains_key(&id) {
-                self.albums.insert(id, Load::Loading);
-                self.fetch(cx, move |t| t.album(id), move |this, r, _| {
-                    this.albums.insert(id, super::into_load(r));
-                });
+            if let std::collections::hash_map::Entry::Vacant(e) = self.albums.entry(id) {
+                e.insert(Load::Loading);
+                self.fetch(
+                    cx,
+                    move |t| t.album(id),
+                    move |this, r, _| {
+                        this.albums.insert(id, super::into_load(r));
+                    },
+                );
             }
         }
         self.content_changed_pub();
@@ -76,7 +82,11 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                     .group(group.clone())
                     .relative()
                     // Hover fades in, press deepens; the accent strip grows from the middle.
-                    .bg(if current { theme::accent_dim() } else { super::interact::mix(super::fx::with_alpha(theme::hover(), h), theme::active(), p) })
+                    .bg(if current {
+                        theme::accent_dim()
+                    } else {
+                        super::interact::mix(super::fx::with_alpha(theme::hover(), h), theme::active(), p)
+                    })
                     .child(
                         div()
                             .absolute()
@@ -97,17 +107,13 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                             .justify_center()
                             .text_size(sc(12.))
                             .text_color(if current { theme::accent() } else { theme::text_dim() })
-                            .child(
-                                div()
-                                    .group_hover(group.clone(), |s| s.invisible())
-                                    .child(if current {
-                                        super::widgets::eq_bars(playing, theme::accent()).into_any_element()
-                                    } else if multi_disc {
-                                        div().child(format!("{}.{}", t.volume_number, t.track_number)).into_any_element()
-                                    } else {
-                                        div().child(t.track_number.to_string()).into_any_element()
-                                    }),
-                            )
+                            .child(div().group_hover(group.clone(), |s| s.invisible()).child(if current {
+                                super::widgets::eq_bars(playing, theme::accent()).into_any_element()
+                            } else if multi_disc {
+                                div().child(format!("{}.{}", t.volume_number, t.track_number)).into_any_element()
+                            } else {
+                                div().child(t.track_number.to_string()).into_any_element()
+                            }))
                             .child(
                                 div()
                                     .id(("inline-play", i))
@@ -179,8 +185,7 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                             this.menu = Some((ev.position, MenuTarget::Track(t_menu.clone())));
                             cx.notify();
                         }),
-                    )
-                    ;
+                    );
                 super::interact::track(row, rk, cx).into_any_element()
             };
             // Adapt to the room: as many columns as fit (>= 260 px each), but only as
@@ -189,7 +194,7 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
             let grid_w = cols as f32 * (theme::CARD_W + 8.0);
             let list_w = (grid_w - 200.0 - 24.0 - 40.0).max(260.0);
             let fit = ((list_w + 16.0) / 276.0).floor().clamp(1.0, 4.0) as usize;
-            let need = ((tracks.len() + 9) / 10).clamp(1, 4);
+            let need = tracks.len().div_ceil(10).clamp(1, 4);
             let ncols = fit.min(need);
             // Flat list with a header before each disc of a multi-disc album.
             let mut flat: Vec<Result<usize, u32>> = Vec::new();
@@ -201,7 +206,7 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                 }
                 flat.push(Ok(i));
             }
-            let per = (flat.len() + ncols - 1) / ncols;
+            let per = flat.len().div_ceil(ncols);
             let columns: Vec<AnyElement> = flat
                 .chunks(per.max(1))
                 .map(|chunk| {
@@ -234,15 +239,10 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
         .pb(sc(18.))
         .child(
             // Caret pointing at the open album.
-            div().h(sc(10.)).relative().child(
-                div()
-                    .absolute()
-                    .left(sc(caret_x - 24.0))
-                    .top(sc(2.))
-                    .size(sc(16.))
-                    .rounded(sc(3.))
-                    .bg(theme::surface()),
-            ),
+            div()
+                .h(sc(10.))
+                .relative()
+                .child(div().absolute().left(sc(caret_x - 24.0)).top(sc(2.)).size(sc(16.)).rounded(sc(3.)).bg(theme::surface())),
         )
         .child(
             div()
@@ -287,25 +287,51 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                                 .flex()
                                 .items_center()
                                 .gap(sc(6.))
-                                .child(pill("inline-play", "Reproducir", Some(Icon::Play), true, move |this, _, _, cx| {
-                                    if let Some(t) = this.albums.get(&id).and_then(Load::ready).map(|(_, t)| t.clone()) {
-                                        this.shuffle = false;
-                                        this.play_tracks(t, 0, cx)
-                                    }
-                                }, cx))
-                                .child(icon_button("inline-shuffle", Icon::Shuffle, 20., theme::text_secondary(), move |this, _, _, cx| {
-                                    if let Some(t) = this.albums.get(&id).and_then(Load::ready).map(|(_, t)| t.clone()) {
-                                        this.play_shuffled(t, cx)
-                                    }
-                                }, cx))
-                                .child(icon_button("inline-open", Icon::Forward, 20., theme::text_secondary(), move |this, _, _, cx| {
-                                    this.navigate(Page::Album(a_open.id), cx)
-                                }, cx))
-                                .child(icon_button("inline-close", Icon::Close, 18., theme::text_secondary(), move |this, _, _, cx| {
-                                    this.expanded_album = None;
-                                    this.content_changed_pub();
-                                    cx.notify();
-                                }, cx)),
+                                .child(pill(
+                                    "inline-play",
+                                    "Reproducir",
+                                    Some(Icon::Play),
+                                    true,
+                                    move |this, _, _, cx| {
+                                        if let Some(t) = this.albums.get(&id).and_then(Load::ready).map(|(_, t)| t.clone()) {
+                                            this.shuffle = false;
+                                            this.play_tracks(t, 0, cx)
+                                        }
+                                    },
+                                    cx,
+                                ))
+                                .child(icon_button(
+                                    "inline-shuffle",
+                                    Icon::Shuffle,
+                                    20.,
+                                    theme::text_secondary(),
+                                    move |this, _, _, cx| {
+                                        if let Some(t) = this.albums.get(&id).and_then(Load::ready).map(|(_, t)| t.clone()) {
+                                            this.play_shuffled(t, cx)
+                                        }
+                                    },
+                                    cx,
+                                ))
+                                .child(icon_button(
+                                    "inline-open",
+                                    Icon::Forward,
+                                    20.,
+                                    theme::text_secondary(),
+                                    move |this, _, _, cx| this.navigate(Page::Album(a_open.id), cx),
+                                    cx,
+                                ))
+                                .child(icon_button(
+                                    "inline-close",
+                                    Icon::Close,
+                                    18.,
+                                    theme::text_secondary(),
+                                    move |this, _, _, cx| {
+                                        this.expanded_album = None;
+                                        this.content_changed_pub();
+                                        cx.notify();
+                                    },
+                                    cx,
+                                )),
                         ),
                 )
                 .child(list),

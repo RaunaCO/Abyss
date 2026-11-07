@@ -31,10 +31,18 @@ rubato = "0.16"
 cpal = "0.15.3"
 rtrb = "0.3"
 pinyin = "0.11.0"
-lindera = { version = "6.2.0", default-features = false, features = ["embed-ipadic"] }
+# Japanese kanji readings for romaji. The embedded IPADIC dictionary is ~46 MiB
+# of the binary; build with `--no-default-features` to leave it out (kana-only romaji).
+lindera = { version = "6.2.0", default-features = false, features = ["embed-ipadic"], optional = true }
+
+[features]
+default = ["kanji-romaji"]
+kanji-romaji = ["dep:lindera"]
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.15"
+# DPAPI for the session tokens (already in the dependency tree via other crates).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [profile.release]
 opt-level = 3

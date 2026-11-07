@@ -108,7 +108,8 @@ pub fn press(key: &str) -> f32 {
 
 /// Release every pressed element (the button went up somewhere else).
 pub fn release_all() {
-    let keys: Vec<String> = MAP.with(|m| m.borrow().iter().filter(|(k, a)| k.starts_with("p:") && a.to > 0.0).map(|(k, _)| k.clone()).collect());
+    let keys: Vec<String> =
+        MAP.with(|m| m.borrow().iter().filter(|(k, a)| k.starts_with("p:") && a.to > 0.0).map(|(k, _)| k.clone()).collect());
     for k in keys {
         set(&k, 0.0, PRESS_OUT);
     }
@@ -122,9 +123,9 @@ pub fn animating() -> bool {
         let busy = m.iter().find(|(_, a)| !a.done()).map(|(k, _)| k.clone());
         if let Some(k) = &busy {
             if std::env::var_os("TIDE_PERF").is_some() {
-                thread_local!(static LAST: std::cell::Cell<Option<Instant>> = std::cell::Cell::new(None));
+                thread_local!(static LAST: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) });
                 LAST.with(|l| {
-                    if l.get().map_or(true, |t| t.elapsed().as_secs_f32() > 1.0) {
+                    if l.get().is_none_or(|t| t.elapsed().as_secs_f32() > 1.0) {
                         l.set(Some(Instant::now()));
                         log::info!("interact busy: {k}");
                     }

@@ -69,11 +69,7 @@ pub struct Track {
 impl Track {
     /// Take the "date added" from the list entry that wraps the track.
     pub fn with_added(mut self, entry: &Value) -> Self {
-        self.added = entry
-            .get("created")
-            .or_else(|| entry.get("dateAdded"))
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        self.added = entry.get("created").or_else(|| entry.get("dateAdded")).and_then(Value::as_str).map(str::to_string);
         self
     }
 
@@ -88,11 +84,8 @@ impl Track {
             .map(|a| a.iter().map(ArtistRef::parse).collect())
             .or_else(|| v.get("artist").map(|a| vec![ArtistRef::parse(a)]))
             .unwrap_or_default();
-        let album = v.get("album").filter(|a| a.is_object()).map(|a| AlbumRef {
-            id: u(a, "id"),
-            title: s(a, "title"),
-            cover: opt_s(a, "cover"),
-        });
+        let album =
+            v.get("album").filter(|a| a.is_object()).map(|a| AlbumRef { id: u(a, "id"), title: s(a, "title"), cover: opt_s(a, "cover") });
         Some(Self {
             id,
             title: s(v, "title"),
@@ -251,14 +244,9 @@ impl Playlist {
     pub fn cover(&self, size: u32) -> Option<String> {
         if let Some(sq) = &self.square_image {
             let sz = [160, 320, 480, 640, 750, 1080].into_iter().find(|&x| x >= size).unwrap_or(1080);
-            return Some(format!(
-                "https://resources.tidal.com/images/{}/{sz}x{sz}.jpg",
-                sq.replace('-', "/")
-            ));
+            return Some(format!("https://resources.tidal.com/images/{}/{sz}x{sz}.jpg", sq.replace('-', "/")));
         }
-        self.image.as_deref().map(|i| {
-            format!("https://resources.tidal.com/images/{}/480x320.jpg", i.replace('-', "/"))
-        })
+        self.image.as_deref().map(|i| format!("https://resources.tidal.com/images/{}/480x320.jpg", i.replace('-', "/")))
     }
 }
 
@@ -277,9 +265,7 @@ impl Mix {
             return None;
         }
         let images = v.get("images");
-        let image = ["MEDIUM", "LARGE", "SMALL"].iter().find_map(|k| {
-            images?.get(*k)?.get("url")?.as_str().map(str::to_string)
-        });
+        let image = ["MEDIUM", "LARGE", "SMALL"].iter().find_map(|k| images?.get(*k)?.get("url")?.as_str().map(str::to_string));
         Some(Self { id, title: s(v, "title"), subtitle: s(v, "subTitle"), image })
     }
 }

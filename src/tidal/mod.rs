@@ -55,19 +55,22 @@ pub enum PollResult {
 pub struct Tidal {
     http: Client,
     pub settings: Arc<Mutex<Settings>>,
+    /// Held while refreshing the session so parallel requests that all find
+    /// the token expired refresh it once, not once each.
+    refresh_lock: Arc<Mutex<()>>,
 }
 
 impl Tidal {
     pub fn new(settings: Arc<Mutex<Settings>>) -> Self {
         let http = Client::builder()
-            .user_agent("tide/0.1")
+            .user_agent(concat!("TIDE/", env!("CARGO_PKG_VERSION"), " (https://github.com/RaunaCO/TIDE)"))
             .gzip(true)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(8)
             .build()
             .expect("http client");
-        Self { http, settings }
+        Self { http, settings, refresh_lock: Arc::new(Mutex::new(())) }
     }
 
     pub fn http(&self) -> &Client {
@@ -253,14 +256,24 @@ impl Tidal {
     }
 
     fn token(&self) -> Result<String> {
-        let expired = {
-            let s = self.settings.lock();
-            s.access_token.is_none() || s.expires_at <= now() + 60
-        };
-        if expired {
-            self.refresh()?;
+        let expired = |s: &Settings| s.access_token.is_none() || s.expires_at <= now() + 60;
+        if expired(&self.settings.lock()) {
+            let _g = self.refresh_lock.lock();
+            // Another thread may have refreshed while we waited.
+            if expired(&self.settings.lock()) {
+                self.refresh()?;
+            }
         }
         self.settings.lock().access_token.clone().ok_or_else(|| anyhow!("not signed in"))
+    }
+
+    /// The server rejected `used`: refresh, unless another thread already did.
+    fn refresh_rejected(&self, used: &str) -> Result<()> {
+        let _g = self.refresh_lock.lock();
+        if self.settings.lock().access_token.as_deref() == Some(used) {
+            self.refresh()?;
+        }
+        Ok(())
     }
 
     /// Fill user id, country and name from the current session.
@@ -279,11 +292,8 @@ impl Tidal {
             if let Ok(u) = self.get(&format!("/users/{uid}"), &[]) {
                 let mut s = self.settings.lock();
                 let first = u.get("firstName").and_then(Value::as_str).unwrap_or("");
-                let name = if first.is_empty() {
-                    u.get("username").and_then(Value::as_str).unwrap_or("").to_string()
-                } else {
-                    first.to_string()
-                };
+                let name =
+                    if first.is_empty() { u.get("username").and_then(Value::as_str).unwrap_or("").to_string() } else { first.to_string() };
                 if !name.is_empty() {
                     s.username = Some(name);
                 }
@@ -328,7 +338,7 @@ impl Tidal {
             let status = resp.status();
             if status.as_u16() == 401 && attempt == 1 {
                 // Token revoked or expired early: refresh once and retry.
-                self.refresh()?;
+                self.refresh_rejected(&token)?;
                 continue;
             }
             if status.as_u16() == 429 && attempt < 4 {
@@ -340,12 +350,7 @@ impl Tidal {
             if !status.is_success() {
                 let msg = serde_json::from_str::<Value>(&text)
                     .ok()
-                    .and_then(|v| {
-                        v.get("userMessage")
-                            .or_else(|| v.get("description"))
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                    })
+                    .and_then(|v| v.get("userMessage").or_else(|| v.get("description")).and_then(Value::as_str).map(str::to_string))
                     .unwrap_or_else(|| text.chars().take(200).collect());
                 bail!("TIDAL {status}: {msg}");
             }
@@ -374,9 +379,7 @@ impl Tidal {
     fn post_form(&self, path: &str, form: &[(&str, String)]) -> Result<Value> {
         let cc = self.country();
         let url = format!("{API_URL}{path}");
-        self.send(|token| {
-            self.http.post(&url).bearer_auth(token).query(&[("countryCode", cc.as_str())]).form(form)
-        })
+        self.send(|token| self.http.post(&url).bearer_auth(token).query(&[("countryCode", cc.as_str())]).form(form))
     }
 
     fn delete(&self, path: &str) -> Result<Value> {
@@ -418,9 +421,7 @@ impl Tidal {
                 ("includeContributors", "true".into()),
             ],
         )?;
-        let list = |k: &str| -> Vec<Value> {
-            v.get(k).and_then(|x| x.get("items")).and_then(Value::as_array).cloned().unwrap_or_default()
-        };
+        let list = |k: &str| -> Vec<Value> { v.get(k).and_then(|x| x.get("items")).and_then(Value::as_array).cloned().unwrap_or_default() };
         let top = v.get("topHit").and_then(|t| {
             let kind = t.get("type")?.as_str()?;
             let kind = kind.trim_end_matches('S');
@@ -436,8 +437,7 @@ impl Tidal {
     }
 
     pub fn album(&self, id: u64) -> Result<(Album, Vec<Track>)> {
-        let album = Album::parse(&self.get(&format!("/albums/{id}"), &[])?)
-            .ok_or_else(|| anyhow!("album not found"))?;
+        let album = Album::parse(&self.get(&format!("/albums/{id}"), &[])?).ok_or_else(|| anyhow!("album not found"))?;
         let items = self.paged(&format!("/albums/{id}/items"), &[], 1000)?;
         let tracks = items
             .iter()
@@ -448,8 +448,7 @@ impl Tidal {
     }
 
     pub fn playlist(&self, uuid: &str) -> Result<(Playlist, Vec<Track>)> {
-        let pl = Playlist::parse(&self.get(&format!("/playlists/{uuid}"), &[])?)
-            .ok_or_else(|| anyhow!("playlist not found"))?;
+        let pl = Playlist::parse(&self.get(&format!("/playlists/{uuid}"), &[])?).ok_or_else(|| anyhow!("playlist not found"))?;
         // `/tracks` (unlike `/items`) carries the date each track was added.
         let items = self.paged(&format!("/playlists/{uuid}/tracks"), &[], 5000)?;
         let tracks = items.iter().filter_map(|i| Track::parse(i).map(|t| t.with_added(i))).collect();
@@ -457,8 +456,7 @@ impl Tidal {
     }
 
     pub fn artist(&self, id: u64) -> Result<ArtistPage> {
-        let artist = Artist::parse(&self.get(&format!("/artists/{id}"), &[])?)
-            .ok_or_else(|| anyhow!("artist not found"))?;
+        let artist = Artist::parse(&self.get(&format!("/artists/{id}"), &[])?).ok_or_else(|| anyhow!("artist not found"))?;
         let top = self
             .get(&format!("/artists/{id}/toptracks"), &[("limit", "10".into())])?
             .get("items")
@@ -476,10 +474,7 @@ impl Tidal {
                 .map(|a| a.iter().filter_map(Album::parse).collect())
                 .unwrap_or_default()
         };
-        let bio = self
-            .get(&format!("/artists/{id}/bio"), &[])
-            .ok()
-            .and_then(|v| v.get("text").and_then(Value::as_str).map(clean_bio));
+        let bio = self.get(&format!("/artists/{id}/bio"), &[]).ok().and_then(|v| v.get("text").and_then(Value::as_str).map(clean_bio));
         let similar = self
             .get(&format!("/artists/{id}/similar"), &[("limit", "12".into())])
             .ok()
@@ -510,12 +505,8 @@ impl Tidal {
                         }
                     }
                     Some("TRACK_LIST") => {
-                        let items = module
-                            .get("pagedList")
-                            .and_then(|p| p.get("items"))
-                            .and_then(Value::as_array)
-                            .cloned()
-                            .unwrap_or_default();
+                        let items =
+                            module.get("pagedList").and_then(|p| p.get("items")).and_then(Value::as_array).cloned().unwrap_or_default();
                         tracks.extend(items.iter().filter_map(Track::parse));
                     }
                     _ => {}
@@ -577,9 +568,11 @@ impl Tidal {
                     ("timeOffset", "+00:00"),
                     ("limit", "30"),
                 ])
+                // Required by this endpoint (400 without it). It is the version
+                // string of TIDAL's own desktop app: see docs/LEGAL.md (R2).
+                // No subscription tier is asserted: that header was not needed.
                 .header("x-tidal-client-version", "2.47.0")
                 .header("x-tidal-authenticated-userid", uid.to_string())
-                .header("x-tidal-authenticated-subscription", "HIFI_PLUS")
         })?;
         let parse = |x: &Value| -> Option<Item> {
             let kind = x.get("type")?.as_str()?;
@@ -593,7 +586,11 @@ impl Tidal {
                 "DEEP_LINK" => {
                     let url = data.get("url")?.as_str()?;
                     let page = url.strip_prefix("tidal://my-collection/")?;
-                    Some(Item::Link(Link { title: data.get("title")?.as_str()?.to_string(), path: format!("@{page}"), icon: String::new() }))
+                    Some(Item::Link(Link {
+                        title: data.get("title")?.as_str()?.to_string(),
+                        path: format!("@{page}"),
+                        icon: String::new(),
+                    }))
                 }
                 _ => None,
             }
@@ -609,7 +606,8 @@ impl Tidal {
             if let Some(about) = module.get("header").and_then(|h| h.get("data")).and_then(|d| d.get("title")).and_then(Value::as_str) {
                 title = format!("{title} {about}");
             }
-            let kind = if module.get("type").and_then(Value::as_str) == Some("SHORTCUT_LIST") { RowKind::Shortcuts } else { RowKind::Cards };
+            let kind =
+                if module.get("type").and_then(Value::as_str) == Some("SHORTCUT_LIST") { RowKind::Shortcuts } else { RowKind::Cards };
             rows.push(Row { title, items, kind });
         }
         Ok(rows)
@@ -622,12 +620,8 @@ impl Tidal {
             for module in row.get("modules").and_then(Value::as_array).into_iter().flatten() {
                 let kind = module.get("type").and_then(Value::as_str).unwrap_or("");
                 let title = module.get("title").and_then(Value::as_str).unwrap_or("").to_string();
-                let items: Vec<Value> = module
-                    .get("pagedList")
-                    .and_then(|p| p.get("items"))
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
+                let items: Vec<Value> =
+                    module.get("pagedList").and_then(|p| p.get("items")).and_then(Value::as_array).cloned().unwrap_or_default();
                 let promos = || -> Vec<Item> {
                     module
                         .get("items")
@@ -664,23 +658,22 @@ impl Tidal {
                     "PAGE_LINKS_CLOUD" => (RowKind::Chips, links()),
                     "PAGE_LINKS" => (RowKind::Links, links()),
                     "FEATURED_PROMOTIONS" if name == "explore" => (RowKind::Featured, promos()),
-                    _ => (RowKind::Cards, match kind {
-                    "MIXED_TYPES_LIST" | "HIGHLIGHT_MODULE" => items
-                        .iter()
-                        .filter_map(|i| {
-                            let i = i.get("item").map(|inner| (i, inner)).unwrap_or((i, i));
-                            Item::parse_typed(i.0.get("type")?.as_str()?, i.1)
-                        })
-                        .collect(),
-                    "FEATURED_PROMOTIONS" | "MULTIPLE_TOP_PROMOTIONS" => module
-                        .get("items")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(promotion_item)
-                        .collect(),
-                    other => items.iter().filter_map(|i| Item::parse_typed(other, i)).collect(),
-                    }),
+                    _ => (
+                        RowKind::Cards,
+                        match kind {
+                            "MIXED_TYPES_LIST" | "HIGHLIGHT_MODULE" => items
+                                .iter()
+                                .filter_map(|i| {
+                                    let i = i.get("item").map(|inner| (i, inner)).unwrap_or((i, i));
+                                    Item::parse_typed(i.0.get("type")?.as_str()?, i.1)
+                                })
+                                .collect(),
+                            "FEATURED_PROMOTIONS" | "MULTIPLE_TOP_PROMOTIONS" => {
+                                module.get("items").and_then(Value::as_array).into_iter().flatten().filter_map(promotion_item).collect()
+                            }
+                            other => items.iter().filter_map(|i| Item::parse_typed(other, i)).collect(),
+                        },
+                    ),
                 };
                 if !parsed.is_empty() {
                     rows.push(Row { title, items: parsed, kind: row_kind });
@@ -711,31 +704,22 @@ impl Tidal {
 
     pub fn favorite_tracks(&self) -> Result<Vec<Track>> {
         let uid = self.user_id()?;
-        let items = self.paged(
-            &format!("/users/{uid}/favorites/tracks"),
-            &[("order", "DATE".into()), ("orderDirection", "DESC".into())],
-            10_000,
-        )?;
+        let items =
+            self.paged(&format!("/users/{uid}/favorites/tracks"), &[("order", "DATE".into()), ("orderDirection", "DESC".into())], 10_000)?;
         Ok(items.iter().filter_map(|i| Track::parse(i.get("item")?).map(|t| t.with_added(i))).collect())
     }
 
     pub fn favorite_albums(&self) -> Result<Vec<Album>> {
         let uid = self.user_id()?;
-        let items = self.paged(
-            &format!("/users/{uid}/favorites/albums"),
-            &[("order", "DATE".into()), ("orderDirection", "DESC".into())],
-            5000,
-        )?;
+        let items =
+            self.paged(&format!("/users/{uid}/favorites/albums"), &[("order", "DATE".into()), ("orderDirection", "DESC".into())], 5000)?;
         Ok(items.iter().filter_map(|i| Album::parse(i.get("item")?)).collect())
     }
 
     pub fn favorite_artists(&self) -> Result<Vec<Artist>> {
         let uid = self.user_id()?;
-        let items = self.paged(
-            &format!("/users/{uid}/favorites/artists"),
-            &[("order", "DATE".into()), ("orderDirection", "DESC".into())],
-            5000,
-        )?;
+        let items =
+            self.paged(&format!("/users/{uid}/favorites/artists"), &[("order", "DATE".into()), ("orderDirection", "DESC".into())], 5000)?;
         Ok(items.iter().filter_map(|i| Artist::parse(i.get("item")?)).collect())
     }
 
@@ -751,11 +735,7 @@ impl Tidal {
 
     pub fn my_mixes(&self) -> Result<Vec<Mix>> {
         let rows = self.page("my_collection_my_mixes")?;
-        Ok(rows
-            .into_iter()
-            .flat_map(|r| r.items)
-            .filter_map(|i| if let Item::Mix(m) = i { Some(m) } else { None })
-            .collect())
+        Ok(rows.into_iter().flat_map(|r| r.items).filter_map(|i| if let Item::Mix(m) = i { Some(m) } else { None }).collect())
     }
 
     /// Ids of favourite tracks and followed artists.
@@ -763,10 +743,7 @@ impl Tidal {
         let uid = self.user_id()?;
         let v = self.get(&format!("/users/{uid}/favorites/ids"), &[])?;
         let ids = |k: &str| -> Vec<u64> {
-            v.get(k)
-                .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(|x| x.as_str()?.parse().ok()).collect())
-                .unwrap_or_default()
+            v.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str()?.parse().ok()).collect()).unwrap_or_default()
         };
         Ok((ids("TRACK"), ids("ARTIST")))
     }
@@ -817,10 +794,8 @@ impl Tidal {
 
     pub fn create_playlist(&self, title: &str, description: &str) -> Result<Playlist> {
         let uid = self.user_id()?;
-        let v = self.post_form(
-            &format!("/users/{uid}/playlists"),
-            &[("title", title.to_string()), ("description", description.to_string())],
-        )?;
+        let v =
+            self.post_form(&format!("/users/{uid}/playlists"), &[("title", title.to_string()), ("description", description.to_string())])?;
         Playlist::parse(&v).ok_or_else(|| anyhow!("TIDAL did not return the new playlist"))
     }
 
@@ -856,12 +831,7 @@ impl Tidal {
     }
 
     pub fn move_in_playlist(&self, uuid: &str, from: usize, to: usize) -> Result<()> {
-        self.playlist_write(
-            uuid,
-            reqwest::Method::POST,
-            &format!("/playlists/{uuid}/items/{from}"),
-            &[("toIndex", to.to_string())],
-        )?;
+        self.playlist_write(uuid, reqwest::Method::POST, &format!("/playlists/{uuid}/items/{from}"), &[("toIndex", to.to_string())])?;
         Ok(())
     }
 
@@ -893,12 +863,8 @@ impl Tidal {
             .flatten()
             .filter_map(|c| {
                 let role = c.get("type")?.as_str()?.to_string();
-                let names: Vec<String> = c
-                    .get("contributors")?
-                    .as_array()?
-                    .iter()
-                    .filter_map(|p| p.get("name")?.as_str().map(str::to_string))
-                    .collect();
+                let names: Vec<String> =
+                    c.get("contributors")?.as_array()?.iter().filter_map(|p| p.get("name")?.as_str().map(str::to_string)).collect();
                 (!names.is_empty()).then_some((role, names))
             })
             .collect())
@@ -906,11 +872,7 @@ impl Tidal {
 
     pub fn lyrics(&self, track_id: u64) -> Result<Lyrics> {
         let v = self.get(&format!("/tracks/{track_id}/lyrics"), &[])?;
-        let synced = v
-            .get("subtitles")
-            .and_then(Value::as_str)
-            .map(parse_lrc)
-            .unwrap_or_default();
+        let synced = v.get("subtitles").and_then(Value::as_str).map(parse_lrc).unwrap_or_default();
         Ok(Lyrics {
             roman: Vec::new(),
             text: v.get("lyrics").and_then(Value::as_str).unwrap_or("").to_string(),
@@ -957,7 +919,13 @@ impl Tidal {
                 let shown: String = xml.split('"').map(|p| if p.starts_with("http") { "<url>" } else { p }).collect::<Vec<_>>().join("\"");
                 out.push(format!("MPD:\n{shown}"));
                 match dash::parse(&xml) {
-                    Ok(mpd) => out.push(format!("parsed: {} urls, codec {}, {:?} bit, {:?} Hz", mpd.urls.len(), mpd.codec, mpd.bit_depth, mpd.sample_rate)),
+                    Ok(mpd) => out.push(format!(
+                        "parsed: {} urls, codec {}, {:?} bit, {:?} Hz",
+                        mpd.urls.len(),
+                        mpd.codec,
+                        mpd.bit_depth,
+                        mpd.sample_rate
+                    )),
                     Err(e) => out.push(format!("PARSE ERROR: {e:#}")),
                 }
             }
@@ -1001,17 +969,10 @@ impl Tidal {
     fn stream_at(&self, track_id: u64, quality: &str) -> Result<StreamInfo> {
         let v = self.get(
             &format!("/tracks/{track_id}/playbackinfo"),
-            &[
-                ("audioquality", quality.into()),
-                ("playbackmode", "STREAM".into()),
-                ("assetpresentation", "FULL".into()),
-            ],
+            &[("audioquality", quality.into()), ("playbackmode", "STREAM".into()), ("assetpresentation", "FULL".into())],
         )?;
         let mime = v.get("manifestMimeType").and_then(Value::as_str).unwrap_or("");
-        let manifest = v
-            .get("manifest")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("no manifest"))?;
+        let manifest = v.get("manifest").and_then(Value::as_str).ok_or_else(|| anyhow!("no manifest"))?;
         let manifest = String::from_utf8(base64::engine::general_purpose::STANDARD.decode(manifest)?)?;
         let audio_quality = v.get("audioQuality").and_then(Value::as_str).unwrap_or(quality).to_string();
         let bit_depth = v.get("bitDepth").and_then(Value::as_u64).map(|x| x as u32);
@@ -1045,6 +1006,9 @@ impl Tidal {
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("no URL in manifest"))?
             .to_string();
+        if !url.starts_with("https://") {
+            bail!("stream URL is not HTTPS");
+        }
         let codec = m.get("codecs").and_then(Value::as_str).unwrap_or("flac").to_string();
         Ok(StreamInfo {
             source: StreamSource::Single(url),

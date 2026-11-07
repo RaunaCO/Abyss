@@ -2,14 +2,15 @@
 
 use super::sc;
 use gpui::{
-    AnimationExt,
-    anchored, deferred, div, list, point, prelude::*, px, relative, AnyElement, ClipboardItem, Context, Corner, Focusable, FontWeight,
-    ScrollHandle, SharedString, Window,
+    anchored, deferred, div, list, point, prelude::*, px, relative, AnimationExt, AnyElement, ClipboardItem, Context, Corner, Focusable,
+    FontWeight, ScrollHandle, SharedString, Window,
 };
 
 use super::icons::Icon;
-use super::widgets::{self, action, card, cover, fmt_hms, fmt_long, fmt_time, icon_button, message, pill, section_title, track_row, Cols, RowStyle};
 use super::sort::SortKey;
+use super::widgets::{
+    self, action, card, cover, fmt_hms, fmt_long, fmt_time, icon_button, message, pill, section_title, track_row, Cols, RowStyle,
+};
 use super::{theme, AppView, Load, LoginState, MenuTarget, Page};
 use crate::config::Quality;
 use crate::tidal::{Album, Artist, Item, Mix, Playlist, Row, RowKind, Track};
@@ -244,7 +245,11 @@ impl AppView {
                     if let Some(Load::Ready((more, similar))) = self.album_extra.get(id) {
                         let artist = album.artist_names();
                         if !more.is_empty() {
-                            b.push(Block::Row(0, format!("Más álbumes de {artist}").into(), more.iter().cloned().map(Item::Album).collect()));
+                            b.push(Block::Row(
+                                0,
+                                format!("Más álbumes de {artist}").into(),
+                                more.iter().cloned().map(Item::Album).collect(),
+                            ));
                         }
                         if !similar.is_empty() {
                             b.push(Block::Row(1, "Artistas relacionados".into(), similar.iter().cloned().map(Item::Artist).collect()));
@@ -259,7 +264,10 @@ impl AppView {
                     let total: u64 = tracks.iter().map(|t| t.duration as u64).sum();
                     b.push(Block::PlaylistHeader(pl.clone(), tracks.len() as u32, total));
                     // One lock: taking the settings lock twice in a statement deadlocks.
-                    let (bpm, rating) = { let st = self.settings.lock(); (st.audio_metadata, st.show_ratings) };
+                    let (bpm, rating) = {
+                        let st = self.settings.lock();
+                        (st.audio_metadata, st.show_ratings)
+                    };
                     let style = RowStyle { date: true, bpm, rating, ..RowStyle::new(true, true, false) };
                     b.push(Block::FilterBar);
                     b.push(Block::TrackHeader(style));
@@ -318,14 +326,9 @@ impl AppView {
                 b.push(Block::FilterBar);
                 match &self.my_playlists {
                     Load::Ready(l) if l.is_empty() => b.push(Block::Message("Aún no tienes playlists.".into())),
-                    Load::Ready(l) => grid(
-                        &mut b,
-                        l.iter()
-                            .filter(|p| self.text_matches(&[&p.title, &p.creator]))
-                            .cloned()
-                            .map(Item::Playlist)
-                            .collect(),
-                    ),
+                    Load::Ready(l) => {
+                        grid(&mut b, l.iter().filter(|p| self.text_matches(&[&p.title, &p.creator])).cloned().map(Item::Playlist).collect())
+                    }
                     Load::Failed(e) => state(&mut b, false, Some(e)),
                     _ => state(&mut b, true, None),
                 }
@@ -373,7 +376,10 @@ impl AppView {
                 match &self.fav_tracks {
                     Load::Ready(l) if l.is_empty() => b.push(Block::Message("Aún no tienes pistas favoritas.".into())),
                     Load::Ready(l) => {
-                        let (bpm, rating) = { let st = self.settings.lock(); (st.audio_metadata, st.show_ratings) };
+                        let (bpm, rating) = {
+                            let st = self.settings.lock();
+                            (st.audio_metadata, st.show_ratings)
+                        };
                         let style = RowStyle { date: true, bpm, rating, sortable: Some("tracks"), ..RowStyle::new(true, true, false) };
                         b.push(Block::Actions(TrackSrc::Favorites));
                         b.push(Block::FilterBar);
@@ -400,13 +406,7 @@ impl AppView {
     /// list itself spans the whole area so the wheel works on the margins too.
     pub fn render_block(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let inner = self.render_block_inner(ix, window, cx);
-        div()
-            .w_full()
-            .px(sc(24.))
-            .flex()
-            .justify_center()
-            .child(div().w_full().max_w(sc(theme::CONTENT_W)).child(inner))
-            .into_any_element()
+        div().w_full().px(sc(24.)).flex().justify_center().child(div().w_full().max_w(sc(theme::CONTENT_W)).child(inner)).into_any_element()
     }
 
     fn render_block_inner(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -420,7 +420,9 @@ impl AppView {
                 .flex()
                 .flex_col()
                 .gap(sc(3.))
-                .when_some(sub, |d, s| d.child(div().text_size(sc(10.5)).text_color(theme::text_dim()).font_weight(FontWeight::BOLD).child(s.to_uppercase())))
+                .when_some(sub, |d, s| {
+                    d.child(div().text_size(sc(10.5)).text_color(theme::text_dim()).font_weight(FontWeight::BOLD).child(s.to_uppercase()))
+                })
                 .child(div().text_size(sc(22.)).font_weight(FontWeight::BOLD).child(t))
                 .into_any_element(),
             Block::Section(t) => section_title(t),
@@ -432,9 +434,14 @@ impl AppView {
             Block::NewPlaylist => div()
                 .pb(sc(8.))
                 .flex()
-                .child(pill("new-pl", "Nueva playlist", None, true, |this, _, window, cx| {
-                    this.open_dialog(super::playlists::Dialog::NewPlaylist { add: vec![] }, window, cx)
-                }, cx))
+                .child(pill(
+                    "new-pl",
+                    "Nueva playlist",
+                    None,
+                    true,
+                    |this, _, window, cx| this.open_dialog(super::playlists::Dialog::NewPlaylist { add: vec![] }, window, cx),
+                    cx,
+                ))
                 .into_any_element(),
             Block::Message(t) => message(t),
             Block::Spacer(h) => div().h(sc(h)).into_any_element(),
@@ -468,7 +475,13 @@ impl AppView {
                 let label = |text: &'static str, key: Option<SortKey>, cx: &mut Context<Self>| {
                     let active = key.is_some() && cur.map(|(k, _)| k) == key;
                     let arrow = match (active, cur) {
-                        (true, Some((_, desc))) => if desc { " ▼" } else { " ▲" },
+                        (true, Some((_, desc))) => {
+                            if desc {
+                                " ▼"
+                            } else {
+                                " ▲"
+                            }
+                        }
                         _ => "",
                     };
                     let sortable = section.is_some() && key.is_some();
@@ -491,11 +504,28 @@ impl AppView {
                     .flex()
                     .items_center()
                     .gap(sc(12.))
-                    .child(div().w(sc(Cols::NUM)).flex_none().text_center().text_size(sc(9.5)).font_weight(FontWeight::BOLD).text_color(theme::text_dim()).child("#"))
-                    .child(div().flex_1().min_w(sc(0.)).pl(sc(if style.cover { 42. } else { 0. })).child(label("TÍTULO", Some(SortKey::Name), cx)))
+                    .child(
+                        div()
+                            .w(sc(Cols::NUM))
+                            .flex_none()
+                            .text_center()
+                            .text_size(sc(9.5))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_dim())
+                            .child("#"),
+                    )
+                    .child(div().flex_1().min_w(sc(0.)).pl(sc(if style.cover { 42. } else { 0. })).child(label(
+                        "TÍTULO",
+                        Some(SortKey::Name),
+                        cx,
+                    )))
                     .child(div().w(relative(Cols::artist(style))).flex_none().child(label("ARTISTA", Some(SortKey::Artist), cx)))
-                    .when(style.album, |d| d.child(div().w(relative(Cols::ALBUM)).flex_none().child(label("ÁLBUM", Some(SortKey::Album), cx))))
-                    .when(style.rating, |d| d.child(div().w(sc(Cols::RATING)).flex_none().child(label("VALORACIÓN", Some(SortKey::Rating), cx))))
+                    .when(style.album, |d| {
+                        d.child(div().w(relative(Cols::ALBUM)).flex_none().child(label("ÁLBUM", Some(SortKey::Album), cx)))
+                    })
+                    .when(style.rating, |d| {
+                        d.child(div().w(sc(Cols::RATING)).flex_none().child(label("VALORACIÓN", Some(SortKey::Rating), cx)))
+                    })
                     .when(style.date, |d| d.child(div().w(sc(Cols::DATE)).flex_none().child(label("AÑADIDA", Some(SortKey::Added), cx))))
                     .child(div().w(sc(Cols::TIME)).flex_none().child(label("TIEMPO", Some(SortKey::Duration), cx)))
                     .when(style.bpm, |d| d.child(div().w(sc(Cols::BPM)).flex_none().child(label("BPM", None, cx))))
@@ -509,10 +539,17 @@ impl AppView {
                 .items_center()
                 .gap(sc(8.))
                 .child(div().text_size(sc(22.)).font_weight(FontWeight::BOLD).child(t))
-                .child(icon_button(("sort-menu", ix), Icon::More, 18., theme::text_secondary(), move |this, ev: &gpui::ClickEvent, _, cx| {
-                    this.menu = Some((ev.position(), MenuTarget::Sort(section)));
-                    cx.notify();
-                }, cx))
+                .child(icon_button(
+                    ("sort-menu", ix),
+                    Icon::More,
+                    18.,
+                    theme::text_secondary(),
+                    move |this, ev: &gpui::ClickEvent, _, cx| {
+                        this.menu = Some((ev.position(), MenuTarget::Sort(section)));
+                        cx.notify();
+                    },
+                    cx,
+                ))
                 .into_any_element(),
             Block::Actions(src) => {
                 let (s1, s2) = (src.clone(), src.clone());
@@ -521,49 +558,57 @@ impl AppView {
                     .flex()
                     .items_center()
                     .gap(sc(10.))
-                    .child(pill("act-play", "Reproducir", Some(Icon::Play), true, move |this, _, _, cx| {
-                        if let Some(t) = this.tracks_of(&s1).map(|t| t.to_vec()) {
-                            this.shuffle = false;
-                            this.play_tracks(t, 0, cx)
-                        }
-                    }, cx))
-                    .child(pill("act-shuffle", "Aleatorio", Some(Icon::Shuffle), false, move |this, _, _, cx| {
-                        if let Some(t) = this.tracks_of(&s2).map(|t| t.to_vec()) {
-                            this.play_shuffled(t, cx)
-                        }
-                    }, cx))
+                    .child(pill(
+                        "act-play",
+                        "Reproducir",
+                        Some(Icon::Play),
+                        true,
+                        move |this, _, _, cx| {
+                            if let Some(t) = this.tracks_of(&s1).map(|t| t.to_vec()) {
+                                this.shuffle = false;
+                                this.play_tracks(t, 0, cx)
+                            }
+                        },
+                        cx,
+                    ))
+                    .child(pill(
+                        "act-shuffle",
+                        "Aleatorio",
+                        Some(Icon::Shuffle),
+                        false,
+                        move |this, _, _, cx| {
+                            if let Some(t) = this.tracks_of(&s2).map(|t| t.to_vec()) {
+                                this.play_shuffled(t, cx)
+                            }
+                        },
+                        cx,
+                    ))
                     .into_any_element()
             }
             Block::Chips(title, items) => div()
                 .pb(px(6.))
                 .child(div().pt(px(26.)).pb(px(12.)).text_size(px(15.)).font_weight(FontWeight::BOLD).child(title))
-                .child(
+                .child(div().flex().flex_wrap().gap(px(10.)).children(items.into_iter().enumerate().map(|(i, it)| {
+                    let (label, target) = match &it {
+                        Item::Link(l) => (l.title.clone(), it.clone()),
+                        _ => (String::new(), it.clone()),
+                    };
                     div()
+                        .id(SharedString::from(format!("chip-{ix}-{i}")))
+                        .h(px(36.))
+                        .px(px(16.))
                         .flex()
-                        .flex_wrap()
-                        .gap(px(10.))
-                        .children(items.into_iter().enumerate().map(|(i, it)| {
-                            let (label, target) = match &it {
-                                Item::Link(l) => (l.title.clone(), it.clone()),
-                                _ => (String::new(), it.clone()),
-                            };
-                            div()
-                                .id(SharedString::from(format!("chip-{ix}-{i}")))
-                                .h(px(36.))
-                                .px(px(16.))
-                                .flex()
-                                .items_center()
-                                .rounded(px(8.))
-                                .bg(theme::elevated())
-                                .text_size(px(12.5))
-                                .font_weight(FontWeight::BOLD)
-                                .cursor_pointer()
-                                .hover(|s| s.bg(theme::active()))
-                                .active(|s| s.opacity(0.7))
-                                .child(label)
-                                .on_click(cx.listener(move |this, _, _, cx| this.open_item(&target, cx)))
-                        })),
-                )
+                        .items_center()
+                        .rounded(px(8.))
+                        .bg(theme::elevated())
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::BOLD)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::active()))
+                        .active(|s| s.opacity(0.7))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, _, cx| this.open_item(&target, cx)))
+                })))
                 .into_any_element(),
             Block::Links(items) => div()
                 .pt(px(26.))
@@ -607,41 +652,37 @@ impl AppView {
                 .into_any_element(),
             Block::Featured(title, items) => div()
                 .child(div().pt(px(6.)).pb(px(12.)).text_size(px(15.)).font_weight(FontWeight::BOLD).child(title))
-                .child(
-                    div()
+                .child(div().flex().gap(px(16.)).overflow_hidden().children(items.into_iter().enumerate().map(|(i, it)| {
+                    let Item::Promo(p) = it.clone() else { return div().into_any_element() };
+                    let url = p.image_url();
+                    let image = url.as_deref().and_then(|u| super::images::sized(u, 220., 160., cx));
+                    let card = div()
+                        .id(SharedString::from(format!("promo-{ix}-{i}")))
+                        .w(px(220.))
+                        .flex_none()
                         .flex()
-                        .gap(px(16.))
-                        .overflow_hidden()
-                        .children(items.into_iter().enumerate().map(|(i, it)| {
-                            let Item::Promo(p) = it.clone() else { return div().into_any_element() };
-                            let url = p.image_url();
-                            let image = url.as_deref().and_then(|u| super::images::sized(u, 220., 160., cx));
-                            let card = div()
-                                .id(SharedString::from(format!("promo-{ix}-{i}")))
-                                .w(px(220.))
-                                .flex_none()
-                                .flex()
-                                .flex_col()
-                                .gap(px(6.))
-                                .cursor_pointer()
-                                .child(match image {
-                                    Some(img) => gpui::img(img).w(px(220.)).h(px(160.)).rounded(px(4.)).object_fit(gpui::ObjectFit::Cover).into_any_element(),
-                                    None => div().w(px(220.)).h(px(160.)).rounded(px(4.)).bg(theme::surface()).into_any_element(),
-                                })
-                                .child(
-                                    div()
-                                        .pt(px(4.))
-                                        .text_size(px(8.5))
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(theme::accent())
-                                        .child(p.label.to_uppercase()),
-                                )
-                                .child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).truncate().child(p.title.clone()))
-                                .child(div().text_size(px(11.5)).text_color(theme::text_secondary()).truncate().child(p.subtitle.clone()))
-                                .on_click(cx.listener(move |this, _, _, cx| this.open_item(&it, cx)));
-                            super::fx::stagger(SharedString::from(format!("fs{}-{i}", self.page_anim)), i, card.into_any_element())
-                        })),
-                )
+                        .flex_col()
+                        .gap(px(6.))
+                        .cursor_pointer()
+                        .child(match image {
+                            Some(img) => {
+                                gpui::img(img).w(px(220.)).h(px(160.)).rounded(px(4.)).object_fit(gpui::ObjectFit::Cover).into_any_element()
+                            }
+                            None => div().w(px(220.)).h(px(160.)).rounded(px(4.)).bg(theme::surface()).into_any_element(),
+                        })
+                        .child(
+                            div()
+                                .pt(px(4.))
+                                .text_size(px(8.5))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme::accent())
+                                .child(p.label.to_uppercase()),
+                        )
+                        .child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).truncate().child(p.title.clone()))
+                        .child(div().text_size(px(11.5)).text_color(theme::text_secondary()).truncate().child(p.subtitle.clone()))
+                        .on_click(cx.listener(move |this, _, _, cx| this.open_item(&it, cx)));
+                    super::fx::stagger(SharedString::from(format!("fs{}-{i}", self.page_anim)), i, card.into_any_element())
+                })))
                 .into_any_element(),
             Block::Tabs(tabs, active) => div()
                 .pt(sc(26.))
@@ -674,7 +715,13 @@ impl AppView {
                 .flex_col()
                 .gap(sc(12.))
                 .child(div().text_size(sc(16.)).font_weight(FontWeight::BOLD).child(title))
-                .child(div().flex().flex_wrap().gap(sc(8.)).children(items.into_iter().enumerate().map(|(i, it)| widgets::shortcut(("shortcut", i), &it, cx))))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(sc(8.))
+                        .children(items.into_iter().enumerate().map(|(i, it)| widgets::shortcut(("shortcut", i), &it, cx))),
+                )
                 .into_any_element(),
             Block::Shortcuts(items) => div()
                 .pb(sc(8.))
@@ -738,22 +785,42 @@ impl AppView {
                         .flex_col()
                         .gap(sc(8.))
                         .child(div().text_size(sc(12.5)).text_color(theme::text_secondary()).child(mix.subtitle.clone()))
-                        .child(div().text_size(sc(9.5)).font_weight(FontWeight::BOLD).text_color(theme::text_secondary()).child(format!("{n} PISTAS")))
+                        .child(
+                            div()
+                                .text_size(sc(9.5))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme::text_secondary())
+                                .child(format!("{n} PISTAS")),
+                        )
                         .into_any_element(),
                     String::new(),
                     vec![
-                        pill("mix-play", "Reproducir", Some(Icon::Play), true, move |this, _, _, cx| {
-                            if let Some(t) = this.tracks_of(&TrackSrc::Mix(id.clone())).map(|t| t.to_vec()) {
-                                this.shuffle = false;
-                                this.play_tracks(t, 0, cx)
-                            }
-                        }, cx)
+                        pill(
+                            "mix-play",
+                            "Reproducir",
+                            Some(Icon::Play),
+                            true,
+                            move |this, _, _, cx| {
+                                if let Some(t) = this.tracks_of(&TrackSrc::Mix(id.clone())).map(|t| t.to_vec()) {
+                                    this.shuffle = false;
+                                    this.play_tracks(t, 0, cx)
+                                }
+                            },
+                            cx,
+                        )
                         .into_any_element(),
-                        pill("mix-shuffle", "Aleatorio", Some(Icon::Shuffle), false, move |this, _, _, cx| {
-                            if let Some(t) = this.tracks_of(&TrackSrc::Mix(id2.clone())).map(|t| t.to_vec()) {
-                                this.play_shuffled(t, cx)
-                            }
-                        }, cx)
+                        pill(
+                            "mix-shuffle",
+                            "Aleatorio",
+                            Some(Icon::Shuffle),
+                            false,
+                            move |this, _, _, cx| {
+                                if let Some(t) = this.tracks_of(&TrackSrc::Mix(id2.clone())).map(|t| t.to_vec()) {
+                                    this.play_shuffled(t, cx)
+                                }
+                            },
+                            cx,
+                        )
                         .into_any_element(),
                     ],
                     vec![],
@@ -770,18 +837,32 @@ impl AppView {
                     div().into_any_element(),
                     String::new(),
                     vec![
-                        pill("artist-play", "Reproducir", Some(Icon::Play), true, move |this, _, _, cx| {
-                            if let Some(t) = this.tracks_of(&TrackSrc::ArtistTop(id)).map(|t| t.to_vec()) {
-                                this.shuffle = false;
-                                this.play_tracks(t, 0, cx)
-                            }
-                        }, cx)
+                        pill(
+                            "artist-play",
+                            "Reproducir",
+                            Some(Icon::Play),
+                            true,
+                            move |this, _, _, cx| {
+                                if let Some(t) = this.tracks_of(&TrackSrc::ArtistTop(id)).map(|t| t.to_vec()) {
+                                    this.shuffle = false;
+                                    this.play_tracks(t, 0, cx)
+                                }
+                            },
+                            cx,
+                        )
                         .into_any_element(),
-                        pill("artist-radio", "Radio", Some(Icon::Radio), false, move |this, _, _, cx| {
-                            if let Some(t) = this.tracks_of(&TrackSrc::ArtistTop(id)).and_then(|t| t.first()).cloned() {
-                                this.start_radio(&t, cx)
-                            }
-                        }, cx)
+                        pill(
+                            "artist-radio",
+                            "Radio",
+                            Some(Icon::Radio),
+                            false,
+                            move |this, _, _, cx| {
+                                if let Some(t) = this.tracks_of(&TrackSrc::ArtistTop(id)).and_then(|t| t.first()).cloned() {
+                                    this.start_radio(&t, cx)
+                                }
+                            },
+                            cx,
+                        )
                         .into_any_element(),
                         pill(
                             "artist-follow",
@@ -862,7 +943,7 @@ impl AppView {
     }
 
     fn render_row(&mut self, row: usize, title: SharedString, items: Vec<Item>, cx: &mut Context<Self>) -> AnyElement {
-        let handle = self.row_scroll.entry(row).or_insert_with(ScrollHandle::new).clone();
+        let handle = self.row_scroll.entry(row).or_default().clone();
         let h1 = handle.clone();
         let h2 = handle.clone();
         let step = (theme::ROW_CARD_W + theme::GAP) * 4.0;
@@ -878,31 +959,38 @@ impl AppView {
                     .flex()
                     .items_center()
                     .child(div().flex_1().text_size(sc(15.)).font_weight(FontWeight::BOLD).child(title))
-                    .child(icon_button(("row-l", row), Icon::Back, 15., theme::text_secondary(), move |_, _, _, cx| {
-                        let o = h1.offset();
-                        h1.set_offset(point((o.x + sc(step)).min(sc(0.)), o.y));
-                        cx.notify();
-                    }, cx))
-                    .child(icon_button(("row-r", row), Icon::Forward, 15., theme::text_secondary(), move |_, _, _, cx| {
-                        let o = h2.offset();
-                        let max = h2.max_offset().width;
-                        h2.set_offset(point((o.x - sc(step)).max(-max), o.y));
-                        cx.notify();
-                    }, cx)),
+                    .child(icon_button(
+                        ("row-l", row),
+                        Icon::Back,
+                        15.,
+                        theme::text_secondary(),
+                        move |_, _, _, cx| {
+                            let o = h1.offset();
+                            h1.set_offset(point((o.x + sc(step)).min(sc(0.)), o.y));
+                            cx.notify();
+                        },
+                        cx,
+                    ))
+                    .child(icon_button(
+                        ("row-r", row),
+                        Icon::Forward,
+                        15.,
+                        theme::text_secondary(),
+                        move |_, _, _, cx| {
+                            let o = h2.offset();
+                            let max = h2.max_offset().width;
+                            h2.set_offset(point((o.x - sc(step)).max(-max), o.y));
+                            cx.notify();
+                        },
+                        cx,
+                    )),
             )
-            .child(
-                div()
-                    .id(("row", row))
-                    .w_full()
-                    .flex()
-                    .gap(sc(theme::GAP))
-                    .overflow_x_scroll()
-                    .track_scroll(&handle)
-                    .children(items.iter().enumerate().map(|(i, it)| {
-                        let c = card(SharedString::from(format!("r{row}-{i}")), it, theme::ROW_CARD_W, false, &*self, cx);
-                        super::fx::stagger(SharedString::from(format!("rs{}-{row}-{i}", self.page_anim)), i, c)
-                    })),
-            )
+            .child(div().id(("row", row)).w_full().flex().gap(sc(theme::GAP)).overflow_x_scroll().track_scroll(&handle).children(
+                items.iter().enumerate().map(|(i, it)| {
+                    let c = card(SharedString::from(format!("r{row}-{i}")), it, theme::ROW_CARD_W, false, &*self, cx);
+                    super::fx::stagger(SharedString::from(format!("rs{}-{row}-{i}", self.page_anim)), i, c)
+                }),
+            ))
             .into_any_element()
     }
 
@@ -912,7 +1000,8 @@ impl AppView {
         let id = album.id;
         let a_fav = album.clone();
         let meta = format!("{n} PISTAS  ({})", fmt_hms(album.duration as u64));
-        let chip = if album.tags.iter().any(|t| t == "HIRES_LOSSLESS") { Some(("MAX", theme::gold())) } else { Some(("HIGH", theme::high())) };
+        let chip =
+            if album.tags.iter().any(|t| t == "HIRES_LOSSLESS") { Some(("MAX", theme::gold())) } else { Some(("HIGH", theme::high())) };
         let subtitle = div()
             .flex()
             .flex_col()
@@ -941,7 +1030,13 @@ impl AppView {
                     .flex()
                     .items_center()
                     .gap(sc(8.))
-                    .child(div().text_size(sc(9.5)).font_weight(FontWeight::BOLD).text_color(theme::text_secondary()).child(album.year().to_string()))
+                    .child(
+                        div()
+                            .text_size(sc(9.5))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_secondary())
+                            .child(album.year().to_string()),
+                    )
                     .children(chip.map(|(t, c)| {
                         div()
                             .px(sc(5.))
@@ -966,18 +1061,32 @@ impl AppView {
             subtitle,
             String::new(),
             vec![
-                pill("album-play", "Reproducir", Some(Icon::Play), true, move |this, _, _, cx| {
-                    if let Some(t) = this.tracks_of(&TrackSrc::Album(id)).map(|t| t.to_vec()) {
-                        this.shuffle = false;
-                        this.play_tracks(t, 0, cx)
-                    }
-                }, cx)
+                pill(
+                    "album-play",
+                    "Reproducir",
+                    Some(Icon::Play),
+                    true,
+                    move |this, _, _, cx| {
+                        if let Some(t) = this.tracks_of(&TrackSrc::Album(id)).map(|t| t.to_vec()) {
+                            this.shuffle = false;
+                            this.play_tracks(t, 0, cx)
+                        }
+                    },
+                    cx,
+                )
                 .into_any_element(),
-                pill("album-shuffle", "Aleatorio", Some(Icon::Shuffle), false, move |this, _, _, cx| {
-                    if let Some(t) = this.tracks_of(&TrackSrc::Album(id)).map(|t| t.to_vec()) {
-                        this.play_shuffled(t, cx)
-                    }
-                }, cx)
+                pill(
+                    "album-shuffle",
+                    "Aleatorio",
+                    Some(Icon::Shuffle),
+                    false,
+                    move |this, _, _, cx| {
+                        if let Some(t) = this.tracks_of(&TrackSrc::Album(id)).map(|t| t.to_vec()) {
+                            this.play_shuffled(t, cx)
+                        }
+                    },
+                    cx,
+                )
                 .into_any_element(),
             ],
             vec![
@@ -989,16 +1098,30 @@ impl AppView {
                     move |this, _, _, cx| this.toggle_favorite_album(&a_fav, cx),
                     cx,
                 ),
-                action("album-share", Icon::Link, "Compartir", false, move |this, _, _, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("https://tidal.com/browse/album/{share_id}")));
-                    this.notify_toast("Enlace copiado", cx);
-                }, cx),
-                action("album-more", Icon::More, "Más", false, move |this, ev: &gpui::ClickEvent, _, cx| {
-                    if let Some(t) = this.tracks_of(&TrackSrc::Album(id)).map(|t| t.to_vec()) {
-                        this.menu = Some((ev.position(), MenuTarget::AddToPlaylist(t)));
-                        cx.notify();
-                    }
-                }, cx),
+                action(
+                    "album-share",
+                    Icon::Link,
+                    "Compartir",
+                    false,
+                    move |this, _, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("https://tidal.com/browse/album/{share_id}")));
+                        this.notify_toast("Enlace copiado", cx);
+                    },
+                    cx,
+                ),
+                action(
+                    "album-more",
+                    Icon::More,
+                    "Más",
+                    false,
+                    move |this, ev: &gpui::ClickEvent, _, cx| {
+                        if let Some(t) = this.tracks_of(&TrackSrc::Album(id)).map(|t| t.to_vec()) {
+                            this.menu = Some((ev.position(), MenuTarget::AddToPlaylist(t)));
+                            cx.notify();
+                        }
+                    },
+                    cx,
+                ),
             ],
         )
     }
@@ -1007,12 +1130,24 @@ impl AppView {
         let mut right: Vec<AnyElement> = Vec::new();
         if self.is_own_playlist(&pl.uuid) {
             let (u1, u2, title) = (pl.uuid.clone(), pl.uuid.clone(), pl.title.clone());
-            right.push(action("pl-edit", Icon::Edit, "Editar", false, move |this, _, window, cx| {
-                this.open_dialog(super::playlists::Dialog::EditPlaylist { uuid: u1.clone() }, window, cx)
-            }, cx));
-            right.push(action("pl-delete", Icon::Close, "Eliminar", false, move |this, _, window, cx| {
-                this.open_dialog(super::playlists::Dialog::DeletePlaylist { uuid: u2.clone(), title: title.clone() }, window, cx)
-            }, cx));
+            right.push(action(
+                "pl-edit",
+                Icon::Edit,
+                "Editar",
+                false,
+                move |this, _, window, cx| this.open_dialog(super::playlists::Dialog::EditPlaylist { uuid: u1.clone() }, window, cx),
+                cx,
+            ));
+            right.push(action(
+                "pl-delete",
+                Icon::Close,
+                "Eliminar",
+                false,
+                move |this, _, window, cx| {
+                    this.open_dialog(super::playlists::Dialog::DeletePlaylist { uuid: u2.clone(), title: title.clone() }, window, cx)
+                },
+                cx,
+            ));
         } else {
             let saved = self.is_saved_playlist(&pl.uuid);
             let p = pl.clone();
@@ -1026,17 +1161,31 @@ impl AppView {
             ));
         }
         let share = pl.uuid.clone();
-        right.push(action("pl-share", Icon::Link, "Compartir", false, move |this, _, _, cx| {
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("https://tidal.com/browse/playlist/{share}")));
-            this.notify_toast("Enlace copiado", cx);
-        }, cx));
+        right.push(action(
+            "pl-share",
+            Icon::Link,
+            "Compartir",
+            false,
+            move |this, _, _, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("https://tidal.com/browse/playlist/{share}")));
+                this.notify_toast("Enlace copiado", cx);
+            },
+            cx,
+        ));
         let u3 = pl.uuid.clone();
-        right.push(action("pl-more", Icon::More, "Más", false, move |this, ev: &gpui::ClickEvent, _, cx| {
-            if let Some(t) = this.tracks_of(&TrackSrc::Playlist(u3.clone())).map(|t| t.to_vec()) {
-                this.menu = Some((ev.position(), MenuTarget::AddToPlaylist(t)));
-                cx.notify();
-            }
-        }, cx));
+        right.push(action(
+            "pl-more",
+            Icon::More,
+            "Más",
+            false,
+            move |this, ev: &gpui::ClickEvent, _, cx| {
+                if let Some(t) = this.tracks_of(&TrackSrc::Playlist(u3.clone())).map(|t| t.to_vec()) {
+                    this.menu = Some((ev.position(), MenuTarget::AddToPlaylist(t)));
+                    cx.notify();
+                }
+            },
+            cx,
+        ));
         let uuid = pl.uuid.clone();
         let uuid2 = pl.uuid.clone();
         let tint = pl.cover(640).and_then(|u| super::images::color(&u, cx));
@@ -1046,7 +1195,9 @@ impl AppView {
             subtitle = subtitle.child(div().text_size(sc(12.5)).font_weight(FontWeight::BOLD).child(pl.creator.clone()));
         }
         if !pl.description.is_empty() {
-            subtitle = subtitle.child(div().max_w(sc(620.)).text_size(sc(12.)).text_color(theme::text_secondary()).line_clamp(2).child(pl.description.clone()));
+            subtitle = subtitle.child(
+                div().max_w(sc(620.)).text_size(sc(12.)).text_color(theme::text_secondary()).line_clamp(2).child(pl.description.clone()),
+            );
         }
         subtitle = subtitle.child(
             div()
@@ -1062,18 +1213,32 @@ impl AppView {
             subtitle.into_any_element(),
             String::new(),
             vec![
-                pill("pl-play", "Reproducir", Some(Icon::Play), true, move |this, _, _, cx| {
-                    if let Some(t) = this.tracks_of(&TrackSrc::Playlist(uuid.clone())).map(|t| t.to_vec()) {
-                        this.shuffle = false;
-                        this.play_tracks(t, 0, cx)
-                    }
-                }, cx)
+                pill(
+                    "pl-play",
+                    "Reproducir",
+                    Some(Icon::Play),
+                    true,
+                    move |this, _, _, cx| {
+                        if let Some(t) = this.tracks_of(&TrackSrc::Playlist(uuid.clone())).map(|t| t.to_vec()) {
+                            this.shuffle = false;
+                            this.play_tracks(t, 0, cx)
+                        }
+                    },
+                    cx,
+                )
                 .into_any_element(),
-                pill("pl-shuffle", "Aleatorio", Some(Icon::Shuffle), false, move |this, _, _, cx| {
-                    if let Some(t) = this.tracks_of(&TrackSrc::Playlist(uuid2.clone())).map(|t| t.to_vec()) {
-                        this.play_shuffled(t, cx)
-                    }
-                }, cx)
+                pill(
+                    "pl-shuffle",
+                    "Aleatorio",
+                    Some(Icon::Shuffle),
+                    false,
+                    move |this, _, _, cx| {
+                        if let Some(t) = this.tracks_of(&TrackSrc::Playlist(uuid2.clone())).map(|t| t.to_vec()) {
+                            this.play_shuffled(t, cx)
+                        }
+                    },
+                    cx,
+                )
                 .into_any_element(),
             ],
             right,
@@ -1165,15 +1330,7 @@ pub fn content(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                 .flex_col()
                 // Colour wash of the page's cover, fading out below the header.
                 .when_some(wash, |d, (c, off)| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .left(sc(0.))
-                            .right(sc(0.))
-                            .top(gpui::px(-off))
-                            .h(sc(380.))
-                            .bg(super::fx::tint(c, 0.42)),
-                    )
+                    d.child(div().absolute().left(sc(0.)).right(sc(0.)).top(gpui::px(-off)).h(sc(380.)).bg(super::fx::tint(c, 0.42)))
                 })
                 .child(
                     list(view.list.clone(), cx.processor(|this, ix: usize, window, cx| this.render_block(ix, window, cx)))
@@ -1198,11 +1355,7 @@ pub fn content(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
 
 /// Right panel: play queue or lyrics.
 pub fn side_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
-    let body: AnyElement = if view.show_lyrics {
-        lyrics_panel(view, cx)
-    } else {
-        queue_panel(view, cx)
-    };
+    let body: AnyElement = if view.show_lyrics { lyrics_panel(view, cx) } else { queue_panel(view, cx) };
     div()
         .w(sc(theme::QUEUE_W))
         .flex_none()
@@ -1218,12 +1371,23 @@ pub fn side_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
                 .px(sc(20.))
                 .flex()
                 .items_center()
-                .child(div().flex_1().text_size(sc(18.)).font_weight(FontWeight::BOLD).child(if view.show_lyrics { "Letra" } else { "Cola de reproducción" }))
-                .child(icon_button("close-panel", Icon::Close, 20., theme::text_secondary(), |this, _, _, cx| {
-                    this.show_queue = false;
-                    this.show_lyrics = false;
-                    cx.notify();
-                }, cx)),
+                .child(div().flex_1().text_size(sc(18.)).font_weight(FontWeight::BOLD).child(if view.show_lyrics {
+                    "Letra"
+                } else {
+                    "Cola de reproducción"
+                }))
+                .child(icon_button(
+                    "close-panel",
+                    Icon::Close,
+                    20.,
+                    theme::text_secondary(),
+                    |this, _, _, cx| {
+                        this.show_queue = false;
+                        this.show_lyrics = false;
+                        cx.notify();
+                    },
+                    cx,
+                )),
         )
         .child(body)
         .into_any_element()
@@ -1231,7 +1395,8 @@ pub fn side_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
 
 pub fn queue_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
     let cur = view.now.as_ref().map(|n| n.index);
-    let items: Vec<(usize, crate::ui::QItem)> = view.queue.iter().cloned().enumerate().filter(|(i, _)| cur.map(|c| *i >= c).unwrap_or(true)).collect();
+    let items: Vec<(usize, crate::ui::QItem)> =
+        view.queue.iter().cloned().enumerate().filter(|(i, _)| cur.map(|c| *i >= c).unwrap_or(true)).collect();
     div()
         .id("queue-list")
         .flex_1()
@@ -1283,13 +1448,7 @@ fn lyrics_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
     let Some(now) = &view.now else { return message("No se está reproduciendo nada.") };
     let pos = view.display_position();
     let id = now.track.id;
-    let provider = |p: &str| {
-        div()
-            .pt(sc(28.))
-            .text_size(sc(11.))
-            .text_color(theme::text_dim())
-            .child(format!("Letra: {p}"))
-    };
+    let provider = |p: &str| div().pt(sc(28.)).text_size(sc(11.)).text_color(theme::text_dim()).child(format!("Letra: {p}"));
     match view.lyrics.get(&id) {
         Some(Load::Ready(l)) if !l.synced.is_empty() => {
             let l = l.clone();
@@ -1441,32 +1600,38 @@ pub fn overlays(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVi
             let (a, b, c, d, e, f, g, h) = (t.clone(), t.clone(), t.clone(), t.clone(), t.clone(), t.clone(), t.clone(), t.clone());
             push("Reproducir a continuación", Box::new(move |v, _, cx| v.add_to_queue(a.clone(), true, cx)));
             push("Añadir a la cola", Box::new(move |v, _, cx| v.add_to_queue(b.clone(), false, cx)));
-            push("Añadir a playlist…", Box::new(move |v, _, cx| {
-                // Re-open the menu at the same spot with the playlist list.
-                if let Some(pos) = v.last_menu_pos {
-                    v.menu = Some((pos, MenuTarget::AddToPlaylist(vec![h.clone()])));
-                    cx.notify();
-                }
-            }));
-            push("Iniciar radio de la pista", Box::new(move |v, _, cx| v.start_radio(&c, cx)));
             push(
-                if fav { "Quitar de Mi colección" } else { "Añadir a Mi colección" },
-                Box::new(move |v, _, cx| v.toggle_favorite(&d, cx)),
-            );
-            if e.album.is_some() {
-                push("Ir al álbum", Box::new(move |v, _, cx| {
-                    if let Some(al) = &e.album {
-                        v.navigate(Page::Album(al.id), cx)
+                "Añadir a playlist…",
+                Box::new(move |v, _, cx| {
+                    // Re-open the menu at the same spot with the playlist list.
+                    if let Some(pos) = v.last_menu_pos {
+                        v.menu = Some((pos, MenuTarget::AddToPlaylist(vec![h.clone()])));
+                        cx.notify();
                     }
-                }));
+                }),
+            );
+            push("Iniciar radio de la pista", Box::new(move |v, _, cx| v.start_radio(&c, cx)));
+            push(if fav { "Quitar de Mi colección" } else { "Añadir a Mi colección" }, Box::new(move |v, _, cx| v.toggle_favorite(&d, cx)));
+            if e.album.is_some() {
+                push(
+                    "Ir al álbum",
+                    Box::new(move |v, _, cx| {
+                        if let Some(al) = &e.album {
+                            v.navigate(Page::Album(al.id), cx)
+                        }
+                    }),
+                );
             }
             if !f.artists.is_empty() {
                 push("Ir al artista", Box::new(move |v, _, cx| v.navigate(Page::Artist(f.artists[0].id), cx)));
             }
-            push("Copiar enlace", Box::new(move |v, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(format!("https://tidal.com/browse/track/{}", g.id)));
-                v.notify_toast("Enlace copiado", cx);
-            }));
+            push(
+                "Copiar enlace",
+                Box::new(move |v, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(format!("https://tidal.com/browse/track/{}", g.id)));
+                    v.notify_toast("Enlace copiado", cx);
+                }),
+            );
         };
         view.last_menu_pos = Some(pos);
         match target {
@@ -1482,7 +1647,15 @@ pub fn overlays(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVi
             MenuTarget::Sort(section) => {
                 let (cur, desc) = view.sort_of(section);
                 for k in super::sort::options(section).iter().copied() {
-                    let mark = if k == cur { if desc { "▼ " } else { "▲ " } } else { "    " };
+                    let mark = if k == cur {
+                        if desc {
+                            "▼ "
+                        } else {
+                            "▲ "
+                        }
+                    } else {
+                        "    "
+                    };
                     push(&format!("{mark}{}", k.label()), Box::new(move |v, _, cx| v.set_sort(section, k, cx)));
                 }
             }
@@ -1492,9 +1665,10 @@ pub fn overlays(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVi
             }
             MenuTarget::AddToPlaylist(tracks) => {
                 let ids: Vec<u64> = tracks.iter().map(|t| t.id).collect();
-                push("+ Nueva playlist…", Box::new(move |v, window, cx| {
-                    v.open_dialog(super::playlists::Dialog::NewPlaylist { add: ids.clone() }, window, cx)
-                }));
+                push(
+                    "+ Nueva playlist…",
+                    Box::new(move |v, window, cx| v.open_dialog(super::playlists::Dialog::NewPlaylist { add: ids.clone() }, window, cx)),
+                );
                 for pl in view.own_playlists() {
                     let (uuid, t) = (pl.uuid.clone(), tracks.clone());
                     push(&pl.title, Box::new(move |v, _, cx| v.add_tracks_to_playlist(uuid.clone(), t.clone(), cx)));
@@ -1561,7 +1735,11 @@ pub fn overlays(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVi
             _ => "—".into(),
         };
         let path = if view.snap.output.contains("exclusivo") {
-            if view.settings.lock().force_volume { "Bit-perfect (sin procesar)" } else { "Exclusivo con control de volumen" }
+            if view.settings.lock().force_volume {
+                "Bit-perfect (sin procesar)"
+            } else {
+                "Exclusivo con control de volumen"
+            }
         } else if view.snap.source.map(|s| s.1) == Some(view.snap.output_rate) {
             "Sin remuestreo"
         } else {
@@ -1569,34 +1747,30 @@ pub fn overlays(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVi
         };
         out.push(
             deferred(
-                div()
-                    .absolute()
-                    .right(sc(24.))
-                    .bottom(sc(theme::PLAYER_H + 12.))
-                    .child(
-                        div()
-                            .id("quality-pop")
-                            .occlude()
-                            .w(sc(320.))
-                            .p(sc(16.))
-                            .rounded(sc(8.))
-                            .bg(theme::elevated())
-                            .border_1()
-                            .border_color(theme::border())
-                            .shadow_lg()
-                            .flex()
-                            .flex_col()
-                            .gap(sc(10.))
-                            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                this.show_quality_info = false;
-                                cx.notify();
-                            }))
-                            .child(div().font_weight(FontWeight::BOLD).child("Calidad de audio"))
-                            .child(kv("Origen", src))
-                            .child(kv("Salida", if view.snap.output.is_empty() { "—".into() } else { view.snap.output.clone() }))
-                            .child(kv("Proceso", path.into()))
-                            .child(kv("Ajuste", view.settings.lock().quality.description().into())),
-                    ),
+                div().absolute().right(sc(24.)).bottom(sc(theme::PLAYER_H + 12.)).child(
+                    div()
+                        .id("quality-pop")
+                        .occlude()
+                        .w(sc(320.))
+                        .p(sc(16.))
+                        .rounded(sc(8.))
+                        .bg(theme::elevated())
+                        .border_1()
+                        .border_color(theme::border())
+                        .shadow_lg()
+                        .flex()
+                        .flex_col()
+                        .gap(sc(10.))
+                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                            this.show_quality_info = false;
+                            cx.notify();
+                        }))
+                        .child(div().font_weight(FontWeight::BOLD).child("Calidad de audio"))
+                        .child(kv("Origen", src))
+                        .child(kv("Salida", if view.snap.output.is_empty() { "—".into() } else { view.snap.output.clone() }))
+                        .child(kv("Proceso", path.into()))
+                        .child(kv("Ajuste", view.settings.lock().quality.description().into())),
+                ),
             )
             .with_priority(1)
             .into_any_element(),
@@ -1651,9 +1825,16 @@ pub fn login_screen(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement
             .child(div().text_size(sc(13.)).text_color(theme::text_dim()).child(code.verification_uri.clone()))
             .child({
                 let uri = code.verification_uri.clone();
-                pill("reopen", "Abrir de nuevo el navegador", None, false, move |_, _, _, _| {
-                    let _ = open::that(&uri);
-                }, cx)
+                pill(
+                    "reopen",
+                    "Abrir de nuevo el navegador",
+                    None,
+                    false,
+                    move |_, _, _, _| {
+                        let _ = open::that(&uri);
+                    },
+                    cx,
+                )
             })
             .child(div().text_size(sc(13.)).text_color(theme::text_secondary()).child("Esperando confirmación…"))
             .into_any_element(),

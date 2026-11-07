@@ -9,15 +9,22 @@ runs as a single native binary: no Electron, no web view, fast start-up and low
 memory use. Its audio path is built for quality: Hi-Res FLAC over DASH, a sinc
 resampler and WASAPI exclusive (bit-perfect) output.
 
-> **Disclaimer.** TIDE is an independent project. It is not affiliated with,
-> endorsed by or sponsored by TIDAL. "TIDAL" is a trademark of its owner. You
-> need your own TIDAL subscription; TIDE does not bypass any DRM or paywall.
-> See [docs/LEGAL.md](docs/LEGAL.md).
+> **Read this first.** TIDE is an independent project. It is not affiliated
+> with, endorsed by or sponsored by TIDAL, and "TIDAL" is a trademark of its
+> owner. You need your own TIDAL subscription. TIDE refuses encrypted (DRM)
+> streams and never saves audio to disk.
+>
+> TIDE has **no client credentials of its own**: it signs in with OAuth
+> clients that belong to TIDAL's apps, and it uses undocumented TIDAL
+> endpoints. This may break TIDAL's terms and may get accounts suspended or
+> the app blocked. Use it at your own risk. [docs/LEGAL.md](docs/LEGAL.md)
+> lists the known legal risks and open questions. It is not legal advice.
 
 ## Features
 
-- **Playback**: Hi-Res FLAC (up to 24-bit) via DASH, AAC for CD-quality tracks,
-  gapless queue, instant seeking (DASH segments restart), shuffle/repeat, ReplayGain normalization.
+- **Playback**: Hi-Res FLAC (up to 24-bit) via DASH (CD-quality tracks come
+  as AAC or FLAC depending on the login client, see [docs/AUDIO.md](docs/AUDIO.md)),
+  gapless queue, fast seeking (DASH segments restart), shuffle/repeat, ReplayGain normalization.
 - **Audio engine**: symphonia decoding, rubato sinc resampling, shared (cpal)
   or WASAPI exclusive output, lock-free ring buffer.
 - **Library**: Home, Explore, genres, mixes, playlists (create/edit/reorder),
@@ -26,14 +33,15 @@ resampler and WASAPI exclusive (bit-perfect) output.
 - **Home**: the same "For you" / Staff Picks / Uploads feed as the official app, with local recents.
 - **Now Playing**: full-window view with TIDAL's rotating blurred-cover background,
   synced lyrics that follow smoothly (click to seek, sync offset, glow on the
-  current line, TIDAL + LRCLIB), credits, similar tracks and the queue beside them.
+  current line; TIDAL first, optionally LRCLIB / NetEase / lyrics.ovh), romaji /
+  pinyin / Korean romanization, credits, similar tracks and the queue beside them.
 - **Settings & menu**: settings page and hamburger menu (File, Navigation,
   Playback, View, Help) laid out like the official app, with keyboard shortcuts.
 - **Interface**: TIDAL-style icon rail, two-row header with working window
   controls, 68 px player bar, smooth wheel scrolling, haptic-style press
   effects, UI zoom, mouse back/forward buttons.
 - **Ratings**: 0 to 5 stars in half-star steps for any track (lists, album panel, player bar), sortable. Stored locally in `%APPDATA%\tide\ratings.json` since TIDAL has no rating API.
-- **Discord**: Rich Presence shown like Spotify's ("Listening to TIDE" with cover, title, artist, progress bar and a button). See [docs/DISCORD.md](docs/DISCORD.md).
+- **Discord**: Rich Presence shown like Spotify's ("Listening to TIDE" with cover, title, artist, progress bar and a button). On by default; it shows what you play to your Discord contacts. See [docs/DISCORD.md](docs/DISCORD.md).
 - **System**: Windows media controls (SMTC), Inter font bundled.
 
 ## Getting started
@@ -46,9 +54,14 @@ cd TIDE
 cargo run --release
 ```
 
-On first launch choose *Log in*; TIDE uses TIDAL's device-code flow (you
-authorize it in your browser). Tokens are stored locally in
-`%APPDATA%\tide\settings.json`.
+On first launch choose *Log in*: TIDE uses TIDAL's device-code flow, and you
+authorise it in your browser. Tokens are stored in
+`%APPDATA%\tide\settings.json`, encrypted with Windows DPAPI for your user
+account ([docs/SECURITY.md](docs/SECURITY.md)). TIDE sends no telemetry. Every
+host it contacts is listed in [docs/PRIVACY.md](docs/PRIVACY.md).
+
+Build without the ~46 MiB Japanese dictionary (71 → 25 MiB binary) (kanji stay unromanized):
+`cargo build --release --no-default-features`.
 
 ## Keyboard & mouse
 
@@ -65,9 +78,11 @@ authorize it in your browser). Tokens are stored locally in
 - [Audio pipeline](docs/AUDIO.md)
 - [Configuration & diagnostics](docs/CONFIGURATION.md)
 - [Development guide](docs/DEVELOPMENT.md)
+- [Security](docs/SECURITY.md) · [Privacy](docs/PRIVACY.md) · [Performance](docs/PERFORMANCE.md)
+- [Dependencies & licences](docs/DEPENDENCIES.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Discord integration](docs/DISCORD.md)
-- [Legal notes](docs/LEGAL.md)
+- [Legal notes and risks](docs/LEGAL.md)
 
 ## Project name
 
@@ -77,4 +92,6 @@ automatically to `%APPDATA%\tide` on first run.
 ## License
 
 MIT, see [LICENSE](LICENSE). The bundled Inter font is under the SIL OFL
-(`assets/fonts/Inter-LICENSE.txt`).
+(`assets/fonts/Inter-LICENSE.txt`). The embedded IPADIC dictionary is under
+its own licence (`assets/licenses/IPADIC-COPYING.txt`). Third-party crate
+licences are summarised in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).

@@ -6566,6 +6566,7 @@ dependencies = [
  "symphonia",
  "unicode-segmentation",
  "wasapi",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

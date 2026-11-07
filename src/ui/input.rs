@@ -4,19 +4,16 @@ use super::sc;
 use std::ops::Range;
 
 use gpui::{
-    actions, div, fill, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context, CursorStyle,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    GlobalElementId, Hsla, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels,
-    Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
+    actions, div, fill, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context, CursorStyle, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection,
+    UnderlineStyle, Window,
 };
 use unicode_segmentation::*;
 
 use super::theme;
 
-actions!(
-    text_input,
-    [Backspace, Delete, Left, Right, SelectLeft, SelectRight, SelectAll, Home, End, Paste, Cut, Copy, Submit, Escape]
-);
+actions!(text_input, [Backspace, Delete, Left, Right, SelectLeft, SelectRight, SelectAll, Home, End, Paste, Cut, Copy, Submit, Escape]);
 
 pub fn bindings() -> Vec<gpui::KeyBinding> {
     use gpui::KeyBinding;
@@ -254,10 +251,7 @@ impl TextInput {
         self.content.grapheme_indices(true).rev().find_map(|(idx, _)| (idx < offset).then_some(idx)).unwrap_or(0)
     }
     fn next_boundary(&self, offset: usize) -> usize {
-        self.content
-            .grapheme_indices(true)
-            .find_map(|(idx, _)| (idx > offset).then_some(idx))
-            .unwrap_or(self.content.len())
+        self.content.grapheme_indices(true).find_map(|(idx, _)| (idx > offset).then_some(idx)).unwrap_or(self.content.len())
     }
 }
 
@@ -282,18 +276,9 @@ impl EntityInputHandler for TextInput {
     fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {
         self.marked_range = None;
     }
-    fn replace_text_in_range(
-        &mut self,
-        range_utf16: Option<Range<usize>>,
-        new_text: &str,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|r| self.range_from_utf16(r))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
+    fn replace_text_in_range(&mut self, range_utf16: Option<Range<usize>>, new_text: &str, _: &mut Window, cx: &mut Context<Self>) {
+        let range =
+            range_utf16.as_ref().map(|r| self.range_from_utf16(r)).or(self.marked_range.clone()).unwrap_or(self.selected_range.clone());
         self.content = (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..]).into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
@@ -307,11 +292,8 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|r| self.range_from_utf16(r))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
+        let range =
+            range_utf16.as_ref().map(|r| self.range_from_utf16(r)).or(self.marked_range.clone()).unwrap_or(self.selected_range.clone());
         self.content = (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..]).into();
         self.marked_range = if new_text.is_empty() { None } else { Some(range.start..range.start + new_text.len()) };
         self.selected_range = new_selected_range_utf16
@@ -396,11 +378,8 @@ impl Element for TextElement {
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
         let style = window.text_style();
-        let (display_text, text_color): (SharedString, Hsla) = if content.is_empty() {
-            (input.placeholder.clone(), theme::text_dim().into())
-        } else {
-            (content, style.color)
-        };
+        let (display_text, text_color): (SharedString, Hsla) =
+            if content.is_empty() { (input.placeholder.clone(), theme::text_dim().into()) } else { (content, style.color) };
         let run = TextRun {
             len: display_text.len(),
             font: style.font(),

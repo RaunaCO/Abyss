@@ -3,7 +3,7 @@
 use super::sc;
 use std::borrow::Cow;
 
-use gpui::{svg, AssetSource, Rgba, SharedString, Styled, Svg, px};
+use gpui::{px, svg, AssetSource, Rgba, SharedString, Styled, Svg};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
@@ -182,8 +182,7 @@ impl AssetSource for Assets {
         };
         Ok(path(name).map(|d| {
             Cow::Owned(
-                format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#fff" d="{d}"/></svg>"##)
-                    .into_bytes(),
+                format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#fff" d="{d}"/></svg>"##).into_bytes(),
             )
         }))
     }

@@ -128,7 +128,10 @@ fn read_frame(pipe: &mut std::fs::File) -> std::io::Result<(u32, Vec<u8>)> {
     pipe.read_exact(&mut head)?;
     let op = u32::from_le_bytes(head[..4].try_into().unwrap());
     let len = u32::from_le_bytes(head[4..].try_into().unwrap()) as usize;
-    let mut body = vec![0u8; len.min(1 << 20)];
+    if len > 1 << 20 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "discord frame too large"));
+    }
+    let mut body = vec![0u8; len];
     pipe.read_exact(&mut body)?;
     Ok((op, body))
 }

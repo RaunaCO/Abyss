@@ -108,12 +108,7 @@ fn rank<T>(ranks: &mut HashMap<String, i64>, list: &[T], id: impl Fn(&T) -> Stri
 
 impl AppView {
     pub fn sort_of(&self, section: &str) -> (SortKey, bool) {
-        self.settings
-            .lock()
-            .sorts
-            .get(section)
-            .map(|(k, d)| (SortKey::from_code(k), *d))
-            .unwrap_or((SortKey::Added, false))
+        self.settings.lock().sorts.get(section).map(|(k, d)| (SortKey::from_code(k), *d)).unwrap_or((SortKey::Added, false))
     }
 
     pub fn set_sort(&mut self, section: &str, key: SortKey, cx: &mut Context<Self>) {
@@ -157,7 +152,11 @@ impl AppView {
                     SortKey::Rating => ratings.get(b.id).cmp(&ratings.get(a.id)),
                     _ => ranks.get(&a.id.to_string()).cmp(&ranks.get(&b.id.to_string())),
                 };
-                if td { o.reverse() } else { o }
+                if td {
+                    o.reverse()
+                } else {
+                    o
+                }
             });
         }
         if let Load::Ready(list) = &mut self.fav_albums {
@@ -166,14 +165,20 @@ impl AppView {
             list.sort_by(|a, b| {
                 let o = match ak {
                     SortKey::Name => text_key(&a.title).cmp(&text_key(&b.title)),
-                    SortKey::Artist => text_key(&a.artist_names()).cmp(&text_key(&b.artist_names())).then(a.release_date.cmp(&b.release_date)),
+                    SortKey::Artist => {
+                        text_key(&a.artist_names()).cmp(&text_key(&b.artist_names())).then(a.release_date.cmp(&b.release_date))
+                    }
                     // Newest first feels natural for years.
                     SortKey::Year => b.release_date.cmp(&a.release_date),
                     // Best rated first.
                     SortKey::Rating => ratings.get_album(b.id).cmp(&ratings.get_album(a.id)),
                     _ => ranks.get(&a.id.to_string()).cmp(&ranks.get(&b.id.to_string())),
                 };
-                if ad { o.reverse() } else { o }
+                if ad {
+                    o.reverse()
+                } else {
+                    o
+                }
             });
         }
         if let Load::Ready(list) = &mut self.fav_artists {
@@ -184,7 +189,11 @@ impl AppView {
                     SortKey::Name => text_key(&a.name).cmp(&text_key(&b.name)),
                     _ => ranks.get(&a.id.to_string()).cmp(&ranks.get(&b.id.to_string())),
                 };
-                if rd { o.reverse() } else { o }
+                if rd {
+                    o.reverse()
+                } else {
+                    o
+                }
             });
         }
         if let Load::Ready(list) = &mut self.my_playlists {
@@ -196,7 +205,11 @@ impl AppView {
                     SortKey::Count => b.number_of_tracks.cmp(&a.number_of_tracks),
                     _ => ranks.get(&a.uuid).cmp(&ranks.get(&b.uuid)),
                 };
-                if pd { o.reverse() } else { o }
+                if pd {
+                    o.reverse()
+                } else {
+                    o
+                }
             });
         }
         if let Load::Ready(list) = &mut self.my_mixes {
@@ -207,7 +220,11 @@ impl AppView {
                     SortKey::Name => text_key(&a.title).cmp(&text_key(&b.title)),
                     _ => ranks.get(&a.id).cmp(&ranks.get(&b.id)),
                 };
-                if md { o.reverse() } else { o }
+                if md {
+                    o.reverse()
+                } else {
+                    o
+                }
             });
         }
     }
@@ -224,11 +241,8 @@ pub fn bar(view: &mut AppView, section: &'static str, cx: &mut Context<AppView>)
         .child(div().text_size(sc(12.)).text_color(theme::text_dim()).mr(sc(4.)).child("Ordenar por"))
         .children(options(section).iter().map(|&k| {
             let active = k == cur;
-            let label: SharedString = if active {
-                format!("{} {}", k.label(), if desc { "↑" } else { "↓" }).into()
-            } else {
-                k.label().into()
-            };
+            let label: SharedString =
+                if active { format!("{} {}", k.label(), if desc { "↑" } else { "↓" }).into() } else { k.label().into() };
             div()
                 .id(SharedString::from(format!("sort-{section}-{}", k.code())))
                 .px(sc(12.))

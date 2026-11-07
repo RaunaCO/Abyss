@@ -46,8 +46,16 @@ impl Quality {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Session tokens. In memory only in plaintext; on disk they are written
+    /// as `protected_tokens` (DPAPI) when protection is available. These two
+    /// fields are still read from older plaintext files and migrated.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub access_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+    /// DPAPI-encrypted `{access_token, refresh_token}`, base64 (see secure.rs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_tokens: Option<String>,
     /// Unix seconds.
     pub expires_at: u64,
     pub user_id: Option<u64>,
@@ -86,6 +94,9 @@ pub struct Settings {
     pub hide_uploads: bool,
     /// Show the Latin pronunciation under lyrics in Asian scripts.
     pub lyrics_romanize: bool,
+    /// Look up lyrics on third-party services (LRCLIB, NetEase, lyrics.ovh)
+    /// when TIDAL has none. Sends the track title, artist, album and length.
+    pub external_lyrics: bool,
     /// Application ID of the Discord application named TIDE.
     pub discord_client_id: String,
 
@@ -107,6 +118,7 @@ impl Default for Settings {
         Self {
             access_token: None,
             refresh_token: None,
+            protected_tokens: None,
             expires_at: 0,
             user_id: None,
             country_code: "US".into(),
@@ -131,6 +143,7 @@ impl Default for Settings {
             show_ratings: true,
             hide_uploads: false,
             lyrics_romanize: true,
+            external_lyrics: true,
             discord_client_id: String::new(),
             // Replaced by whichever client the user signed in with.
             client_id: DEVICE_CLIENT_ID.into(),
@@ -167,19 +180,57 @@ fn settings_path() -> PathBuf {
     config_dir().join("settings.json")
 }
 
+#[derive(Serialize, Deserialize)]
+struct Tokens {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+}
+
 impl Settings {
     pub fn load() -> Self {
-        std::fs::read(settings_path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        let mut s: Settings = std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        if let Some(blob) = s.protected_tokens.take() {
+            let tokens = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob.as_bytes())
+                .ok()
+                .and_then(|b| crate::secure::unprotect(&b))
+                .and_then(|b| serde_json::from_slice::<Tokens>(&b).ok());
+            match tokens {
+                Some(t) => {
+                    s.access_token = t.access_token;
+                    s.refresh_token = t.refresh_token;
+                }
+                // Another user / machine, or a damaged file: sign in again.
+                None => log::warn!("stored session could not be decrypted; please sign in again"),
+            }
+        } else if s.access_token.is_some() || s.refresh_token.is_some() {
+            // Plaintext tokens from an older version: rewrite them protected.
+            s.save();
+        }
+        s
+    }
+
+    /// The JSON written to disk: tokens protected when possible.
+    fn to_disk_json(&self) -> Option<Vec<u8>> {
+        let mut disk = self.clone();
+        if disk.access_token.is_some() || disk.refresh_token.is_some() {
+            let tokens = Tokens { access_token: disk.access_token.take(), refresh_token: disk.refresh_token.take() };
+            match serde_json::to_vec(&tokens).ok().and_then(|b| crate::secure::protect(&b)) {
+                Some(blob) => disk.protected_tokens = Some(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, blob)),
+                // No protection available on this platform: keep the previous behaviour.
+                None => {
+                    disk.access_token = tokens.access_token;
+                    disk.refresh_token = tokens.refresh_token;
+                }
+            }
+        }
+        serde_json::to_vec_pretty(&disk).ok()
     }
 
     pub fn save(&self) {
         let dir = config_dir();
         let _ = std::fs::create_dir_all(&dir);
         let tmp = dir.join("settings.json.tmp");
-        if let Ok(json) = serde_json::to_vec_pretty(self) {
+        if let Some(json) = self.to_disk_json() {
             if std::fs::write(&tmp, json).is_ok() {
                 let _ = std::fs::rename(&tmp, settings_path());
             }
@@ -188,5 +239,24 @@ impl Settings {
 
     pub fn signed_in(&self) -> bool {
         self.refresh_token.is_some() && self.user_id.is_some()
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokens_never_reach_disk_in_plaintext() {
+        let s = Settings { access_token: Some("AT-secret-1".into()), refresh_token: Some("RT-secret-2".into()), ..Default::default() };
+        let json = String::from_utf8(s.to_disk_json().unwrap()).unwrap();
+        assert!(!json.contains("AT-secret-1") && !json.contains("RT-secret-2"));
+        assert!(json.contains("protected_tokens"));
+        // And they come back.
+        let mut back: Settings = serde_json::from_str(&json).unwrap();
+        let blob = back.protected_tokens.take().unwrap();
+        let raw = crate::secure::unprotect(&base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob).unwrap()).unwrap();
+        let t: Tokens = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(t.refresh_token.as_deref(), Some("RT-secret-2"));
     }
 }

@@ -35,9 +35,17 @@ pub struct OutputPrefs {
 
 pub enum Cmd {
     /// Replace everything and play this track (from `start` seconds).
-    Play { key: u64, info: StreamInfo, start: f64, paused: bool },
+    Play {
+        key: u64,
+        info: StreamInfo,
+        start: f64,
+        paused: bool,
+    },
     /// Track to continue with when the current one ends (replaces the old one).
-    Queue { key: u64, info: StreamInfo },
+    Queue {
+        key: u64,
+        info: StreamInfo,
+    },
     ClearQueue,
     Pause,
     Resume,
@@ -49,8 +57,13 @@ pub enum Cmd {
 
 pub enum Event {
     /// The queue ran out and playback stopped at the end of `key`.
-    Finished { key: u64 },
-    Error { key: Option<u64>, message: String },
+    Finished {
+        key: u64,
+    },
+    Error {
+        key: Option<u64>,
+        message: String,
+    },
 }
 
 /// What the UI reads on every frame.
@@ -134,13 +147,8 @@ impl Player {
             v.marks.pop_front();
         }
         let rate = v.output_rate.max(1) as f64;
-        let mut snap = Snapshot {
-            paused,
-            buffering: v.buffering,
-            output: v.output.clone(),
-            output_rate: v.output_rate,
-            ..Default::default()
-        };
+        let mut snap =
+            Snapshot { paused, buffering: v.buffering, output: v.output.clone(), output_rate: v.output_rate, ..Default::default() };
         if let Some(m) = v.marks.front() {
             let elapsed = played.saturating_sub(m.start_frame) as f64 / rate;
             snap.key = Some(m.key);
@@ -195,10 +203,7 @@ fn spawn_worker(http: &Client, info: &StreamInfo) -> Worker {
     let (tx, rx) = mpsc::sync_channel::<DecMsg>(24);
     let (seek_tx, seek_rx) = mpsc::channel::<f64>();
     let buf = buffer.clone();
-    std::thread::Builder::new()
-        .name("decode".into())
-        .spawn(move || decode_loop(buf, mp4, tx, seek_rx))
-        .expect("spawn decoder");
+    std::thread::Builder::new().name("decode".into()).spawn(move || decode_loop(buf, mp4, tx, seek_rx)).expect("spawn decoder");
     Worker { rx, seek_tx, buffer }
 }
 
@@ -252,10 +257,7 @@ fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Rec
             return;
         }
     };
-    if tx
-        .send(DecMsg::Format { rate: dec.sample_rate, bits: dec.bits_per_sample, duration: dec.duration })
-        .is_err()
-    {
+    if tx.send(DecMsg::Format { rate: dec.sample_rate, bits: dec.bits_per_sample, duration: dec.duration }).is_err() {
         return;
     }
     loop {
@@ -620,10 +622,9 @@ impl Engine {
         let opened = if wanted_exclusive {
             let gain = !self.prefs.force_volume;
             output::open_exclusive(self.prefs.device.as_deref(), rate, bits, self.out_shared.clone(), gain).or_else(|e| {
-                let _ = self.ev.send(Event::Error {
-                    key: None,
-                    message: format!("Modo exclusivo no disponible ({e:#}); usando modo compartido"),
-                });
+                let _ = self
+                    .ev
+                    .send(Event::Error { key: None, message: format!("Modo exclusivo no disponible ({e:#}); usando modo compartido") });
                 output::open_shared(self.prefs.device.as_deref(), self.out_shared.clone())
             })
         } else {

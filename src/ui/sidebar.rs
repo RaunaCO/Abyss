@@ -39,10 +39,8 @@ pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> 
 
 type NavEntry = (&'static str, Icon, &'static str, fn() -> Page);
 
-const NAV_MAIN: [NavEntry; 2] = [
-    ("nav-home", Icon::Home, "Inicio", || Page::Home),
-    ("nav-explore", Icon::Explore, "Explorar", || Page::Explore),
-];
+const NAV_MAIN: [NavEntry; 2] =
+    [("nav-home", Icon::Home, "Inicio", || Page::Home), ("nav-explore", Icon::Explore, "Explorar", || Page::Explore)];
 
 const NAV_COLLECTION: [NavEntry; 5] = [
     ("nav-mixes", Icon::Mix, "Mixes y radios", || Page::MyMixes),
@@ -99,11 +97,7 @@ fn nav_item(entry: NavEntry, collapsed: bool, view: &AppView, cx: &mut Context<A
     let pop = view.pulse_scale(id);
     let base = super::interact::track(base, key, cx);
     if collapsed {
-        base.mx(sc((RAIL_W - 32.) / 2.))
-            .justify_center()
-            .child(icon.el(16. * pop, color))
-            .tooltip(tip(label))
-            .into_any_element()
+        base.mx(sc((RAIL_W - 32.) / 2.)).justify_center().child(icon.el(16. * pop, color)).tooltip(tip(label)).into_any_element()
     } else {
         base.mx(sc(10.))
             .px(sc(12.))
@@ -118,12 +112,7 @@ fn nav_item(entry: NavEntry, collapsed: bool, view: &AppView, cx: &mut Context<A
 }
 
 fn divider(collapsed: bool) -> AnyElement {
-    div()
-        .mx(sc(if collapsed { (RAIL_W - 12.) / 2. } else { 22. }))
-        .my(sc(9.))
-        .h(sc(1.))
-        .bg(theme::border())
-        .into_any_element()
+    div().mx(sc(if collapsed { (RAIL_W - 12.) / 2. } else { 22. })).my(sc(9.)).h(sc(1.)).bg(theme::border()).into_any_element()
 }
 
 pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
@@ -151,7 +140,12 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
                     .hover(|s| s.bg(theme::hover()))
                     .active(|s| s.opacity(0.7))
                     .group(SharedString::from(format!("plc-{i}")))
-                    .child(div().rounded(sc(5.)).group_hover(SharedString::from(format!("plc-{i}")), |s| s.shadow_lg()).child(view.playlist_cover(&p, 30., cx)))
+                    .child(
+                        div()
+                            .rounded(sc(5.))
+                            .group_hover(SharedString::from(format!("plc-{i}")), |s| s.shadow_lg())
+                            .child(view.playlist_cover(&p, 30., cx)),
+                    )
                     .tooltip(tip(p.title.clone()))
                     .on_click(open)
                     .into_any_element()
@@ -188,9 +182,7 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
         .text_color(theme::text_secondary())
         .hover(|s| s.bg(theme::hover()).text_color(theme::text()))
         .active(|s| s.opacity(0.7))
-        .on_click(cx.listener(|this, _, window, cx| {
-            this.open_dialog(super::playlists::Dialog::NewPlaylist { add: vec![] }, window, cx)
-        }));
+        .on_click(cx.listener(|this, _, window, cx| this.open_dialog(super::playlists::Dialog::NewPlaylist { add: vec![] }, window, cx)));
     let new_playlist = if collapsed {
         new_playlist
             .mx(sc((RAIL_W - 32.) / 2.))
@@ -219,24 +211,21 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
     let (from, to, at) = view.nav_hl;
     let hl_target = target.unwrap_or(-1.0);
     if hl_target != to {
-        let shown = if to < 0.0 || from < 0.0 { hl_target } else { from + (to - from) * super::motion::ease_out(super::motion::progress(at, std::time::Duration::from_millis(260))) };
+        let shown = if to < 0.0 || from < 0.0 {
+            hl_target
+        } else {
+            from + (to - from) * super::motion::ease_out(super::motion::progress(at, std::time::Duration::from_millis(260)))
+        };
         view.nav_hl = (shown, hl_target, std::time::Instant::now());
     }
     let (from, to, _) = view.nav_hl;
     let highlight = (to >= 0.0).then(|| {
         let mx = if collapsed { (RAIL_W - 32.) / 2. } else { 10. };
-        div()
-            .absolute()
-            .left(sc(mx))
-            .right(sc(mx))
-            .h(sc(32.))
-            .rounded(sc(8.))
-            .bg(theme::elevated())
-            .with_animation(
-                ("nav-hl", to as usize),
-                gpui::Animation::new(std::time::Duration::from_millis(260)).with_easing(super::motion::ease_out),
-                move |d, t| d.top(sc(from + (to - from) * t)),
-            )
+        div().absolute().left(sc(mx)).right(sc(mx)).h(sc(32.)).rounded(sc(8.)).bg(theme::elevated()).with_animation(
+            ("nav-hl", to as usize),
+            gpui::Animation::new(std::time::Duration::from_millis(260)).with_easing(super::motion::ease_out),
+            move |d, t| d.top(sc(from + (to - from) * t)),
+        )
     });
     div()
         .w(sc(view.sidebar_width_animated()))
@@ -263,7 +252,9 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
                 .flex()
                 .flex_col()
                 .gap(sc(6.))
-                .when(loading && !collapsed, |d| d.child(div().px(sc(22.)).text_color(theme::text_dim()).text_size(sc(12.)).child("Cargando…")))
+                .when(loading && !collapsed, |d| {
+                    d.child(div().px(sc(22.)).text_color(theme::text_dim()).text_size(sc(12.)).child("Cargando…"))
+                })
                 .children(playlists),
         )
         .into_any_element()

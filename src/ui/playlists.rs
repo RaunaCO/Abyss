@@ -12,9 +12,16 @@ use crate::tidal::{Playlist, Track};
 #[derive(Clone)]
 pub enum Dialog {
     /// New playlist, optionally filled with these tracks.
-    NewPlaylist { add: Vec<u64> },
-    EditPlaylist { uuid: String },
-    DeletePlaylist { uuid: String, title: String },
+    NewPlaylist {
+        add: Vec<u64>,
+    },
+    EditPlaylist {
+        uuid: String,
+    },
+    DeletePlaylist {
+        uuid: String,
+        title: String,
+    },
 }
 
 /// What is being dragged when reordering a playlist.
@@ -95,12 +102,9 @@ impl AppView {
 
     pub fn open_dialog(&mut self, dialog: Dialog, window: &mut Window, cx: &mut Context<Self>) {
         let (title, desc) = match &dialog {
-            Dialog::EditPlaylist { uuid } => self
-                .playlists
-                .get(uuid)
-                .and_then(Load::ready)
-                .map(|(p, _)| (p.title.clone(), p.description.clone()))
-                .unwrap_or_default(),
+            Dialog::EditPlaylist { uuid } => {
+                self.playlists.get(uuid).and_then(Load::ready).map(|(p, _)| (p.title.clone(), p.description.clone())).unwrap_or_default()
+            }
             _ => (String::new(), String::new()),
         };
         self.dlg_title.update(cx, |i, cx| i.set_text(&title, cx));
@@ -165,39 +169,47 @@ impl AppView {
 
     fn edit_playlist(&mut self, uuid: String, title: String, desc: String, cx: &mut Context<Self>) {
         let (u, t2, d2) = (uuid.clone(), title.clone(), desc.clone());
-        self.fetch(cx, move |t| t.edit_playlist(&u, &t2, &d2), move |this, r, cx| match r {
-            Ok(()) => {
-                if let Some(Load::Ready((p, _))) = this.playlists.get_mut(&uuid) {
-                    p.title = title.clone();
-                    p.description = desc.clone();
-                }
-                if let Load::Ready(list) = &mut this.my_playlists {
-                    if let Some(p) = list.iter_mut().find(|p| p.uuid == uuid) {
+        self.fetch(
+            cx,
+            move |t| t.edit_playlist(&u, &t2, &d2),
+            move |this, r, cx| match r {
+                Ok(()) => {
+                    if let Some(Load::Ready((p, _))) = this.playlists.get_mut(&uuid) {
                         p.title = title.clone();
                         p.description = desc.clone();
                     }
+                    if let Load::Ready(list) = &mut this.my_playlists {
+                        if let Some(p) = list.iter_mut().find(|p| p.uuid == uuid) {
+                            p.title = title.clone();
+                            p.description = desc.clone();
+                        }
+                    }
+                    this.notify_toast("Playlist actualizada", cx);
                 }
-                this.notify_toast("Playlist actualizada", cx);
-            }
-            Err(e) => this.notify_toast(format!("No se pudo editar: {e:#}"), cx),
-        });
+                Err(e) => this.notify_toast(format!("No se pudo editar: {e:#}"), cx),
+            },
+        );
     }
 
     fn delete_playlist(&mut self, uuid: String, cx: &mut Context<Self>) {
         let u = uuid.clone();
-        self.fetch(cx, move |t| t.delete_playlist(&u), move |this, r, cx| match r {
-            Ok(()) => {
-                if let Load::Ready(list) = &mut this.my_playlists {
-                    list.retain(|p| p.uuid != uuid);
+        self.fetch(
+            cx,
+            move |t| t.delete_playlist(&u),
+            move |this, r, cx| match r {
+                Ok(()) => {
+                    if let Load::Ready(list) = &mut this.my_playlists {
+                        list.retain(|p| p.uuid != uuid);
+                    }
+                    this.playlists.remove(&uuid);
+                    if this.page == Page::Playlist(uuid.clone()) {
+                        this.navigate(Page::MyPlaylists, cx);
+                    }
+                    this.notify_toast("Playlist eliminada", cx);
                 }
-                this.playlists.remove(&uuid);
-                if this.page == Page::Playlist(uuid.clone()) {
-                    this.navigate(Page::MyPlaylists, cx);
-                }
-                this.notify_toast("Playlist eliminada", cx);
-            }
-            Err(e) => this.notify_toast(format!("No se pudo eliminar: {e:#}"), cx),
-        });
+                Err(e) => this.notify_toast(format!("No se pudo eliminar: {e:#}"), cx),
+            },
+        );
     }
 
     pub fn add_tracks_to_playlist(&mut self, uuid: String, tracks: Vec<Track>, cx: &mut Context<Self>) {
@@ -209,25 +221,26 @@ impl AppView {
             .map(|p| p.title.clone())
             .unwrap_or_else(|| "la playlist".into());
         let u = uuid.clone();
-        self.fetch(cx, move |t| t.add_to_playlist(&u, &ids), move |this, r, cx| match r {
-            Ok(()) => {
-                if let Some(Load::Ready((p, list))) = this.playlists.get_mut(&uuid) {
-                    list.extend(tracks.iter().cloned());
-                    p.number_of_tracks = list.len() as u32;
-                }
-                if let Load::Ready(all) = &mut this.my_playlists {
-                    if let Some(p) = all.iter_mut().find(|p| p.uuid == uuid) {
-                        p.number_of_tracks += tracks.len() as u32;
+        self.fetch(
+            cx,
+            move |t| t.add_to_playlist(&u, &ids),
+            move |this, r, cx| match r {
+                Ok(()) => {
+                    if let Some(Load::Ready((p, list))) = this.playlists.get_mut(&uuid) {
+                        list.extend(tracks.iter().cloned());
+                        p.number_of_tracks = list.len() as u32;
                     }
+                    if let Load::Ready(all) = &mut this.my_playlists {
+                        if let Some(p) = all.iter_mut().find(|p| p.uuid == uuid) {
+                            p.number_of_tracks += tracks.len() as u32;
+                        }
+                    }
+                    let n = tracks.len();
+                    this.notify_toast(if n == 1 { format!("Añadida a «{name}»") } else { format!("{n} pistas añadidas a «{name}»") }, cx);
                 }
-                let n = tracks.len();
-                this.notify_toast(
-                    if n == 1 { format!("Añadida a «{name}»") } else { format!("{n} pistas añadidas a «{name}»") },
-                    cx,
-                );
-            }
-            Err(e) => this.notify_toast(format!("No se pudo añadir: {e:#}"), cx),
-        });
+                Err(e) => this.notify_toast(format!("No se pudo añadir: {e:#}"), cx),
+            },
+        );
     }
 
     pub fn remove_playlist_track(&mut self, uuid: String, index: usize, cx: &mut Context<Self>) {
@@ -239,14 +252,18 @@ impl AppView {
             }
         }
         let u = uuid.clone();
-        self.fetch(cx, move |t| t.remove_from_playlist(&u, index), move |this, r, cx| match r {
-            Ok(()) => this.notify_toast("Eliminada de la playlist", cx),
-            Err(e) => {
-                this.playlists.remove(&uuid);
-                this.load_page_data(cx);
-                this.notify_toast(format!("No se pudo quitar: {e:#}"), cx);
-            }
-        });
+        self.fetch(
+            cx,
+            move |t| t.remove_from_playlist(&u, index),
+            move |this, r, cx| match r {
+                Ok(()) => this.notify_toast("Eliminada de la playlist", cx),
+                Err(e) => {
+                    this.playlists.remove(&uuid);
+                    this.load_page_data(cx);
+                    this.notify_toast(format!("No se pudo quitar: {e:#}"), cx);
+                }
+            },
+        );
         cx.notify();
     }
 
@@ -261,13 +278,17 @@ impl AppView {
             }
         }
         let u = uuid.clone();
-        self.fetch(cx, move |t| t.move_in_playlist(&u, from, to), move |this, r, cx| {
-            if let Err(e) = r {
-                this.playlists.remove(&uuid);
-                this.load_page_data(cx);
-                this.notify_toast(format!("No se pudo mover: {e:#}"), cx);
-            }
-        });
+        self.fetch(
+            cx,
+            move |t| t.move_in_playlist(&u, from, to),
+            move |this, r, cx| {
+                if let Err(e) = r {
+                    this.playlists.remove(&uuid);
+                    this.load_page_data(cx);
+                    this.notify_toast(format!("No se pudo mover: {e:#}"), cx);
+                }
+            },
+        );
         cx.notify();
     }
 
@@ -281,10 +302,14 @@ impl AppView {
             }
         }
         let u = pl.uuid.clone();
-        self.fetch(cx, move |t| t.set_favorite_playlist(&u, save), move |this, r, cx| match r {
-            Ok(()) => this.notify_toast(if save { "Guardada en Mi colección" } else { "Quitada de Mi colección" }, cx),
-            Err(e) => this.notify_toast(format!("Error: {e:#}"), cx),
-        });
+        self.fetch(
+            cx,
+            move |t| t.set_favorite_playlist(&u, save),
+            move |this, r, cx| match r {
+                Ok(()) => this.notify_toast(if save { "Guardada en Mi colección" } else { "Quitada de Mi colección" }, cx),
+                Err(e) => this.notify_toast(format!("Error: {e:#}"), cx),
+            },
+        );
         cx.notify();
     }
 
@@ -296,10 +321,14 @@ impl AppView {
             self.fav_artist_ids.remove(&id);
         }
         self.fav_artists = Load::Idle;
-        self.fetch(cx, move |t| t.set_favorite_artist(id, follow), move |this, r, cx| match r {
-            Ok(()) => this.notify_toast(if follow { "Siguiendo al artista" } else { "Has dejado de seguir al artista" }, cx),
-            Err(e) => this.notify_toast(format!("Error: {e:#}"), cx),
-        });
+        self.fetch(
+            cx,
+            move |t| t.set_favorite_artist(id, follow),
+            move |this, r, cx| match r {
+                Ok(()) => this.notify_toast(if follow { "Siguiendo al artista" } else { "Has dejado de seguir al artista" }, cx),
+                Err(e) => this.notify_toast(format!("Error: {e:#}"), cx),
+            },
+        );
         cx.notify();
     }
 }
@@ -308,23 +337,18 @@ impl AppView {
 pub fn dialog_overlay(view: &mut AppView, cx: &mut Context<AppView>) -> Option<AnyElement> {
     let dialog = view.dialog.clone()?;
     let field = |label: &'static str, input: gpui::Entity<TextInput>| {
-        div()
-            .flex()
-            .flex_col()
-            .gap(sc(6.))
-            .child(div().text_size(sc(12.)).text_color(theme::text_secondary()).child(label))
-            .child(
-                div()
-                    .h(sc(40.))
-                    .px(sc(12.))
-                    .flex()
-                    .items_center()
-                    .rounded(sc(6.))
-                    .bg(theme::surface())
-                    .border_1()
-                    .border_color(theme::border())
-                    .child(input),
-            )
+        div().flex().flex_col().gap(sc(6.)).child(div().text_size(sc(12.)).text_color(theme::text_secondary()).child(label)).child(
+            div()
+                .h(sc(40.))
+                .px(sc(12.))
+                .flex()
+                .items_center()
+                .rounded(sc(6.))
+                .bg(theme::surface())
+                .border_1()
+                .border_color(theme::border())
+                .child(input),
+        )
     };
     let (heading, body, confirm, danger): (String, AnyElement, &str, bool) = match &dialog {
         Dialog::NewPlaylist { add } => (
@@ -405,13 +429,14 @@ pub fn dialog_overlay(view: &mut AppView, cx: &mut Context<AppView>) -> Option<A
                                 .justify_end()
                                 .gap(sc(10.))
                                 .child(pill("dlg-cancel", "Cancelar", None, false, |this, _, window, cx| this.close_dialog(window, cx), cx))
-                                .child(
-                                    div()
-                                        .when(danger, |d| d.text_color(theme::danger()))
-                                        .child(pill("dlg-ok", confirm.to_string(), None, true, |this, _, window, cx| {
-                                            this.submit_dialog(window, cx)
-                                        }, cx)),
-                                ),
+                                .child(div().when(danger, |d| d.text_color(theme::danger())).child(pill(
+                                    "dlg-ok",
+                                    confirm.to_string(),
+                                    None,
+                                    true,
+                                    |this, _, window, cx| this.submit_dialog(window, cx),
+                                    cx,
+                                ))),
                         ),
                 ),
         )

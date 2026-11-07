@@ -191,11 +191,11 @@ fn get_bytes(b: &Buffer, generation: u64, url: &str) -> Result<Vec<u8>, String> 
     loop {
         tries += 1;
         let r = (|| -> Result<Vec<u8>, String> {
-            let resp = b.http.get(url).timeout(Duration::from_secs(60)).send().map_err(|e| e.to_string())?;
+            let resp = b.http.get(url).timeout(Duration::from_secs(60)).send().map_err(|e| e.without_url().to_string())?;
             if !resp.status().is_success() {
                 return Err(format!("download failed ({})", resp.status()));
             }
-            resp.bytes().map(|x| x.to_vec()).map_err(|e| e.to_string())
+            resp.bytes().map(|x| x.to_vec()).map_err(|e| e.without_url().to_string())
         })();
         match r {
             Ok(v) => return Ok(v),
@@ -228,11 +228,7 @@ fn fetch(http: &Client, url: &str, buf: &Buffer, generation: u64) -> Result<(), 
         tries += 1;
         let start_len = buf.state.lock().data.len();
         let attempt = (|| -> Result<(), String> {
-            let mut resp = http
-                .get(url)
-                .timeout(Duration::from_secs(120))
-                .send()
-                .map_err(|e| e.to_string())?;
+            let mut resp = http.get(url).timeout(Duration::from_secs(120)).send().map_err(|e| e.without_url().to_string())?;
             if !resp.status().is_success() {
                 return Err(format!("download failed ({})", resp.status()));
             }

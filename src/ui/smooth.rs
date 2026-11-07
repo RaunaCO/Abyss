@@ -112,7 +112,10 @@ pub fn wheel_catcher(view: Entity<AppView>) -> impl IntoElement {
                 if lines.y == 0.0 || ev.modifiers.shift || ev.modifiers.control {
                     return;
                 }
-                let blocked = view.read(cx).dialog.is_some() || view.read(cx).menu.is_some() || view.read(cx).now_playing_open || view.read(cx).search_open;
+                let blocked = view.read(cx).dialog.is_some()
+                    || view.read(cx).menu.is_some()
+                    || view.read(cx).now_playing_open
+                    || view.read(cx).search_open;
                 if blocked {
                     return;
                 }

@@ -30,9 +30,13 @@ impl AppView {
                     if this.search_gen == gen && !this.search.contains_key(&q) {
                         this.search.insert(q.clone(), Load::Loading);
                         let qq = q.clone();
-                        this.fetch(cx, move |t| t.search(&qq), move |this, r, _| {
-                            this.search.insert(q, super::into_load(r));
-                        });
+                        this.fetch(
+                            cx,
+                            move |t| t.search(&qq),
+                            move |this, r, _| {
+                                this.search.insert(q, super::into_load(r));
+                            },
+                        );
                     }
                 });
             })
@@ -70,7 +74,14 @@ impl AppView {
     }
 }
 
-fn row(id: SharedString, cover_url: Option<String>, round: bool, title: String, sub: String, cx: &mut Context<AppView>) -> gpui::Stateful<gpui::Div> {
+fn row(
+    id: SharedString,
+    cover_url: Option<String>,
+    round: bool,
+    title: String,
+    sub: String,
+    cx: &mut Context<AppView>,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .h(sc(46.))
@@ -96,7 +107,15 @@ fn row(id: SharedString, cover_url: Option<String>, round: bool, title: String, 
 }
 
 fn heading(t: &'static str) -> AnyElement {
-    div().px(sc(8.)).pt(sc(10.)).pb(sc(4.)).text_size(sc(10.)).font_weight(FontWeight::BOLD).text_color(theme::text_dim()).child(t).into_any_element()
+    div()
+        .px(sc(8.))
+        .pt(sc(10.))
+        .pb(sc(4.))
+        .text_size(sc(10.))
+        .font_weight(FontWeight::BOLD)
+        .text_color(theme::text_dim())
+        .child(t)
+        .into_any_element()
 }
 
 pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppView>) -> Option<AnyElement> {
@@ -108,7 +127,14 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
     if q.is_empty() {
         let recent = view.settings.lock().recent_searches.clone();
         if recent.is_empty() {
-            body.push(div().p(sc(14.)).text_size(sc(12.)).text_color(theme::text_dim()).child("Escribe para buscar canciones, álbumes, artistas o playlists.").into_any_element());
+            body.push(
+                div()
+                    .p(sc(14.))
+                    .text_size(sc(12.))
+                    .text_color(theme::text_dim())
+                    .child("Escribe para buscar canciones, álbumes, artistas o playlists.")
+                    .into_any_element(),
+            );
         } else {
             body.push(heading("BÚSQUEDAS RECIENTES"));
             for (i, r) in recent.into_iter().take(6).enumerate() {
@@ -195,10 +221,14 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                     }
                 }
                 if body.is_empty() {
-                    body.push(div().p(sc(14.)).text_size(sc(12.)).text_color(theme::text_dim()).child("Sin resultados.").into_any_element());
+                    body.push(
+                        div().p(sc(14.)).text_size(sc(12.)).text_color(theme::text_dim()).child("Sin resultados.").into_any_element(),
+                    );
                 }
             }
-            Some(Load::Failed(e)) => body.push(div().p(sc(14.)).text_size(sc(12.)).text_color(theme::danger()).child(e.clone()).into_any_element()),
+            Some(Load::Failed(e)) => {
+                body.push(div().p(sc(14.)).text_size(sc(12.)).text_color(theme::danger()).child(e.clone()).into_any_element())
+            }
             _ => body.push(div().p(sc(14.)).text_size(sc(12.)).text_color(theme::text_dim()).child("Buscando…").into_any_element()),
         }
         let qq = q.clone();

@@ -11,6 +11,11 @@ None: TIDE ships with the Application ID of its own Discord application (named
 Settings -> Discord to turn it off. Forks can use their own application via the
 `TIDE_DISCORD_ID` environment variable or `discord_client_id` in `settings.json`.
 
+**Privacy:** the card is visible to your Discord contacts and servers. It is
+on by default. Turn it off in Settings → Discord. Any local program could open
+a pipe with Discord's name before Discord does and receive the same activity
+data. That is a limitation of Discord's IPC design.
+
 Discord desktop must be running. TIDE talks to it only through its local IPC
 pipe (`\.\pipe\discord-ipc-N`); nothing else is sent. Cover art is passed to
 Discord as the TIDAL image URL. Updates happen on track change, pause/resume

@@ -2,8 +2,8 @@
 
 use super::sc;
 use gpui::{
-    div, img, prelude::*, px, relative, AnyElement, ClickEvent, Context, ElementId, FontWeight, MouseButton, MouseDownEvent,
-    ObjectFit, Rgba, SharedString, Window,
+    div, img, prelude::*, px, relative, AnyElement, ClickEvent, Context, ElementId, FontWeight, MouseButton, MouseDownEvent, ObjectFit,
+    Rgba, SharedString, Window,
 };
 
 use super::icons::Icon;
@@ -61,16 +61,14 @@ pub fn cover_zoom_t(url: Option<String>, size: f32, round: bool, t: f32, cx: &mu
     let z = size * (1.0 + 0.07 * t);
     // One resample at the fully zoomed size (not one per animation frame).
     match url.as_deref().and_then(|u| images::sized(u, size * 1.07, size * 1.07, cx)) {
-        Some(i) => {
-            div()
-                .relative()
-                .size(sc(size))
-                .flex_none()
-                .rounded(sc(radius))
-                .overflow_hidden()
-                .child(img(i).absolute().left(sc((size - z) / 2.0)).top(sc((size - z) / 2.0)).size(sc(z)).object_fit(ObjectFit::Cover))
-                .into_any_element()
-        }
+        Some(i) => div()
+            .relative()
+            .size(sc(size))
+            .flex_none()
+            .rounded(sc(radius))
+            .overflow_hidden()
+            .child(img(i).absolute().left(sc((size - z) / 2.0)).top(sc((size - z) / 2.0)).size(sc(z)).object_fit(ObjectFit::Cover))
+            .into_any_element(),
         None => cover(url, size, round, cx),
     }
 }
@@ -102,27 +100,22 @@ pub fn cover_zoom(url: Option<String>, size: f32, round: bool, group: SharedStri
 /// Three bouncing bars shown next to the playing track.
 pub fn eq_bars(playing: bool, color: Rgba) -> impl IntoElement {
     use gpui::{Animation, AnimationExt};
-    div()
-        .h(sc(14.))
-        .flex()
-        .items_end()
-        .gap(sc(2.))
-        .children((0..3usize).map(move |i| {
-            let bar = div().w(sc(3.)).rounded(sc(1.)).bg(color);
-            if playing {
-                bar.with_animation(
-                    ("eq-bar", i as usize),
-                    Animation::new(std::time::Duration::from_millis(700 + i as u64 * 170)).repeat(),
-                    move |b, t| {
-                        let phase = t * std::f32::consts::TAU + i as f32 * 1.9;
-                        b.h(sc(4.0 + 10.0 * (0.5 + 0.5 * phase.sin())))
-                    },
-                )
-                .into_any_element()
-            } else {
-                bar.h(sc(4.0 + i as f32 * 3.0)).into_any_element()
-            }
-        }))
+    div().h(sc(14.)).flex().items_end().gap(sc(2.)).children((0..3usize).map(move |i| {
+        let bar = div().w(sc(3.)).rounded(sc(1.)).bg(color);
+        if playing {
+            bar.with_animation(
+                ("eq-bar", i),
+                Animation::new(std::time::Duration::from_millis(700 + i as u64 * 170)).repeat(),
+                move |b, t| {
+                    let phase = t * std::f32::consts::TAU + i as f32 * 1.9;
+                    b.h(sc(4.0 + 10.0 * (0.5 + 0.5 * phase.sin())))
+                },
+            )
+            .into_any_element()
+        } else {
+            bar.h(sc(4.0 + i as f32 * 3.0)).into_any_element()
+        }
+    }))
 }
 
 /// 2x2 grid of covers (playlists without an image of their own).
@@ -136,15 +129,7 @@ pub fn mosaic(urls: &[String], size: f32, cx: &mut Context<AppView>) -> AnyEleme
             None => div().size(sc(half)).flex_none().bg(theme::surface()).into_any_element(),
         })
         .collect();
-    div()
-        .size(sc(size))
-        .flex_none()
-        .rounded(sc(4.))
-        .overflow_hidden()
-        .flex()
-        .flex_wrap()
-        .children(cells)
-        .into_any_element()
+    div().size(sc(size)).flex_none().rounded(sc(4.)).overflow_hidden().flex().flex_wrap().children(cells).into_any_element()
 }
 
 pub fn icon_button(
@@ -317,19 +302,13 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
                 .opacity(1.0 - 0.08 * p)
                 .child(cover(url, width, round, cx))
                 // Official card hover: gradient from clear to 70 % black, faded in.
-                .child(
-                    div()
-                        .absolute()
-                        .top(sc(0.))
-                        .left(sc(0.))
-                        .size_full()
-                        .rounded(sc(if round { width / 2. } else { 4. }))
-                        .bg(gpui::linear_gradient(
-                            180.,
-                            gpui::linear_color_stop(gpui::rgba(0x00000000), 0.),
-                            gpui::linear_color_stop(super::fx::with_alpha(gpui::rgb(0x000000), 0.55 * h), 1.),
-                        )),
-                )
+                .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().rounded(sc(if round { width / 2. } else { 4. })).bg(
+                    gpui::linear_gradient(
+                        180.,
+                        gpui::linear_color_stop(gpui::rgba(0x00000000), 0.),
+                        gpui::linear_color_stop(super::fx::with_alpha(gpui::rgb(0x000000), 0.55 * h), 1.),
+                    ),
+                ))
                 // The play button rises and fades in.
                 .child(
                     div()
@@ -391,8 +370,7 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
                             }),
                     )
                 }),
-        )
-        ;
+        );
     interact::track(el, key, cx).into_any_element()
 }
 
@@ -434,7 +412,11 @@ impl Cols {
     pub const RATING: f32 = 84.0;
     pub const ACTIONS: f32 = 84.0;
     pub fn artist(style: RowStyle) -> f32 {
-        if style.album { 0.22 } else { 0.30 }
+        if style.album {
+            0.22
+        } else {
+            0.30
+        }
     }
     pub const ALBUM: f32 = 0.20;
 }
@@ -516,12 +498,13 @@ pub fn track_row(
         // Reorder by dragging (own playlists only).
         .when_some(drag, |d, dt| d.on_drag(dt, |dt, _, _, cx| cx.new(|_| dt.clone())))
         .when_some(drop_uuid, |d, uuid| {
-            d.drag_over::<super::playlists::DraggedTrack>(|s, _, _, _| s.border_t_2().border_color(theme::accent()))
-                .on_drop(cx.listener(move |this, dt: &super::playlists::DraggedTrack, _, cx| {
+            d.drag_over::<super::playlists::DraggedTrack>(|s, _, _, _| s.border_t_2().border_color(theme::accent())).on_drop(cx.listener(
+                move |this, dt: &super::playlists::DraggedTrack, _, cx| {
                     if dt.uuid == uuid {
                         this.move_playlist_track(uuid.clone(), dt.index, ix, cx);
                     }
-                }))
+                },
+            ))
         })
         .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
             if ev.click_count() >= 2 {
@@ -560,16 +543,16 @@ pub fn track_row(
                 .text_size(sc(11.))
                 .text_color(theme::text_dim())
                 .child(
-                    div()
-                        .group_hover(group.clone(), |s| s.invisible())
-                        .when(playing, |d| d.child(eq_bars(audible, theme::accent())))
-                        .when(!playing, |d| {
+                    div().group_hover(group.clone(), |s| s.invisible()).when(playing, |d| d.child(eq_bars(audible, theme::accent()))).when(
+                        !playing,
+                        |d| {
                             d.child(if style.number && track.track_number > 0 {
                                 track.track_number.to_string()
                             } else {
                                 (ix + 1).to_string()
                             })
-                        }),
+                        },
+                    ),
                 )
                 .child(
                     div()
@@ -680,7 +663,11 @@ pub fn track_row(
                         .cursor_pointer()
                         .active(|s| s.opacity(0.5))
                         .group(SharedString::from(format!("row-add-{ix}")))
-                        .child(Icon::Plus.el(15., theme::text_secondary()).group_hover(SharedString::from(format!("row-add-{ix}")), |s| s.size(sc(18.)).text_color(theme::text())))
+                        .child(
+                            Icon::Plus
+                                .el(15., theme::text_secondary())
+                                .group_hover(SharedString::from(format!("row-add-{ix}")), |s| s.size(sc(18.)).text_color(theme::text())),
+                        )
                         .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                             cx.stop_propagation();
                             this.menu = Some((ev.position(), MenuTarget::AddToPlaylist(vec![t_add.clone()])));
@@ -696,7 +683,9 @@ pub fn track_row(
                         .child(if fav {
                             Icon::HeartFilled.el(15. * view.heart_scale(track.id), theme::text())
                         } else {
-                            Icon::Heart.el(15., theme::text_secondary()).group_hover(SharedString::from(format!("row-fav-{ix}")), |s| s.size(sc(18.)).text_color(theme::text()))
+                            Icon::Heart
+                                .el(15., theme::text_secondary())
+                                .group_hover(SharedString::from(format!("row-fav-{ix}")), |s| s.size(sc(18.)).text_color(theme::text()))
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -719,8 +708,7 @@ pub fn track_row(
                             }),
                         ),
                 ),
-        )
-        ;
+        );
     interact::track(row, row_key, cx).into_any_element()
 }
 
@@ -762,13 +750,7 @@ pub fn action(
 }
 
 pub fn section_title(title: impl Into<SharedString>) -> AnyElement {
-    div()
-        .pt(sc(24.))
-        .pb(sc(12.))
-        .text_size(sc(15.))
-        .font_weight(FontWeight::BOLD)
-        .child(title.into())
-        .into_any_element()
+    div().pt(sc(24.)).pb(sc(12.)).text_size(sc(15.)).font_weight(FontWeight::BOLD).child(title.into()).into_any_element()
 }
 
 pub fn message(text: impl Into<SharedString>) -> AnyElement {
@@ -903,7 +885,6 @@ pub fn shortcut(id: (&'static str, usize), item: &Item, cx: &mut Context<AppView
                 .child(div().truncate().text_size(sc(11.)).font_weight(FontWeight::BOLD).child(title))
                 .when(!subtitle.is_empty(), |d| d.child(div().truncate().text_size(sc(10.)).text_color(theme::text_dim()).child(subtitle))),
         )
-        .on_click(cx.listener(move |this, _, _, cx| this.open_item(&open, cx)))
-        ;
+        .on_click(cx.listener(move |this, _, _, cx| this.open_item(&open, cx)));
     interact::track(el, sk, cx).into_any_element()
 }

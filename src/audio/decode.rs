@@ -31,30 +31,16 @@ impl Decoder {
     pub fn open(buffer: Arc<Buffer>, mp4: bool) -> Result<Self> {
         // Fragmented MP4 (DASH) is read front to back; FLAC/MP4 files seek.
         let seekable = !mp4 || buffer.total_len().is_some();
-        let mss = MediaSourceStream::new(
-            Box::new(Reader::new(buffer, seekable)),
-            MediaSourceStreamOptions { buffer_len: 256 * 1024 },
-        );
+        let mss = MediaSourceStream::new(Box::new(Reader::new(buffer, seekable)), MediaSourceStreamOptions { buffer_len: 256 * 1024 });
         let mut hint = Hint::new();
         hint.with_extension(if mp4 { "mp4" } else { "flac" });
         let probed = symphonia::default::get_probe()
-            .format(
-                &hint,
-                mss,
-                &FormatOptions { enable_gapless: true, ..Default::default() },
-                &MetadataOptions::default(),
-            )
+            .format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
             .context("unrecognised audio format")?;
         let format = probed.format;
-        let track = format
-            .tracks()
-            .iter()
-            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-            .ok_or_else(|| anyhow!("no audio track"))?;
+        let track = format.tracks().iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL).ok_or_else(|| anyhow!("no audio track"))?;
         let params = track.codec_params.clone();
-        let decoder = symphonia::default::get_codecs()
-            .make(&params, &DecoderOptions::default())
-            .context("unsupported codec")?;
+        let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default()).context("unsupported codec")?;
         let sample_rate = params.sample_rate.ok_or_else(|| anyhow!("unknown sample rate"))?;
         let channels = params.channels.map(|c| c.count()).unwrap_or(2).max(1);
         let duration = match (params.n_frames, params.time_base) {
@@ -152,15 +138,14 @@ impl Resampler2 {
             window: WindowFunction::BlackmanHarris2,
         };
         let chunk = 1024;
-        let inner = SincFixedIn::<f32>::new(to as f64 / from as f64, 1.0, params, chunk, 2)
-            .map_err(|e| anyhow!("resampler: {e}"))?;
+        let inner = SincFixedIn::<f32>::new(to as f64 / from as f64, 1.0, params, chunk, 2).map_err(|e| anyhow!("resampler: {e}"))?;
         let skip = inner.output_delay();
         Ok(Self { inner, pending: [Vec::new(), Vec::new()], chunk, skip })
     }
 
     /// Feed interleaved stereo; returns whatever output is ready.
     pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
-        for f in input.chunks_exact(2) {
+        for f in input.as_chunks::<2>().0 {
             self.pending[0].push(f[0]);
             self.pending[1].push(f[1]);
         }

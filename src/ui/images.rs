@@ -30,6 +30,8 @@ pub struct Images {
     /// at, keyed by (url, width, height). The GPU only filters bilinearly with
     /// no mipmaps, so drawing a big image small aliases; these stay crisp.
     sized: HashMap<(String, u32, u32), Sized>,
+    /// Derivations (colour, palette, blur) already started, so each runs once.
+    derive_pending: std::collections::HashSet<String>,
     http: Client,
     dir: PathBuf,
 }
@@ -40,7 +42,51 @@ impl Images {
     pub fn init(http: Client, cx: &mut App) {
         let dir = crate::config::cache_dir().join("images");
         let _ = std::fs::create_dir_all(&dir);
-        cx.set_global(Images { map: HashMap::new(), colors: HashMap::new(), blurs: HashMap::new(), palettes: HashMap::new(), frames: Vec::new(), frames_pending: Default::default(), sized: HashMap::new(), http, dir });
+        // Covers accumulate forever otherwise; trim the oldest in the background.
+        let d = dir.clone();
+        std::thread::Builder::new().name("image-cache-prune".into()).spawn(move || prune(&d, DISK_CACHE_MAX)).ok();
+        cx.set_global(Images {
+            map: HashMap::new(),
+            colors: HashMap::new(),
+            blurs: HashMap::new(),
+            palettes: HashMap::new(),
+            frames: Vec::new(),
+            frames_pending: Default::default(),
+            sized: HashMap::new(),
+            derive_pending: Default::default(),
+            http,
+            dir,
+        });
+    }
+}
+
+/// Disk budget for downloaded cover art.
+const DISK_CACHE_MAX: u64 = 512 * 1024 * 1024;
+
+/// Delete the least recently written files in `dir` until it fits in `max`
+/// bytes (down to 80 % of it, so this does not run on every start).
+fn prune(dir: &std::path::Path, max: u64) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = rd
+        .filter_map(|e| {
+            let e = e.ok()?;
+            let m = e.metadata().ok()?;
+            m.is_file().then(|| (m.modified().unwrap_or(std::time::UNIX_EPOCH), m.len(), e.path()))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    if total <= max {
+        return;
+    }
+    files.sort_by_key(|f| f.0);
+    let target = max / 10 * 8;
+    for (_, len, path) in files {
+        if total <= target {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+        }
     }
 }
 
@@ -84,47 +130,23 @@ pub fn get(url: &str, cx: &mut App) -> Option<Arc<Image>> {
                 if !resp.status().is_success() {
                     return None;
                 }
+                // Cover art is a few hundred KB; refuse anything absurd.
+                if resp.content_length().is_some_and(|n| n > 32 * 1024 * 1024) {
+                    return None;
+                }
                 let b = resp.bytes().ok()?.to_vec();
                 let _ = std::fs::write(&path, &b);
                 Some(b)
             })
             .await;
-        // Colour extraction runs off the UI thread too.
-        let color = match &bytes {
-            Some(b) => {
-                let b = b.clone();
-                cx.background_executor().spawn(async move { dominant_color(&b) }).await
-            }
-            None => None,
-        };
-        let blur = match &bytes {
-            Some(b) => {
-                let b = b.clone();
-                cx.background_executor().spawn(async move { blurred_png(&b) }).await
-            }
-            None => None,
-        };
-        let palette = match &bytes {
-            Some(b) => {
-                let b = b.clone();
-                cx.background_executor().spawn(async move { palette_of(&b) }).await
-            }
-            None => None,
-        };
+        // Colour, palette and blur are derived on demand (see `derive`): only
+        // a handful of images ever need them, so loading a page of covers does
+        // not decode each one four times.
         let _ = cx.update(|cx| {
-            if let Some(pal) = palette {
-                cx.global_mut::<Images>().palettes.insert(url.clone(), pal);
-            }
-            if let Some(png) = blur {
-                cx.global_mut::<Images>().blurs.insert(url.clone(), Arc::new(Image::from_bytes(ImageFormat::Png, png)));
-            }
             let slot = match bytes {
                 Some(b) => Slot::Ready(Arc::new(Image::from_bytes(format_of(&b), b))),
                 None => Slot::Failed,
             };
-            if let Some(c) = color {
-                cx.global_mut::<Images>().colors.insert(url.clone(), c);
-            }
             cx.global_mut::<Images>().map.insert(url, slot);
             cx.refresh_windows();
         });
@@ -211,7 +233,9 @@ pub fn color(url: &str, cx: &mut App) -> Option<Rgba> {
     if let Some(c) = cx.global::<Images>().colors.get(url) {
         return Some(*c);
     }
-    let _ = get(url, cx);
+    derive(url, "color", cx, dominant_color, |im, url, c| {
+        im.colors.insert(url, c);
+    });
     None
 }
 
@@ -220,8 +244,36 @@ pub fn palette(url: &str, cx: &mut App) -> Vec<Rgba> {
     if let Some(p) = cx.global::<Images>().palettes.get(url) {
         return p.clone();
     }
-    let _ = get(url, cx);
+    derive(url, "palette", cx, palette_of, |im, url, p| {
+        im.palettes.insert(url, p);
+    });
     Vec::new()
+}
+
+/// Compute something from the image bytes of `url` once, in the background,
+/// the first time it is asked for. `kind` tells derivations of one URL apart.
+fn derive<T: Send + 'static>(
+    url: &str,
+    kind: &'static str,
+    cx: &mut App,
+    compute: fn(&[u8]) -> Option<T>,
+    store: fn(&mut Images, String, T),
+) {
+    let Some(original) = get(url, cx) else { return };
+    if !cx.global_mut::<Images>().derive_pending.insert(format!("{kind}|{url}")) {
+        return;
+    }
+    let url = url.to_string();
+    cx.spawn(async move |cx| {
+        let out = cx.background_executor().spawn(async move { compute(&original.bytes) }).await;
+        let _ = cx.update(|cx| {
+            if let Some(v) = out {
+                store(cx.global_mut::<Images>(), url, v);
+                cx.refresh_windows();
+            }
+        });
+    })
+    .detach();
 }
 
 fn rgb_to_hsv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
@@ -262,11 +314,7 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgba {
 /// yields both.
 fn palette_of(bytes: &[u8]) -> Option<Vec<Rgba>> {
     let img = image::load_from_memory(bytes).ok()?.thumbnail(40, 40).to_rgb8();
-    let px: Vec<[f32; 3]> = img
-        .pixels()
-        .map(|p| p.0.map(|c| c as f32 / 255.0))
-        .filter(|c| c[0].max(c[1]).max(c[2]) > 0.12)
-        .collect();
+    let px: Vec<[f32; 3]> = img.pixels().map(|p| p.0.map(|c| c as f32 / 255.0)).filter(|c| c[0].max(c[1]).max(c[2]) > 0.12).collect();
     if px.is_empty() {
         return Some(vec![Rgba { r: 0.5, g: 0.5, b: 0.5, a: 1.0 }; 3]);
     }
@@ -369,10 +417,7 @@ pub fn frames(url: &str, cx: &mut App) -> Option<Arc<Vec<Arc<Image>>>> {
     let url = url.to_string();
     cx.spawn(async move |cx| {
         let p = path.clone();
-        let pngs = cx
-            .background_executor()
-            .spawn(async move { std::fs::read(&p).ok().and_then(|b| rotated_pngs(&b)) })
-            .await;
+        let pngs = cx.background_executor().spawn(async move { std::fs::read(&p).ok().and_then(|b| rotated_pngs(&b)) }).await;
         let _ = cx.update(|cx| {
             let g = cx.global_mut::<Images>();
             g.frames_pending.remove(&url);
@@ -435,7 +480,9 @@ fn rotated_pngs(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
                 let (rx, ry) = (x * cos + y * sin, -x * sin + y * cos);
                 let c = sample(rx / SIDE + 0.5, ry / SIDE + 0.5);
                 // Tiny noise (dithering) so the slow gradients show no banding or blocks.
-                let n = ((ix.wrapping_mul(73856093) ^ iy.wrapping_mul(19349663) ^ (k as u32).wrapping_mul(83492791)) % 1000) as f32 / 1000.0 - 0.5;
+                let n = ((ix.wrapping_mul(73856093) ^ iy.wrapping_mul(19349663) ^ (k as u32).wrapping_mul(83492791)) % 1000) as f32
+                    / 1000.0
+                    - 0.5;
                 let q = |v: f32| (v + n * 2.2).clamp(0.0, 255.0) as u8;
                 buf.put_pixel(ix, iy, image::Rgba([q(c[0]), q(c[1]), q(c[2]), 255]));
             }
@@ -453,7 +500,9 @@ pub fn blurred(url: &str, cx: &mut App) -> Option<Arc<Image>> {
     if let Some(i) = cx.global::<Images>().blurs.get(url) {
         return Some(i.clone());
     }
-    let _ = get(url, cx);
+    derive(url, "blur", cx, blurred_png, |im, url, png| {
+        im.blurs.insert(url, Arc::new(Image::from_bytes(ImageFormat::Png, png)));
+    });
     None
 }
 
@@ -468,9 +517,7 @@ fn blurred_png(bytes: &[u8]) -> Option<Vec<u8>> {
         p.0 = [sat(rf), sat(gf), sat(bf), a];
     }
     let mut out = Vec::new();
-    image::DynamicImage::ImageRgba8(blurred)
-        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-        .ok()?;
+    image::DynamicImage::ImageRgba8(blurred).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
     Some(out)
 }
 
@@ -509,6 +556,24 @@ fn dominant_color(bytes: &[u8]) -> Option<Rgba> {
 /// The app logo (assets/logo.png), decoded once.
 pub fn logo() -> Arc<Image> {
     static LOGO: std::sync::OnceLock<Arc<Image>> = std::sync::OnceLock::new();
-    LOGO.get_or_init(|| Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../assets/logo.png").to_vec())))
-        .clone()
+    LOGO.get_or_init(|| Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../assets/logo.png").to_vec()))).clone()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn prune_removes_oldest_first() {
+        let dir = std::env::temp_dir().join(format!("tide-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..5 {
+            std::fs::write(dir.join(format!("{i}.img")), vec![0u8; 1000]).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        super::prune(&dir, 3000);
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        assert!(left.len() <= 2, "{left:?}");
+        assert!(left.contains(&"4.img".to_string()), "newest kept: {left:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
