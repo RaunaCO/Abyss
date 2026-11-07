@@ -39,7 +39,7 @@ pub fn fmt_long(secs: u64) -> String {
 /// Square (or round) cover art with a dark placeholder while loading.
 pub fn cover(url: Option<String>, size: f32, round: bool, cx: &mut Context<AppView>) -> AnyElement {
     let radius = if round { sc(size / 2.0) } else { sc(4.0) };
-    let image = url.as_deref().and_then(|u| images::get(u, cx));
+    let image = url.as_deref().and_then(|u| images::sized(u, size, size, cx));
     match image {
         Some(i) => img(i).size(sc(size)).flex_none().rounded(radius).object_fit(ObjectFit::Cover).into_any_element(),
         None => div()
@@ -58,9 +58,10 @@ pub fn cover(url: Option<String>, size: f32, round: bool, cx: &mut Context<AppVi
 /// A cover zoomed by `t` (0..1) inside its frame (eased hover zoom).
 pub fn cover_zoom_t(url: Option<String>, size: f32, round: bool, t: f32, cx: &mut Context<AppView>) -> AnyElement {
     let radius = if round { size / 2.0 } else { 4.0 };
-    match url.as_deref().and_then(|u| images::get(u, cx)) {
+    let z = size * (1.0 + 0.07 * t);
+    // One resample at the fully zoomed size (not one per animation frame).
+    match url.as_deref().and_then(|u| images::sized(u, size * 1.07, size * 1.07, cx)) {
         Some(i) => {
-            let z = size * (1.0 + 0.07 * t);
             div()
                 .relative()
                 .size(sc(size))
@@ -77,7 +78,7 @@ pub fn cover_zoom_t(url: Option<String>, size: f32, round: bool, t: f32, cx: &mu
 /// A cover that zooms a little inside its frame while `group` is hovered.
 pub fn cover_zoom(url: Option<String>, size: f32, round: bool, group: SharedString, cx: &mut Context<AppView>) -> AnyElement {
     let radius = if round { size / 2.0 } else { 4.0 };
-    match url.as_deref().and_then(|u| images::get(u, cx)) {
+    match url.as_deref().and_then(|u| images::sized(u, size, size, cx)) {
         Some(i) => div()
             .relative()
             .size(sc(size))
@@ -130,7 +131,7 @@ pub fn mosaic(urls: &[String], size: f32, cx: &mut Context<AppView>) -> AnyEleme
     let cells: Vec<AnyElement> = urls
         .iter()
         .take(4)
-        .map(|u| match images::get(u, cx) {
+        .map(|u| match images::sized(u, half, half, cx) {
             Some(i) => img(i).size(sc(half)).flex_none().object_fit(ObjectFit::Cover).into_any_element(),
             None => div().size(sc(half)).flex_none().bg(theme::surface()).into_any_element(),
         })

@@ -1715,6 +1715,7 @@ impl Focusable for AppView {
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        images::set_scale(window.scale_factor());
         if !self.signed_in {
             return pages::login_screen(self, cx).into_any_element();
         }

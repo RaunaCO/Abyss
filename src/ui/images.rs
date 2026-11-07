@@ -26,6 +26,10 @@ pub struct Images {
     /// rotating Now Playing background. Only a few covers are kept.
     frames: Vec<(String, Arc<Vec<Arc<Image>>>)>,
     frames_pending: std::collections::HashSet<String>,
+    /// Covers resampled (Lanczos) to the exact device-pixel size they are drawn
+    /// at, keyed by (url, width, height). The GPU only filters bilinearly with
+    /// no mipmaps, so drawing a big image small aliases; these stay crisp.
+    sized: HashMap<(String, u32, u32), Sized>,
     http: Client,
     dir: PathBuf,
 }
@@ -36,7 +40,7 @@ impl Images {
     pub fn init(http: Client, cx: &mut App) {
         let dir = crate::config::cache_dir().join("images");
         let _ = std::fs::create_dir_all(&dir);
-        cx.set_global(Images { map: HashMap::new(), colors: HashMap::new(), blurs: HashMap::new(), palettes: HashMap::new(), frames: Vec::new(), frames_pending: Default::default(), http, dir });
+        cx.set_global(Images { map: HashMap::new(), colors: HashMap::new(), blurs: HashMap::new(), palettes: HashMap::new(), frames: Vec::new(), frames_pending: Default::default(), sized: HashMap::new(), http, dir });
     }
 }
 
@@ -127,6 +131,79 @@ pub fn get(url: &str, cx: &mut App) -> Option<Arc<Image>> {
     })
     .detach();
     None
+}
+
+enum Sized {
+    Pending,
+    /// The original is already about the right size: draw it as is.
+    Original,
+    Ready(Arc<gpui::RenderImage>),
+}
+
+static SCALE_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+
+/// The window's device-pixel ratio (set every frame by the root view).
+pub fn set_scale(s: f32) {
+    SCALE_BITS.store(s.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn device_px(logical: f32) -> u32 {
+    let s = f32::from_bits(SCALE_BITS.load(std::sync::atomic::Ordering::Relaxed));
+    (logical * super::zoom() * s).round().max(1.0) as u32
+}
+
+/// The image for `url` resampled to be drawn `w` x `h` logical px (before the
+/// UI zoom). Falls back to the original while the resampled copy is made.
+pub fn sized(url: &str, w: f32, h: f32, cx: &mut App) -> Option<gpui::ImageSource> {
+    let original = get(url, cx)?;
+    let (mut dw, mut dh) = (device_px(w), device_px(h));
+    // Big images (Now Playing) change size with the window: step them in 32 px
+    // so a resize reuses a handful of copies instead of making one per pixel.
+    if dw > 256 && dh > 256 {
+        dw = dw.div_ceil(32) * 32;
+        dh = dh.div_ceil(32) * 32;
+    }
+    let key = (url.to_string(), dw, dh);
+    match cx.global::<Images>().sized.get(&key) {
+        Some(Sized::Ready(i)) => return Some(gpui::ImageSource::Render(i.clone())),
+        Some(_) => return Some(original.into()),
+        None => {}
+    }
+    let images = cx.global_mut::<Images>();
+    // Keep memory bounded: drop old resamples when the cache grows large.
+    if images.sized.len() > 4000 {
+        images.sized.retain(|_, v| matches!(v, Sized::Pending));
+    }
+    images.sized.insert(key.clone(), Sized::Pending);
+    let src = original.clone();
+    cx.spawn(async move |cx| {
+        let out = cx.background_executor().spawn(async move { resample(&src.bytes, dw, dh) }).await;
+        let _ = cx.update(|cx| {
+            let slot = match out {
+                Some(r) => Sized::Ready(Arc::new(r)),
+                None => Sized::Original,
+            };
+            cx.global_mut::<Images>().sized.insert(key, slot);
+            cx.refresh_windows();
+        });
+    })
+    .detach();
+    Some(original.into())
+}
+
+/// High-quality downscale (Lanczos3, cropped to fill) to exactly `w` x `h`.
+/// None when the source is not meaningfully larger (the GPU draws it fine).
+/// Delivered already decoded (BGRA), so swapping it in never blanks a frame.
+fn resample(bytes: &[u8], w: u32, h: u32) -> Option<gpui::RenderImage> {
+    let src = image::load_from_memory(bytes).ok()?;
+    if (src.width() as f32) < w as f32 * 1.15 && (src.height() as f32) < h as f32 * 1.15 {
+        return None;
+    }
+    let mut small = src.resize_to_fill(w, h, image::imageops::FilterType::Lanczos3).to_rgba8();
+    for p in small.pixels_mut() {
+        p.0.swap(0, 2);
+    }
+    Some(gpui::RenderImage::new(vec![image::Frame::new(small)]))
 }
 
 /// Dominant colour of a loaded cover (None until the image has loaded).

@@ -651,7 +651,7 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                                             .absolute()
                                             .size_full(),
                                         )
-                                        .child(match (view.np_tilt.tilted(), track.cover(1280).and_then(|u| super::images::get(&u, cx))) {
+                                        .child(match (view.np_tilt.tilted(), track.cover(1280).and_then(|u| super::images::sized(&u, size, size, cx))) {
                                             (true, Some(image)) => view.np_tilt.cover_3d(image, size),
                                             _ => cover(track.cover(1280), size, false, cx),
                                         })

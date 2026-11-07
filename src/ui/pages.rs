@@ -615,7 +615,7 @@ impl AppView {
                         .children(items.into_iter().enumerate().map(|(i, it)| {
                             let Item::Promo(p) = it.clone() else { return div().into_any_element() };
                             let url = p.image_url();
-                            let image = url.as_deref().and_then(|u| super::images::get(u, cx));
+                            let image = url.as_deref().and_then(|u| super::images::sized(u, 220., 160., cx));
                             let card = div()
                                 .id(SharedString::from(format!("promo-{ix}-{i}")))
                                 .w(px(220.))

@@ -156,13 +156,20 @@ impl Tilt {
     /// painted directly (no layout): each cell draws the whole image, scaled and
     /// placed where the tilted surface projects it, clipped to the cell. Cells are
     /// small (under a pixel of error at 12°), so lines stay straight and edges clean.
-    pub fn cover_3d(&self, image: std::sync::Arc<gpui::Image>, size: f32) -> AnyElement {
+    pub fn cover_3d(&self, image: gpui::ImageSource, size: f32) -> AnyElement {
         let (th, ph) = (self.rx.x.to_radians(), self.ry.x.to_radians());
         let z = super::zoom();
         gpui::canvas(
             |_, _, _| {},
             move |bounds, _, window, cx| {
-                let Some(render) = image.clone().use_render_image(window, cx) else { return };
+                let render = match &image {
+                    gpui::ImageSource::Render(r) => r.clone(),
+                    gpui::ImageSource::Image(i) => match i.clone().use_render_image(window, cx) {
+                        Some(r) => r,
+                        None => return,
+                    },
+                    _ => return,
+                };
                 let (st, ct, sp, cp) = (th.sin(), th.cos(), ph.sin(), ph.cos());
                 let size_px = size * z;
                 let half = size_px / 2.0;
