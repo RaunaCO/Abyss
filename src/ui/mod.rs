@@ -223,6 +223,8 @@ pub struct AppView {
     pub search_query: String,
     pub search_open: bool,
     pub search_gen: u64,
+    pub search_scroll: ScrollHandle,
+    pub search_sb_drag: bool,
     pub fav_tracks: Load<Vec<Track>>,
     pub fav_albums: Load<Vec<Album>>,
     pub fav_artists: Load<Vec<Artist>>,
@@ -468,6 +470,8 @@ impl AppView {
             search_query: String::new(),
             search_open: false,
             search_gen: 0,
+            search_scroll: ScrollHandle::new(),
+            search_sb_drag: false,
             fav_tracks: Load::Idle,
             fav_albums: Load::Idle,
             fav_artists: Load::Idle,
@@ -1787,6 +1791,14 @@ impl Render for AppView {
                 window.focus(&fh);
             }))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
+                if this.search_sb_drag {
+                    if ev.pressed_button == Some(MouseButton::Left) {
+                        this.search_scrollbar_to(ev.position);
+                        cx.notify();
+                        return;
+                    }
+                    this.search_sb_drag = false;
+                }
                 if this.scrollbar_drag {
                     if ev.pressed_button == Some(MouseButton::Left) {
                         this.scrollbar_to(ev.position);
@@ -1818,6 +1830,7 @@ impl Render for AppView {
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, window, cx| {
                 interact::release_all();
+                this.search_sb_drag = false;
                 this.scrollbar_drag = false;
                 if this.win_drag.take().is_some() {
                     winctl::drag_end(window);
@@ -1826,6 +1839,7 @@ impl Render for AppView {
             }))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, window, cx| {
                 interact::release_all();
+                this.search_sb_drag = false;
                 this.scrollbar_drag = false;
                 if this.win_drag.take().is_some() {
                     winctl::drag_end(window);

@@ -158,7 +158,7 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                 }
                 if !r.tracks.is_empty() {
                     body.push(heading("CANCIONES"));
-                    let list: Vec<_> = r.tracks.iter().take(4).cloned().collect();
+                    let list: Vec<_> = r.tracks.iter().take(8).cloned().collect();
                     for (i, t) in list.iter().enumerate() {
                         let all = list.clone();
                         body.push(
@@ -172,13 +172,13 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                     }
                 }
                 let mut others: Vec<(Item, String, String, Option<String>, bool)> = Vec::new();
-                for a in r.albums.iter().take(2) {
+                for a in r.albums.iter().take(5) {
                     others.push((Item::Album(a.clone()), a.title.clone(), format!("Álbum · {}", a.artist_names()), a.cover(160), false));
                 }
-                for a in r.artists.iter().take(2) {
+                for a in r.artists.iter().take(4) {
                     others.push((Item::Artist(a.clone()), a.name.clone(), "Artista".into(), a.picture(160), true));
                 }
-                for p in r.playlists.iter().take(1) {
+                for p in r.playlists.iter().take(3) {
                     others.push((Item::Playlist(p.clone()), p.title.clone(), "Playlist".into(), p.cover(160), false));
                 }
                 if !others.is_empty() {
@@ -230,25 +230,98 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                 div()
                     .id("search-menu")
                     .occlude()
+                    .relative()
                     .w(sc(380.))
-                    .max_h(sc(560.))
-                    .overflow_y_scroll()
-                    .p(sc(6.))
                     .rounded(sc(12.))
                     .bg(gpui::rgb(0x1a1a1e))
                     .border_1()
                     .border_color(theme::border())
                     .shadow_lg()
-                    .flex()
-                    .flex_col()
                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                        this.search_open = false;
-                        cx.notify();
+                        if !this.search_sb_drag {
+                            this.search_open = false;
+                            cx.notify();
+                        }
                     }))
-                    .children(body),
+                    .child(
+                        div()
+                            .id("search-menu-list")
+                            .max_h(sc(560.))
+                            .overflow_y_scroll()
+                            .track_scroll(&view.search_scroll)
+                            .p(sc(6.))
+                            .pr(sc(16.))
+                            .flex()
+                            .flex_col()
+                            .children(body),
+                    )
+                    .children(scrollbar(view, cx)),
             ),
         )
         .with_priority(3)
         .into_any_element(),
     )
+}
+
+/// Draggable scrollbar on the right of the quick-search menu.
+fn scrollbar(view: &AppView, cx: &mut Context<AppView>) -> Option<AnyElement> {
+    let h = &view.search_scroll;
+    let max = f32::from(h.max_offset().height);
+    let vh = f32::from(h.bounds().size.height);
+    if max < 1.0 || vh < 1.0 {
+        return None;
+    }
+    let z = super::zoom();
+    let (max, vh) = (max / z, vh / z);
+    let thumb = (vh * vh / (vh + max)).max(36.0);
+    let frac = (-f32::from(h.offset().y) / z / max).clamp(0.0, 1.0);
+    let top = 6.0 + frac * (vh - 12.0 - thumb);
+    let dragging = view.search_sb_drag;
+    Some(
+        div()
+            .id("search-sb")
+            .absolute()
+            .top(sc(0.))
+            .bottom(sc(0.))
+            .right(sc(2.))
+            .w(sc(12.))
+            .cursor_pointer()
+            .group("ssb")
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, ev: &gpui::MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.search_sb_drag = true;
+                    this.search_scrollbar_to(ev.position);
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(sc(top))
+                    .right(sc(3.))
+                    .h(sc(thumb))
+                    .w(sc(if dragging { 6. } else { 4. }))
+                    .rounded(sc(3.))
+                    .bg(gpui::rgba(if dragging { 0xffffffaa } else { 0xffffff45 }))
+                    .group_hover("ssb", |s| s.w(sc(6.)).bg(gpui::rgba(0xffffff80))),
+            )
+            .into_any_element(),
+    )
+}
+
+impl AppView {
+    /// Scroll the quick-search menu to the pointer's height on its scrollbar.
+    pub fn search_scrollbar_to(&mut self, pos: gpui::Point<gpui::Pixels>) {
+        let h = &self.search_scroll;
+        let b = h.bounds();
+        let max = f32::from(h.max_offset().height);
+        let vh = f32::from(b.size.height);
+        if max < 1.0 || vh < 1.0 {
+            return;
+        }
+        let frac = ((f32::from(pos.y) - f32::from(b.origin.y)) / vh).clamp(0.0, 1.0);
+        h.set_offset(gpui::point(gpui::px(0.), gpui::px(-max * frac)));
+    }
 }
