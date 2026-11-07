@@ -201,9 +201,9 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .on_click(cx.listener(|this, _, window, cx| {
                     let fh = this.search_input.focus_handle(cx);
                     window.focus(&fh);
-                    if !matches!(this.page, Page::Search(_)) {
-                        this.navigate(Page::Search(String::new()), cx);
-                    }
+                    // Quick search opens a small menu; the full page only on Enter.
+                    this.search_open = true;
+                    cx.notify();
                 })),
         )
         .child(

@@ -36,6 +36,10 @@ impl AppView {
             "mixes" => self.navigate(Page::MyMixes, cx),
             "settings" => self.navigate(Page::Settings, cx),
             "menu" => self.app_menu = Some(vec![2, 7]),
+            "quicksearch" => {
+                self.search_input.update(cx, |i, cx| i.set_text("cynic", cx));
+                self.search_typed("cynic", cx);
+            }
             "playlist" => {
                 if let Some(p) = self.my_playlists.ready().and_then(|l| l.first()).cloned() {
                     self.navigate(Page::Playlist(p.uuid), cx);

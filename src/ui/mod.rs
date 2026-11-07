@@ -44,6 +44,7 @@ mod haptics;
 mod scrollbar;
 mod tilt;
 mod interact;
+mod search_menu;
 mod sidebar;
 pub mod theme;
 mod widgets;
@@ -218,6 +219,10 @@ pub struct AppView {
     pub artists: HashMap<u64, Load<ArtistPage>>,
     pub mixes: HashMap<String, Load<(Mix, Vec<Track>)>>,
     pub search: HashMap<String, Load<SearchResults>>,
+    /// Quick-search menu under the header box.
+    pub search_query: String,
+    pub search_open: bool,
+    pub search_gen: u64,
     pub fav_tracks: Load<Vec<Track>>,
     pub fav_albums: Load<Vec<Album>>,
     pub fav_artists: Load<Vec<Artist>>,
@@ -460,6 +465,9 @@ impl AppView {
             artists: HashMap::new(),
             mixes: HashMap::new(),
             search: HashMap::new(),
+            search_query: String::new(),
+            search_open: false,
+            search_gen: 0,
             fav_tracks: Load::Idle,
             fav_albums: Load::Idle,
             fav_artists: Load::Idle,
@@ -1051,28 +1059,13 @@ impl AppView {
 
     fn on_search_event(&mut self, _: &Entity<TextInput>, ev: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
-            InputEvent::Submit(q) => {
-                let q = q.trim().to_string();
-                if q.is_empty() {
-                    return;
-                }
-                {
-                    let mut s = self.settings.lock();
-                    s.recent_searches.retain(|x| x != &q);
-                    s.recent_searches.insert(0, q.clone());
-                    s.recent_searches.truncate(12);
-                    s.save();
-                }
-                if let Page::Search(_) = self.page {
-                    self.page = Page::Search(q);
-                    self.page_changed(cx);
-                } else {
-                    self.navigate(Page::Search(q), cx);
-                }
+            InputEvent::Submit(q) => self.search_all(q.clone(), window, cx),
+            InputEvent::Escape => {
+                self.search_open = false;
                 window.focus(&self.focus);
+                cx.notify();
             }
-            InputEvent::Escape => window.focus(&self.focus),
-            InputEvent::Changed(_) => {}
+            InputEvent::Changed(text) => self.search_typed(text, cx),
         }
     }
 
@@ -1869,6 +1862,7 @@ impl Render for AppView {
             .child(player_bar::render(self, window, cx))
             .children(pages::overlays(self, window, cx))
             .children(appmenu::overlay(self, window, cx))
+            .children(search_menu::overlay(self, window, cx))
             .children(haptics::swipe_indicator(self))
             .children(playlists::dialog_overlay(self, cx))
             .into_any_element()

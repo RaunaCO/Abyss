@@ -50,9 +50,7 @@ fn menu(view: &AppView) -> Vec<Entry> {
                 item("Buscar", "Ctrl+F", |this, window, cx| {
                     let fh = this.search_input.focus_handle(cx);
                     window.focus(&fh);
-                    if !matches!(this.page, Page::Search(_)) {
-                        this.navigate(Page::Search(String::new()), cx);
-                    }
+                    this.search_open = true;
                 }),
             ],
         },
