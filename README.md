@@ -6,11 +6,11 @@
 Hi-Res audio, bit-perfect output and a calm interface. One small Windows app. No Electron. No web view.</p>
 
 <p align="center">
-  <a href="https://github.com/RaunaCO/TIDE/releases/latest"><img alt="Download" src="https://img.shields.io/badge/Download-Setup%20for%20Windows-111111?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="https://github.com/RaunaCO/Abyss/releases/latest"><img alt="Download" src="https://img.shields.io/badge/Download-Setup%20for%20Windows-111111?style=for-the-badge&logo=windows&logoColor=white"></a>
 </p>
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/github/v/release/RaunaCO/TIDE?color=444444">
+  <img alt="Release" src="https://img.shields.io/github/v/release/RaunaCO/Abyss?color=444444">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-444444">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-444444">
   <img alt="Rust" src="https://img.shields.io/badge/built%20with-Rust-444444">
@@ -49,7 +49,7 @@ Streaming, very large libraries and long sessions still need separate measuremen
 
 ## Install
 
-Download **Abyss-1.0.4-win-x64-setup.exe** from the [latest release](https://github.com/RaunaCO/TIDE/releases/latest).
+Download **Abyss-1.0.4-win-x64-setup.exe** from the [latest release](https://github.com/RaunaCO/Abyss/releases/latest).
 It installs for your user, with no administrator rights, and keeps your settings on
 uninstall. A portable `.zip` is also available. The binaries are not code-signed, so
 Windows SmartScreen may warn. Check the SHA-256 in the release notes.
@@ -101,8 +101,8 @@ source (MIT); it is not sold and must not be bundled with a paid offering.
 Requirements: Windows 10/11 and Rust (stable, MSVC toolchain).
 
 ```bash
-git clone https://github.com/RaunaCO/TIDE.git
-cd TIDE
+git clone https://github.com/RaunaCO/Abyss.git
+cd Abyss
 cargo run --release
 ```
 
