@@ -7,26 +7,6 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
-## [1.0.4]
-
-- Discord Rich Presence: the "Listening to" header shows the artist. The details line is the track title and the album shows on hover over the cover.
-
-## [1.0.3]
-
-- Discord Rich Presence works out of the box: Abyss now ships its own Discord application ID (you can still override it in Settings > Privacy).
-
-## [1.0.2]
-
-- Discord Rich Presence: the "Listening to" header shows the album name instead of the app name (the details line is the album, the state line is "title · artist"; without an album the header shows the track title).
-
-## [1.0.1]
-
-- The welcome guide shows only once: it counts as seen when it first appears, so
-  closing the window before the last step no longer brings it back.
-- New Windows setup installer (per user, no administrator rights, keeps your data
-  on uninstall) next to the portable zip.
-- README landing page with performance goals and measurements.
-
 ## [1.0.0]
 
 First stable release. Free and open source (MIT).
@@ -36,8 +16,20 @@ First stable release. Free and open source (MIT).
   providers, cleaner fullscreen player and shared motion.
 - Documentation reviewed for the release: README, LEGAL (status for 1.0.0),
   ROADMAP, third-party notices.
+- Discord Rich Presence works out of the box with Abyss's own application ID
+  (overridable in Settings > Privacy). The "Listening to" header shows the
+  artist; the details line is the track title and the album shows on hover over
+  the cover.
+- The welcome guide shows only once: it counts as seen when it first appears.
+- Windows setup installer (per user, no administrator rights, keeps your data
+  on uninstall) next to the portable zip.
+- Final clean-up: unused code removed, `crash.log` rotated (`crash.old.log`) with
+  URLs and bearer tokens redacted, `THIRD_PARTY_NOTICES.md` shipped.
 - Known limits: unsigned binary; the unused Android/PKCE login code is still
-  compiled in (LEGAL.md R1); Discord Rich Presence needs an application ID.
+  compiled in (LEGAL.md R1); a `settings.json` saved with a BOM is ignored.
+
+**Versioning:** 1.0.0 is the standard baseline. Future versions build on it
+(1.0.x fixes, 1.x features).
 
 ## [0.10.1] - 2026-11-11, for owner testing
 
