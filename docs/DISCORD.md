@@ -1,6 +1,6 @@
 # Discord Rich Presence
 
-Abyss shows what you are listening to on your Discord profile. The card shows
+Abyss shows what you are listening to on your Discord profile. The "Listening to" header shows the album name (not the app name). The card also shows
 the track title, artist, album cover (album name on hover), a progress bar and
 an *Escuchar en TIDAL* button. The card is hidden while paused.
 

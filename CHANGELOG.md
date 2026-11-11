@@ -7,6 +7,10 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
+## [1.0.2]
+
+- Discord Rich Presence: the "Listening to" header shows the album name instead of the app name (the details line is the album, the state line is "title · artist"; without an album the header shows the track title).
+
 ## [1.0.1]
 
 - The welcome guide shows only once: it counts as seen when it first appears, so

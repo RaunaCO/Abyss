@@ -49,7 +49,7 @@ Streaming, very large libraries and long sessions still need separate measuremen
 
 ## Install
 
-Download **Abyss-1.0.1-win-x64-setup.exe** from the [latest release](https://github.com/RaunaCO/TIDE/releases/latest).
+Download **Abyss-1.0.2-win-x64-setup.exe** from the [latest release](https://github.com/RaunaCO/TIDE/releases/latest).
 It installs for your user, with no administrator rights, and keeps your settings on
 uninstall. A portable `.zip` is also available. The binaries are not code-signed, so
 Windows SmartScreen may warn. Check the SHA-256 in the release notes.
@@ -93,7 +93,7 @@ Windows SmartScreen may warn. Check the SHA-256 in the release notes.
 - **Languages**: English, Spanish, Portuguese, French, German and Japanese. Follows the system by default; change it in Settings > Appearance.
 - **System**: Windows media controls (SMTC), Inter font bundled.
 
-Current version: **1.0.1** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
+Current version: **1.0.2** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
 source (MIT); it is not sold and must not be bundled with a paid offering.
 
 ## Getting started
