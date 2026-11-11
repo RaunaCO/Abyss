@@ -1,6 +1,6 @@
 # Architecture
 
-TIDE is one Rust binary (`src/main.rs`), about 16.8 k lines in 42 source files.
+Abyss is one Rust binary (`src/main.rs`), about 16.8 k lines in 42 source files.
 The UI runs on GPUI's single UI thread. Network and decoding run on
 background threads.
 
@@ -18,7 +18,7 @@ flowchart LR
     end
     subgraph AUD["Audio threads"]
         E[engine<br/>audio/mod.rs]
-        S[downloader<br/>audio/stream.rs]
+        S[downloader + SegmentWindow<br/>audio/stream.rs]
         DEC[decoder<br/>symphonia + rubato]
         O[output<br/>cpal / WASAPI exclusive]
     end
@@ -35,7 +35,7 @@ flowchart LR
 
 ## Modules
 
-### `src/tidal/` — TIDAL client
+### `src/tidal/` - TIDAL client
 - `mod.rs`: `Tidal` wraps one blocking `reqwest` client (rustls) and the
   shared `Arc<Mutex<Settings>>`. It covers device-code login, an unused PKCE
   login, token refresh behind `refresh_lock`, and `send_full` (retries once on
@@ -52,10 +52,10 @@ flowchart LR
 - `models.rs`: `Track`, `Album`, `Artist`, `Playlist`, `Mix`, `Item`, `Row`,
   `StreamInfo`… built from `serde_json::Value`.
 
-### `src/audio/` — playback
+### `src/audio/` - playback
 See [AUDIO.md](AUDIO.md).
 
-### `src/ui/` — interface
+### `src/ui/` - interface
 - `mod.rs`: `AppView` holds all UI state (page, history, library loads,
   queue, now playing, dialogs, search). It also provides `fetch()` (run a
   `Tidal` call on the background executor and apply the result), key bindings
@@ -63,14 +63,25 @@ See [AUDIO.md](AUDIO.md).
   root render.
 - Pages: `pages.rs` (blocks in a virtualised `list`), `album_inline.rs`,
   `playlists.rs` (dialogs), `settings.rs`, `now_playing.rs`, `search_menu.rs`.
-- Chrome: `titlebar.rs`, `sidebar.rs`, `player_bar.rs`, `appmenu.rs`,
-  `scrollbar.rs`.
-- Rendering helpers: `widgets.rs`, `icons.rs` (embedded SVG), `theme.rs`,
+- Chrome: `titlebar.rs`, `sidebar.rs` (identity, Browse / Your Collection /
+  Playlists, account panel), `player_bar.rs`, `appmenu.rs`, `scrollbar.rs`,
+  `cover_view.rs` (full-screen album cover).
+- `ctxmenu.rs`: right-click menus for tracks, albums and artists (shared
+  look, per-type actions, Add to playlist, confirmed Remove).
+- `info.rs`: Song / Album / Artist Info panel; technical data from
+  `tidal::probe` (reads the FLAC / MP4 header of the stream).
+- `replay.rs`: Replay statistics computed from `crate::history` (the local
+  listening log recorded on the UI tick: seconds actually heard per track).
+- `library.rs`: the Library view (Tracks, Albums and Artists of the
+  collection, which remain `Page::MyTracks` / `MyAlbums` / `MyArtists` with
+  their existing data and sorting): header, control bar, list rows.
+- Rendering helpers: `widgets.rs`, `icons.rs` (embedded SVG), `theme.rs` (dark and light palettes; `dark_scope` for Now Playing),
   `images.rs` (memory + disk cache, Lanczos resampling to device pixels,
   derived colours / blur / rotation frames on demand).
 - Motion: `interact.rs` (eased hover/press values), `motion.rs`, `fx.rs`,
-  `tilt.rs` (3D cover), `haptics.rs`, `smooth.rs` (frame-synced wheel
-  scrolling).
+  `tilt.rs` (Now Playing cover: still image with a light that follows the pointer), `haptics.rs`, `smooth.rs` (frame-synced wheel
+  scrolling for the page and every panel, slider drag capture); `motion::Crossfade`
+  for track-change cover/background fades.
 - Platform: `winctl.rs` (Win32 window drag / snap), `media.rs` (SMTC via
   `souvlaki`), `input.rs` (text input).
 - `debug.rs`: `TIDE_PAGE` and other screenshot/demo hooks; see

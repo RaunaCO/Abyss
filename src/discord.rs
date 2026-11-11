@@ -1,10 +1,10 @@
-//! Discord Rich Presence, shown like Spotify's: a "Listening to TIDE" card
+//! Discord Rich Presence: a "Listening to Abyss" card
 //! with the track title, the artist, the album cover, the album name on hover,
 //! a progress bar and a button that opens the track.
 //!
 //! Talks to the local Discord client over its IPC named pipe
 //! (`\\.\pipe\discord-ipc-N`), so nothing is sent anywhere else. It needs the
-//! Application ID of a Discord application named "TIDE" (that name is what
+//! Application ID of a Discord application named "Abyss" (that name is what
 //! Discord shows after "Listening to").
 
 use std::io::{Read, Write};
@@ -83,7 +83,7 @@ impl Discord {
         self.last = Some(key);
         self.last_start = start;
         if !playing {
-            // Like Spotify, nothing is shown while paused.
+            // Nothing is shown while paused.
             let _ = self.tx.send(Msg::Clear);
             return;
         }
@@ -159,12 +159,12 @@ impl Conn {
         self.nonce += 1;
         let activity_json = activity.map(|a| {
             let mut act = json!({
-                // 2 = "Listening to", the same card Spotify gets.
+                // 2 = "Listening to".
                 "type": 2,
                 "details": a.title,
                 "state": a.artist,
                 "timestamps": { "start": a.start, "end": a.end },
-                "buttons": [{ "label": "Escuchar en TIDAL", "url": format!("https://tidal.com/browse/track/{}", a.track_id) }],
+                "buttons": [{ "label": crate::i18n::t("discord.listen_on_tidal"), "url": format!("https://tidal.com/browse/track/{}", a.track_id) }],
             });
             let mut assets = serde_json::Map::new();
             if let Some(c) = &a.cover {

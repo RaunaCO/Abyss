@@ -59,6 +59,35 @@ mod win32 {
     pub const WM_NCLBUTTONDOWN: u32 = 0x00A1;
     pub const WM_CLOSE: u32 = 0x0010;
     pub const HTCAPTION: usize = 2;
+    #[link(name = "dwmapi")]
+    extern "system" {
+        pub fn DwmSetWindowAttribute(hwnd: isize, attr: u32, value: *const u32, size: u32) -> i32;
+    }
+    /// DWMWA_BORDER_COLOR (Windows 11): colour of the 1 px window border.
+    pub const DWMWA_BORDER_COLOR: u32 = 34;
+}
+
+/// Paint the window's 1 px border in Abyss's own neutral colour (0xRRGGBB),
+/// so the Windows setting "show accent colour on title bars and window
+/// borders" does not draw the system accent around Abyss. Only calls DWM when
+/// the colour changes. No effect before Windows 11.
+pub fn set_border_color(window: &Window, rgb: u32) {
+    #[cfg(windows)]
+    {
+        use std::cell::Cell;
+        thread_local!(static LAST: Cell<Option<u32>> = const { Cell::new(None) });
+        if LAST.with(Cell::get) == Some(rgb) {
+            return;
+        }
+        if let Some(h) = hwnd(window) {
+            // COLORREF is 0x00BBGGRR.
+            let colorref = ((rgb & 0xff) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 0xff);
+            unsafe { win32::DwmSetWindowAttribute(h, win32::DWMWA_BORDER_COLOR, &colorref, 4) };
+            LAST.with(|l| l.set(Some(rgb)));
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (window, rgb);
 }
 
 #[cfg(windows)]
@@ -68,6 +97,148 @@ fn hwnd(window: &Window) -> Option<isize> {
         RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
         _ => None,
     }
+}
+
+/// Refresh rate (Hz) of the monitor the window is on (re-read every 2 s, so
+/// moving the window to another monitor is picked up); 60 when unknown.
+pub fn refresh_hz(window: &Window) -> u32 {
+    use std::cell::Cell;
+    thread_local!(static CACHE: Cell<Option<(std::time::Instant, u32)>> = const { Cell::new(None) });
+    if let Some((at, hz)) = CACHE.with(Cell::get) {
+        if at.elapsed().as_secs() < 2 {
+            return hz;
+        }
+    }
+    let hz = monitor_hz(window).filter(|hz| (24..=500).contains(hz)).unwrap_or(60);
+    CACHE.with(|c| c.set(Some((std::time::Instant::now(), hz))));
+    hz
+}
+
+#[cfg(windows)]
+fn monitor_hz(window: &Window) -> Option<u32> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        EnumDisplaySettingsW, GetMonitorInfoW, MonitorFromWindow, DEVMODEW, ENUM_CURRENT_SETTINGS, MONITORINFO, MONITORINFOEXW,
+        MONITOR_DEFAULTTONEAREST,
+    };
+    let h = hwnd(window)?;
+    // SAFETY: plain Win32 queries on our own window; every struct is
+    // zero-initialised with its size field set as the API requires.
+    unsafe {
+        let mon = MonitorFromWindow(h as _, MONITOR_DEFAULTTONEAREST);
+        let mut info: MONITORINFOEXW = std::mem::zeroed();
+        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if GetMonitorInfoW(mon, &mut info as *mut MONITORINFOEXW as *mut MONITORINFO) == 0 {
+            return None;
+        }
+        let mut mode: DEVMODEW = std::mem::zeroed();
+        mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+        if EnumDisplaySettingsW(info.szDevice.as_ptr(), ENUM_CURRENT_SETTINGS, &mut mode) == 0 {
+            return None;
+        }
+        Some(mode.dmDisplayFrequency)
+    }
+}
+
+#[cfg(not(windows))]
+fn monitor_hz(_window: &Window) -> Option<u32> {
+    None
+}
+
+/// The window's client area as BGRA pixels: (width, height, bytes). Drawn by
+/// the window itself (PrintWindow), so it works for GPU-rendered content and
+/// whatever covers the window.
+pub fn capture_client(window: &Window) -> Option<(u32, u32, Vec<u8>)> {
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct BitmapInfoHeader {
+            size: u32,
+            width: i32,
+            height: i32,
+            planes: u16,
+            bit_count: u16,
+            compression: u32,
+            size_image: u32,
+            x_ppm: i32,
+            y_ppm: i32,
+            clr_used: u32,
+            clr_important: u32,
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetDC(h: isize) -> isize;
+            fn ReleaseDC(h: isize, dc: isize) -> i32;
+            fn GetClientRect(h: isize, r: *mut win32::Rect) -> i32;
+            fn PrintWindow(h: isize, dc: isize, flags: u32) -> i32;
+        }
+        #[link(name = "gdi32")]
+        extern "system" {
+            fn CreateCompatibleDC(dc: isize) -> isize;
+            fn CreateCompatibleBitmap(dc: isize, w: i32, h: i32) -> isize;
+            fn SelectObject(dc: isize, o: isize) -> isize;
+            fn DeleteObject(o: isize) -> i32;
+            fn DeleteDC(dc: isize) -> i32;
+            fn GetDIBits(dc: isize, bm: isize, start: u32, lines: u32, bits: *mut u8, info: *mut BitmapInfoHeader, usage: u32) -> i32;
+        }
+        let h = hwnd(window)?;
+        unsafe {
+            let mut r = win32::Rect::default();
+            GetClientRect(h, &mut r);
+            let (w, ht) = (r.right - r.left, r.bottom - r.top);
+            if w <= 0 || ht <= 0 {
+                return None;
+            }
+            let wdc = GetDC(h);
+            let mdc = CreateCompatibleDC(wdc);
+            let bmp = CreateCompatibleBitmap(wdc, w, ht);
+            let old = SelectObject(mdc, bmp);
+            // PW_CLIENTONLY | PW_RENDERFULLCONTENT
+            let ok = PrintWindow(h, mdc, 1 | 2) != 0;
+            let mut info = BitmapInfoHeader {
+                size: std::mem::size_of::<BitmapInfoHeader>() as u32,
+                width: w,
+                height: -ht,
+                planes: 1,
+                bit_count: 32,
+                compression: 0,
+                size_image: 0,
+                x_ppm: 0,
+                y_ppm: 0,
+                clr_used: 0,
+                clr_important: 0,
+            };
+            let mut buf = vec![0u8; (w * ht * 4) as usize];
+            let lines = GetDIBits(mdc, bmp, 0, ht as u32, buf.as_mut_ptr(), &mut info, 0);
+            SelectObject(mdc, old);
+            DeleteObject(bmp);
+            DeleteDC(mdc);
+            ReleaseDC(h, wdc);
+            (ok && lines > 0).then_some((w as u32, ht as u32, buf))
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        None
+    }
+}
+
+/// Keep receiving mouse moves and the button release while a slider is being
+/// dragged, even outside the window.
+pub fn capture_mouse(window: &Window) {
+    #[cfg(windows)]
+    if let Some(h) = hwnd(window) {
+        unsafe { win32::SetCapture(h) };
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
+pub fn release_mouse() {
+    #[cfg(windows)]
+    unsafe {
+        win32::ReleaseCapture()
+    };
 }
 
 pub fn is_maximized(window: &Window) -> bool {
@@ -196,21 +367,4 @@ pub fn drag_end(window: &mut Window) {
     }
     #[cfg(not(windows))]
     let _ = window;
-}
-
-/// Hand the drag over to Windows/// Hand the drag over to Windows, as if the native title bar was grabbed
-/// (keeps Aero Snap and dragging a maximised window off the top).
-pub fn start_drag(window: &mut Window) {
-    #[cfg(windows)]
-    if let Some(h) = hwnd(window) {
-        unsafe {
-            win32::ReleaseCapture();
-            // Posted, not sent: the move loop must start from the message pump. Run inside
-            // gpui's event handler it keeps the app borrowed while gpui's own tasks (the
-            // ticker) run in that loop, which panics with "RefCell already borrowed".
-            win32::PostMessageW(h, win32::WM_NCLBUTTONDOWN, win32::HTCAPTION, 0);
-        }
-        return;
-    }
-    window.start_window_move();
 }

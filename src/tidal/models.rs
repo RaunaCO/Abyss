@@ -25,7 +25,16 @@ fn tags(v: &Value) -> Vec<String> {
 
 /// Image URL from a TIDAL image id (`xxxxxxxx-xxxx-...`).
 pub fn image_url(id: &str, size: u32) -> String {
+    // Artwork of local files: a path, read from disk by the image loader.
+    if id.starts_with("local:") || id.starts_with("http") {
+        return id.to_string();
+    }
     format!("https://resources.tidal.com/images/{}/{size}x{size}.jpg", id.replace('-', "/"))
+}
+
+/// Public TIDAL catalogue link.
+pub fn share_url(kind: &str, id: &str) -> String {
+    format!("https://tidal.com/browse/{kind}/{id}")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +73,7 @@ pub struct Track {
     /// When it was added to the list it is shown in (ISO 8601).
     pub added: Option<String>,
     pub bpm: Option<u32>,
+    pub local_path: Option<std::path::PathBuf>,
 }
 
 impl Track {
@@ -101,8 +111,13 @@ impl Track {
             streamable: v.get("streamReady").and_then(Value::as_bool).unwrap_or(true)
                 && v.get("allowStreaming").and_then(Value::as_bool).unwrap_or(true),
             added: None,
+            local_path: None,
             bpm: v.get("bpm").and_then(Value::as_u64).filter(|b| *b > 0).map(|b| b as u32),
         })
+    }
+
+    pub fn is_hires(&self) -> bool {
+        self.tags.iter().any(|t| t == "HIRES_LOSSLESS")
     }
 
     pub fn display_title(&self) -> String {
@@ -117,11 +132,12 @@ impl Track {
     }
 
     pub fn cover(&self, size: u32) -> Option<String> {
+        if self.local_path.is_some() {
+            if let Some(cover) = crate::local::track_cover(self.id) {
+                return Some(cover);
+            }
+        }
         self.album.as_ref()?.cover.as_deref().map(|c| image_url(c, size))
-    }
-
-    pub fn is_hires(&self) -> bool {
-        self.tags.iter().any(|t| t == "HIRES_LOSSLESS")
     }
 }
 
@@ -177,10 +193,6 @@ impl Album {
 
     pub fn year(&self) -> &str {
         self.release_date.get(..4).unwrap_or("")
-    }
-
-    pub fn is_hires(&self) -> bool {
-        self.tags.iter().any(|t| t == "HIRES_LOSSLESS")
     }
 }
 
@@ -242,6 +254,9 @@ impl Playlist {
     }
 
     pub fn cover(&self, size: u32) -> Option<String> {
+        if let Some(url) = self.image.as_deref().filter(|i| i.starts_with("http")) {
+            return Some(url.to_string());
+        }
         if let Some(sq) = &self.square_image {
             let sz = [160, 320, 480, 640, 750, 1080].into_iter().find(|&x| x >= size).unwrap_or(1080);
             return Some(format!("https://resources.tidal.com/images/{}/{sz}x{sz}.jpg", sq.replace('-', "/")));
@@ -389,6 +404,18 @@ pub struct StreamInfo {
     /// Loudness normalisation: gain in dB and sample peak (linear) of the track.
     pub replay_gain: Option<f32>,
     pub peak: Option<f32>,
+    /// Fetches fresh signed links for the same stream when these expire.
+    pub renew: Option<Renewer>,
+}
+
+/// Callback that resolves the same stream again (new signed URLs).
+#[derive(Clone)]
+pub struct Renewer(pub crate::audio::stream::Renew);
+
+impl std::fmt::Debug for Renewer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Renewer")
+    }
 }
 
 impl StreamInfo {
@@ -396,11 +423,15 @@ impl StreamInfo {
     pub fn detail(&self) -> String {
         let mut parts = Vec::new();
         if let Some(b) = self.bit_depth {
-            parts.push(format!("{b}-BIT"));
+            parts.push(crate::i18n::text("audio.bit_depth", &[b.to_string()]));
         }
         if let Some(r) = self.sample_rate {
             let khz = r as f32 / 1000.0;
-            parts.push(if khz.fract() == 0.0 { format!("{khz:.0} kHz") } else { format!("{khz:.1} kHz") });
+            parts.push(if khz.fract() == 0.0 {
+                crate::i18n::text("khz", &[format!("{khz:.0}")])
+            } else {
+                crate::i18n::text("khz", &[format!("{khz:.1}")])
+            });
         }
         parts.push(self.codec.to_uppercase());
         parts.join(" ")

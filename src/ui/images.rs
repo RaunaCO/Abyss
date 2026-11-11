@@ -1,35 +1,86 @@
 //! Cover art loader: memory cache + disk cache, fetched in the background.
+//!
+//! Memory: everything drawn is handed to GPUI as an already decoded
+//! `RenderImage` (never an encoded `Image`), so GPUI's own asset cache, which
+//! never evicts, is not used. Decoded images and the encoded originals are
+//! held in byte-limited LRU caches; entries not drawn in the last frames are
+//! dropped when over budget, and their GPU textures are released with
+//! `drop_image` (see [`evict`]).
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{App, Global, Image, ImageFormat, Rgba};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+use gpui::{App, Global, Image, ImageFormat, RenderImage, Rgba, Window};
 use reqwest::blocking::Client;
 
 enum Slot {
     Loading,
-    Ready(Arc<Image>),
+    /// Encoded bytes, and the frame they were last asked for in.
+    Ready(Arc<Image>, u64),
     Failed,
+}
+
+/// Budget for decoded images (resampled covers and blurs) held in RAM and as
+/// GPU textures. A screen full of covers needs well under half of it.
+const DECODED_BUDGET_MB: usize = 64;
+/// Budget for encoded originals kept in memory (they are on disk anyway).
+const ENCODED_BUDGET: usize = 24 * 1024 * 1024;
+/// Entries drawn this recently are never evicted.
+const KEEP_FRAMES: u64 = 2;
+
+static FRAME: AtomicU64 = AtomicU64::new(1);
+
+/// Decoded-image budget in bytes (`TIDE_IMAGE_BUDGET_MB` overrides it, for
+/// testing eviction with a small cache).
+fn decoded_budget() -> usize {
+    static B: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *B.get_or_init(|| std::env::var("TIDE_IMAGE_BUDGET_MB").ok().and_then(|v| v.parse().ok()).unwrap_or(DECODED_BUDGET_MB) * 1024 * 1024)
+}
+
+fn frame() -> u64 {
+    FRAME.load(AtomicOrdering::Relaxed)
+}
+
+fn render_bytes(r: &RenderImage) -> usize {
+    (0..r.frame_count()).map(|i| r.as_bytes(i).map_or(0, |b| b.len())).sum()
+}
+
+/// BGRA render image from an RGBA buffer.
+fn to_render(mut img: image::RgbaImage) -> RenderImage {
+    for p in img.pixels_mut() {
+        p.0.swap(0, 2);
+    }
+    RenderImage::new(vec![image::Frame::new(img)])
 }
 
 pub struct Images {
     map: HashMap<String, Slot>,
     /// Dominant (vivid average) colour of each loaded cover.
     colors: HashMap<String, Rgba>,
-    /// Heavily blurred, saturated copy of each cover (Now Playing background).
-    blurs: HashMap<String, Arc<Image>>,
+    /// Heavily blurred, saturated copy of each cover (settings preview).
+    blurs: HashMap<String, (Arc<RenderImage>, u64)>,
     /// Up to three vivid, distinct colours of each cover.
     palettes: HashMap<String, Vec<Rgba>>,
-    /// 180 pre-rotated (2 degrees apart) blurred copies of the playing cover, for the
-    /// rotating Now Playing background. Only a few covers are kept.
-    frames: Vec<(String, Arc<Vec<Arc<Image>>>)>,
-    frames_pending: std::collections::HashSet<String>,
+    /// Low-resolution samples for the rotating Now Playing background.
+    frames: Vec<(String, Arc<Vec<Arc<RenderImage>>>)>,
+    /// Prevent duplicate jobs and repeated attempts to decode invalid artwork.
+    frames_requested: std::collections::HashSet<String>,
     /// Covers resampled (Lanczos) to the exact device-pixel size they are drawn
     /// at, keyed by (url, width, height). The GPU only filters bilinearly with
     /// no mipmaps, so drawing a big image small aliases; these stay crisp.
     sized: HashMap<(String, u32, u32), Sized>,
+    /// Last size made for each URL: shown while another size is being made
+    /// (window resize), so a cover never blinks.
+    latest: HashMap<String, (u32, u32)>,
+    /// Bytes of decoded images held (sized + blurs), and of encoded originals.
+    decoded_bytes: usize,
+    encoded_bytes: usize,
+    /// Textures to release on the next frame (frames of covers no longer shown).
+    to_drop: Vec<Arc<RenderImage>>,
     /// Derivations (colour, palette, blur) already started, so each runs once.
     derive_pending: std::collections::HashSet<String>,
     http: Client,
@@ -51,8 +102,12 @@ impl Images {
             blurs: HashMap::new(),
             palettes: HashMap::new(),
             frames: Vec::new(),
-            frames_pending: Default::default(),
+            frames_requested: Default::default(),
             sized: HashMap::new(),
+            latest: HashMap::new(),
+            decoded_bytes: 0,
+            encoded_bytes: 0,
+            to_drop: Vec::new(),
             derive_pending: Default::default(),
             http,
             dir,
@@ -108,12 +163,16 @@ fn format_of(bytes: &[u8]) -> ImageFormat {
 
 /// The image for `url` if it is loaded; starts loading it otherwise.
 pub fn get(url: &str, cx: &mut App) -> Option<Arc<Image>> {
-    let images = cx.global::<Images>();
-    match images.map.get(url) {
-        Some(Slot::Ready(img)) => return Some(img.clone()),
+    let now = frame();
+    match cx.global_mut::<Images>().map.get_mut(url) {
+        Some(Slot::Ready(img, used)) => {
+            *used = now;
+            return Some(img.clone());
+        }
         Some(_) => return None,
         None => {}
     }
+    let images = cx.global::<Images>();
     let http = images.http.clone();
     let path = file_for(&images.dir, url);
     cx.global_mut::<Images>().map.insert(url.to_string(), Slot::Loading);
@@ -123,6 +182,11 @@ pub fn get(url: &str, cx: &mut App) -> Option<Arc<Image>> {
         let bytes = cx
             .background_executor()
             .spawn(async move {
+                // Artwork copied out of local files (never sent anywhere).
+                if let Some(local) = u.strip_prefix("local:") {
+                    let b = std::fs::read(local).ok()?;
+                    return (b.len() <= 32 * 1024 * 1024).then_some(b);
+                }
                 if let Ok(b) = std::fs::read(&path) {
                     return Some(b);
                 }
@@ -143,11 +207,15 @@ pub fn get(url: &str, cx: &mut App) -> Option<Arc<Image>> {
         // a handful of images ever need them, so loading a page of covers does
         // not decode each one four times.
         let _ = cx.update(|cx| {
+            let g = cx.global_mut::<Images>();
             let slot = match bytes {
-                Some(b) => Slot::Ready(Arc::new(Image::from_bytes(format_of(&b), b))),
+                Some(b) => {
+                    g.encoded_bytes += b.len();
+                    Slot::Ready(Arc::new(Image::from_bytes(format_of(&b), b)), frame())
+                }
                 None => Slot::Failed,
             };
-            cx.global_mut::<Images>().map.insert(url, slot);
+            g.map.insert(url, slot);
             cx.refresh_windows();
         });
     })
@@ -157,9 +225,8 @@ pub fn get(url: &str, cx: &mut App) -> Option<Arc<Image>> {
 
 enum Sized {
     Pending,
-    /// The original is already about the right size: draw it as is.
-    Original,
-    Ready(Arc<gpui::RenderImage>),
+    /// Decoded at the drawn size, and the frame it was last drawn in.
+    Ready(Arc<RenderImage>, u64),
 }
 
 static SCALE_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
@@ -174,10 +241,10 @@ fn device_px(logical: f32) -> u32 {
     (logical * super::zoom() * s).round().max(1.0) as u32
 }
 
-/// The image for `url` resampled to be drawn `w` x `h` logical px (before the
-/// UI zoom). Falls back to the original while the resampled copy is made.
+/// The image for `url` decoded (and resampled when larger) to be drawn
+/// `w` x `h` logical px (before the UI zoom). While that size is being made,
+/// the last size made for the URL is shown, or nothing on first load.
 pub fn sized(url: &str, w: f32, h: f32, cx: &mut App) -> Option<gpui::ImageSource> {
-    let original = get(url, cx)?;
     let (mut dw, mut dh) = (device_px(w), device_px(h));
     // Big images (Now Playing) change size with the window: step them in 32 px
     // so a resize reuses a handful of copies instead of making one per pixel.
@@ -186,46 +253,190 @@ pub fn sized(url: &str, w: f32, h: f32, cx: &mut App) -> Option<gpui::ImageSourc
         dh = dh.div_ceil(32) * 32;
     }
     let key = (url.to_string(), dw, dh);
-    match cx.global::<Images>().sized.get(&key) {
-        Some(Sized::Ready(i)) => return Some(gpui::ImageSource::Render(i.clone())),
-        Some(_) => return Some(original.into()),
+    let now = frame();
+    let images = cx.global_mut::<Images>();
+    match images.sized.get_mut(&key) {
+        Some(Sized::Ready(i, used)) => {
+            *used = now;
+            return Some(gpui::ImageSource::Render(i.clone()));
+        }
+        Some(Sized::Pending) => return fallback(images, url, now),
         None => {}
     }
+    // An already decoded cover needs no access to its encoded original.
+    let original = get(url, cx)?;
     let images = cx.global_mut::<Images>();
-    // Keep memory bounded: drop old resamples when the cache grows large.
-    if images.sized.len() > 4000 {
-        images.sized.retain(|_, v| matches!(v, Sized::Pending));
-    }
     images.sized.insert(key.clone(), Sized::Pending);
+    let shown = fallback(images, url, now);
     let src = original.clone();
     cx.spawn(async move |cx| {
         let out = cx.background_executor().spawn(async move { resample(&src.bytes, dw, dh) }).await;
         let _ = cx.update(|cx| {
-            let slot = match out {
-                Some(r) => Sized::Ready(Arc::new(r)),
-                None => Sized::Original,
-            };
-            cx.global_mut::<Images>().sized.insert(key, slot);
+            let g = cx.global_mut::<Images>();
+            match out {
+                Some(r) => {
+                    g.decoded_bytes += render_bytes(&r);
+                    g.latest.insert(key.0.clone(), (key.1, key.2));
+                    g.sized.insert(key, Sized::Ready(Arc::new(r), frame()));
+                }
+                None => {
+                    g.sized.remove(&key);
+                }
+            }
             cx.refresh_windows();
         });
     })
     .detach();
-    Some(original.into())
+    shown
 }
 
-/// High-quality downscale (Lanczos3, cropped to fill) to exactly `w` x `h`.
-/// None when the source is not meaningfully larger (the GPU draws it fine).
-/// Delivered already decoded (BGRA), so swapping it in never blanks a frame.
-fn resample(bytes: &[u8], w: u32, h: u32) -> Option<gpui::RenderImage> {
+/// How long a cover takes to fade in the first time it appears.
+const FADE_IN: f32 = super::motion::CONTROL.as_secs_f32();
+
+thread_local! {
+    /// When each cover was first drawn this session (later draws do not fade).
+    static FIRST_SHOWN: std::cell::RefCell<HashMap<String, std::time::Instant>> = std::cell::RefCell::new(HashMap::new());
+    static LAST_FADE: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// Opacity of a cover that is being drawn: it eases in (0 to 1) the first time
+/// it appears, then stays at 1 (scrolling back to it does not fade it again).
+pub fn fade_in(url: &str) -> f32 {
+    if super::motion::reduced_motion() {
+        return 1.0;
+    }
+    let at = FIRST_SHOWN.with(|m| {
+        *m.borrow_mut().entry(url.to_string()).or_insert_with(|| {
+            LAST_FADE.with(|l| l.set(Some(std::time::Instant::now())));
+            std::time::Instant::now()
+        })
+    });
+    let t = (at.elapsed().as_secs_f32() / FADE_IN).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// True while a cover is still fading in (the root view keeps drawing frames).
+pub fn fading() -> bool {
+    !super::motion::reduced_motion() && LAST_FADE.with(|l| l.get().is_some_and(|t| t.elapsed().as_secs_f32() < FADE_IN + 0.05))
+}
+
+/// The last finished size of `url`, if any (shown while a new size is made).
+fn fallback(images: &mut Images, url: &str, now: u64) -> Option<gpui::ImageSource> {
+    let (w, h) = *images.latest.get(url)?;
+    match images.sized.get_mut(&(url.to_string(), w, h)) {
+        Some(Sized::Ready(i, used)) => {
+            *used = now;
+            Some(gpui::ImageSource::Render(i.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Advance the frame counter and, when over budget, drop the least recently
+/// drawn images and release their GPU textures. Called once per frame by the
+/// root view, before anything is drawn.
+pub fn evict(window: &mut Window, cx: &mut App) {
+    let now = FRAME.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+    let keep_after = now.saturating_sub(KEEP_FRAMES + 1);
+    let g = cx.global_mut::<Images>();
+    let mut dropped: Vec<Arc<RenderImage>> = std::mem::take(&mut g.to_drop);
+    if g.decoded_bytes > decoded_budget() {
+        let mut old: Vec<((String, u32, u32), u64)> = g
+            .sized
+            .iter()
+            .filter_map(|(k, v)| match v {
+                Sized::Ready(_, used) if *used < keep_after => Some((k.clone(), *used)),
+                _ => None,
+            })
+            .collect();
+        old.sort_by_key(|(_, used)| *used);
+        for (k, _) in old {
+            if g.decoded_bytes <= decoded_budget() * 9 / 10 {
+                break;
+            }
+            if let Some(Sized::Ready(img, _)) = g.sized.remove(&k) {
+                g.decoded_bytes -= render_bytes(&img);
+                if g.latest.get(&k.0) == Some(&(k.1, k.2)) {
+                    g.latest.remove(&k.0);
+                }
+                dropped.push(img);
+            }
+        }
+        let stale: Vec<String> = g.blurs.iter().filter(|(_, (_, used))| *used < keep_after).map(|(k, _)| k.clone()).collect();
+        for k in stale {
+            if g.decoded_bytes <= decoded_budget() * 9 / 10 {
+                break;
+            }
+            if let Some((img, _)) = g.blurs.remove(&k) {
+                g.decoded_bytes -= render_bytes(&img);
+                g.derive_pending.remove(&format!("blur|{k}"));
+                dropped.push(img);
+            }
+        }
+    }
+    if g.encoded_bytes > ENCODED_BUDGET {
+        let mut old: Vec<(String, u64)> = g
+            .map
+            .iter()
+            .filter_map(|(k, v)| match v {
+                Slot::Ready(_, used) if *used < keep_after => Some((k.clone(), *used)),
+                _ => None,
+            })
+            .collect();
+        old.sort_by_key(|(_, used)| *used);
+        for (k, _) in old {
+            if g.encoded_bytes <= ENCODED_BUDGET * 9 / 10 {
+                break;
+            }
+            if let Some(Slot::Ready(img, _)) = g.map.remove(&k) {
+                g.encoded_bytes -= img.bytes.len();
+            }
+        }
+    }
+    let released = dropped.len();
+    for img in dropped {
+        cx.drop_image(img, Some(window));
+    }
+    log_usage(cx, released);
+}
+
+/// `TIDE_PERF=1`: every 5 s, log what the image caches hold.
+fn log_usage(cx: &App, released: usize) {
+    use std::cell::Cell;
+    thread_local!(static LAST: Cell<Option<std::time::Instant>> = const { Cell::new(None) });
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("TIDE_PERF").is_some()) {
+        return;
+    }
+    if LAST.with(|l| l.get().is_some_and(|t| t.elapsed().as_secs() < 5)) && released == 0 {
+        return;
+    }
+    LAST.with(|l| l.set(Some(std::time::Instant::now())));
+    let g = cx.global::<Images>();
+    let frames: usize = g.frames.iter().map(|(_, f)| f.iter().map(|r| render_bytes(r)).sum::<usize>()).sum();
+    let mb = |b: usize| b as f64 / 1048576.0;
+    log::info!(
+        "images: decoded {:.1} MB ({} sizes, {} blurs), encoded {:.1} MB ({} files), frames {:.1} MB ({} covers), released {released}",
+        mb(g.decoded_bytes),
+        g.sized.len(),
+        g.blurs.len(),
+        mb(g.encoded_bytes),
+        g.map.len(),
+        mb(frames),
+        g.frames.len()
+    );
+}
+
+/// Decode for drawing at `w` x `h` device pixels: a high-quality downscale
+/// (Lanczos3, cropped to fill) when the source is meaningfully larger,
+/// otherwise the source as is (the GPU scales it up smoothly). Delivered
+/// already decoded (BGRA), so swapping it in never blanks a frame.
+fn resample(bytes: &[u8], w: u32, h: u32) -> Option<RenderImage> {
     let src = image::load_from_memory(bytes).ok()?;
     if (src.width() as f32) < w as f32 * 1.15 && (src.height() as f32) < h as f32 * 1.15 {
-        return None;
+        return Some(to_render(src.to_rgba8()));
     }
-    let mut small = src.resize_to_fill(w, h, image::imageops::FilterType::Lanczos3).to_rgba8();
-    for p in small.pixels_mut() {
-        p.0.swap(0, 2);
-    }
-    Some(gpui::RenderImage::new(vec![image::Frame::new(small)]))
+    Some(to_render(src.resize_to_fill(w, h, image::imageops::FilterType::Lanczos3).to_rgba8()))
 }
 
 /// Dominant colour of a loaded cover (None until the image has loaded).
@@ -399,33 +610,29 @@ fn palette_of(bytes: &[u8]) -> Option<Vec<Rgba>> {
 /// (28 px at its size) and saturated 1.3, blown up to twice the screen's larger side
 /// and turned about its centre. Returns the frames once they exist; starts making
 /// them otherwise. The caller picks the frame for the current angle.
-pub fn frames(url: &str, cx: &mut App) -> Option<Arc<Vec<Arc<Image>>>> {
+pub fn frames(url: &str, cx: &mut App) -> Option<Arc<Vec<Arc<RenderImage>>>> {
     let images = cx.global::<Images>();
     if let Some((_, f)) = images.frames.iter().find(|(u, _)| u == url) {
         return Some(f.clone());
     }
-    if images.frames_pending.contains(url) {
+    if images.frames_requested.contains(url) {
         return None;
     }
-    // The cover itself has to be on disk first.
-    let path = file_for(&images.dir, url);
-    if !path.exists() {
-        let _ = get(url, cx);
-        return None;
-    }
-    cx.global_mut::<Images>().frames_pending.insert(url.to_string());
+    let original = get(url, cx)?;
+    cx.global_mut::<Images>().frames_requested.insert(url.to_string());
     let url = url.to_string();
     cx.spawn(async move |cx| {
-        let p = path.clone();
-        let pngs = cx.background_executor().spawn(async move { std::fs::read(&p).ok().and_then(|b| rotated_pngs(&b)) }).await;
+        let made = cx.background_executor().spawn(async move { rotated_frames(&original.bytes) }).await;
         let _ = cx.update(|cx| {
             let g = cx.global_mut::<Images>();
-            g.frames_pending.remove(&url);
-            if let Some(list) = pngs {
-                let imgs: Vec<Arc<Image>> = list.into_iter().map(|b| Arc::new(Image::from_bytes(ImageFormat::Png, b))).collect();
+            if let Some(list) = made {
+                g.frames_requested.remove(&url);
+                let imgs: Vec<Arc<RenderImage>> = list.into_iter().map(Arc::new).collect();
                 g.frames.push((url, Arc::new(imgs)));
+                // Keep the playing cover and the previous one; release the rest.
                 while g.frames.len() > 2 {
-                    g.frames.remove(0);
+                    let (_, old) = g.frames.remove(0);
+                    g.to_drop.extend(old.iter().cloned());
                 }
             }
             cx.refresh_windows();
@@ -435,12 +642,13 @@ pub fn frames(url: &str, cx: &mut App) -> Option<Arc<Vec<Arc<Image>>>> {
     None
 }
 
-pub const FRAME_STEP_DEG: f32 = 2.0;
-const FRAME_COUNT: usize = 180;
+// The backdrop interpolates between samples, so a larger step still moves continuously.
+const FRAME_COUNT: usize = 48;
+pub const FRAME_STEP_DEG: f32 = 360. / FRAME_COUNT as f32;
 
-fn rotated_pngs(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
+fn rotated_frames(bytes: &[u8]) -> Option<Vec<RenderImage>> {
     const SRC: u32 = 128;
-    const OUT: u32 = 192;
+    const OUT: u32 = 128;
     // The official image is 40vmax x 4 x 1.26 = about twice the larger side of the window.
     const SIDE: f32 = 2.4;
     let small = image::load_from_memory(bytes).ok()?.thumbnail(SRC, SRC).to_rgba8();
@@ -454,8 +662,8 @@ fn rotated_pngs(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
     }
     let (w, h) = (src.width() as f32, src.height() as f32);
     let sample = |x: f32, y: f32| -> [f32; 3] {
-        let x = (x * w - 0.5).clamp(0.0, w - 1.001);
-        let y = (y * h - 0.5).clamp(0.0, h - 1.001);
+        let x = (x * w - 0.5).clamp(0.0, w - 1.0);
+        let y = (y * h - 0.5).clamp(0.0, h - 1.0);
         let (x0, y0) = (x.floor() as u32, y.floor() as u32);
         let (fx, fy) = (x - x0 as f32, y - y0 as f32);
         let px = |xx: u32, yy: u32| src.get_pixel(xx.min(src.width() - 1), yy.min(src.height() - 1)).0;
@@ -480,33 +688,33 @@ fn rotated_pngs(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
                 let (rx, ry) = (x * cos + y * sin, -x * sin + y * cos);
                 let c = sample(rx / SIDE + 0.5, ry / SIDE + 0.5);
                 // Tiny noise (dithering) so the slow gradients show no banding or blocks.
-                let n = ((ix.wrapping_mul(73856093) ^ iy.wrapping_mul(19349663) ^ (k as u32).wrapping_mul(83492791)) % 1000) as f32
-                    / 1000.0
-                    - 0.5;
+                let n = ((ix.wrapping_mul(73856093) ^ iy.wrapping_mul(19349663)) % 1000) as f32 / 1000.0 - 0.5;
                 let q = |v: f32| (v + n * 2.2).clamp(0.0, 255.0) as u8;
-                buf.put_pixel(ix, iy, image::Rgba([q(c[0]), q(c[1]), q(c[2]), 255]));
+                // Written straight in GPUI's BGRA order: no PNG round trip.
+                buf.put_pixel(ix, iy, image::Rgba([q(c[2]), q(c[1]), q(c[0]), 255]));
             }
         }
-        let mut out = Vec::new();
-        image::DynamicImage::ImageRgba8(buf).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
-        frames.push(out);
+        frames.push(RenderImage::new(vec![image::Frame::new(buf)]));
     }
     Some(frames)
 }
 
 /// The cover as the official app paints Now Playing: blur(28px) saturate(1.3).
 /// Computed on a tiny thumbnail; the GPU upscales it smoothly.
-pub fn blurred(url: &str, cx: &mut App) -> Option<Arc<Image>> {
-    if let Some(i) = cx.global::<Images>().blurs.get(url) {
+pub fn blurred(url: &str, cx: &mut App) -> Option<Arc<RenderImage>> {
+    let now = frame();
+    if let Some((i, used)) = cx.global_mut::<Images>().blurs.get_mut(url) {
+        *used = now;
         return Some(i.clone());
     }
-    derive(url, "blur", cx, blurred_png, |im, url, png| {
-        im.blurs.insert(url, Arc::new(Image::from_bytes(ImageFormat::Png, png)));
+    derive(url, "blur", cx, blurred_image, |im, url, img| {
+        im.decoded_bytes += render_bytes(&img);
+        im.blurs.insert(url, (Arc::new(img), frame()));
     });
     None
 }
 
-fn blurred_png(bytes: &[u8]) -> Option<Vec<u8>> {
+fn blurred_image(bytes: &[u8]) -> Option<RenderImage> {
     let small = image::load_from_memory(bytes).ok()?.thumbnail(56, 56).to_rgba8();
     let mut blurred = image::imageops::blur(&small, 3.5);
     for p in blurred.pixels_mut() {
@@ -516,9 +724,7 @@ fn blurred_png(bytes: &[u8]) -> Option<Vec<u8>> {
         let sat = |c: f32| (lum + (c - lum) * 1.3).clamp(0.0, 255.0) as u8;
         p.0 = [sat(rf), sat(gf), sat(bf), a];
     }
-    let mut out = Vec::new();
-    image::DynamicImage::ImageRgba8(blurred).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
-    Some(out)
+    Some(to_render(blurred))
 }
 
 /// A vivid "average" colour: saturated pixels weigh more than greys, so a
@@ -561,6 +767,15 @@ pub fn logo() -> Arc<Image> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn backdrop_handles_tiny_artwork_within_its_budget() {
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 64).write_to(&mut encoded, image::ImageFormat::Png).unwrap();
+        let frames = super::rotated_frames(encoded.get_ref()).unwrap();
+        assert_eq!(frames.len(), 48);
+        assert_eq!(frames.iter().map(super::render_bytes).sum::<usize>(), 3 * 1024 * 1024);
+    }
+
     #[test]
     fn prune_removes_oldest_first() {
         let dir = std::env::temp_dir().join(format!("tide-prune-{}", std::process::id()));

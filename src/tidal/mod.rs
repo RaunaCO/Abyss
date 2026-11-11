@@ -3,6 +3,7 @@
 pub mod dash;
 pub mod lyrics;
 pub mod models;
+pub mod probe;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -63,7 +64,7 @@ pub struct Tidal {
 impl Tidal {
     pub fn new(settings: Arc<Mutex<Settings>>) -> Self {
         let http = Client::builder()
-            .user_agent(concat!("TIDE/", env!("CARGO_PKG_VERSION"), " (https://github.com/RaunaCO/TIDE)"))
+            .user_agent(concat!("Abyss/", env!("CARGO_PKG_VERSION"), " (https://github.com/RaunaCO/TIDE)"))
             .gzip(true)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
@@ -71,6 +72,11 @@ impl Tidal {
             .build()
             .expect("http client");
         Self { http, settings, refresh_lock: Arc::new(Mutex::new(())) }
+    }
+
+    /// Clone the TIDAL client for a background job and its nested/paged calls.
+    pub fn request_snapshot(&self) -> Self {
+        self.clone()
     }
 
     pub fn http(&self) -> &Client {
@@ -103,8 +109,6 @@ impl Tidal {
         })
     }
 
-    /// Web login: open `url`, the user signs in and pastes back the address
-    /// TIDAL redirects to (it carries the authorization code).
     pub fn start_pkce_login(&self) -> PkceLogin {
         use rand::RngCore;
         use sha2::Digest;
@@ -141,7 +145,7 @@ impl Tidal {
             .ok()
             .and_then(|u| u.query_pairs().find(|(k, _)| k == "code").map(|(_, v)| v.into_owned()))
             .or_else(|| (!pasted.is_empty() && !pasted.contains(' ') && !pasted.contains('/')).then(|| pasted.to_string()))
-            .ok_or_else(|| anyhow!("no encuentro el código en esa dirección; copia la URL completa de la barra del navegador"))?;
+            .ok_or_else(|| anyhow!(crate::i18n::t("login.missing_code")))?;
         let resp = self
             .http
             .post(format!("{AUTH_URL}/token"))
@@ -159,7 +163,7 @@ impl Tidal {
         let v: Value = resp.json().unwrap_or(Value::Null);
         if !status.is_success() {
             let msg = v.get("error_description").or_else(|| v.get("error")).and_then(Value::as_str).unwrap_or("");
-            bail!("TIDAL rechazó el inicio de sesión ({status}) {msg}");
+            bail!(crate::i18n::text("tidal_rejected_sign_in", &[format!("{}", status), msg.to_string()]));
         }
         {
             let mut s = self.settings.lock();
@@ -169,11 +173,6 @@ impl Tidal {
         self.store_tokens(&v);
         self.load_session()?;
         Ok(())
-    }
-
-    /// Whether the session gets FLAC for every track (web login).
-    pub fn full_lossless(&self) -> bool {
-        self.settings.lock().client_id == PKCE_CLIENT_ID
     }
 
     pub fn poll_device_login(&self, code: &DeviceCode) -> Result<PollResult> {
@@ -203,8 +202,8 @@ impl Tidal {
         }
         match v.get("error").and_then(Value::as_str) {
             Some("authorization_pending") | Some("slow_down") => Ok(PollResult::Pending),
-            Some(e) => bail!("login failed: {e}"),
-            None => bail!("login failed ({status})"),
+            Some(e) => bail!(crate::i18n::text("sign_in_failed", &[e.to_string()])),
+            None => bail!(crate::i18n::text("login.failed_status", &[format!("{}", status)])),
         }
     }
 
@@ -236,7 +235,7 @@ impl Tidal {
             let s = self.settings.lock();
             (s.client_id.clone(), s.client_secret.clone(), s.refresh_token.clone())
         };
-        let refresh = refresh.ok_or_else(|| anyhow!("not signed in"))?;
+        let refresh = refresh.ok_or_else(|| anyhow!(crate::i18n::t("not_signed_in")))?;
         let v: Value = self
             .http
             .post(format!("{AUTH_URL}/token"))
@@ -249,7 +248,7 @@ impl Tidal {
             ])
             .send()?
             .error_for_status()
-            .context("refreshing session")?
+            .context(crate::i18n::t("session.refreshing"))?
             .json()?;
         self.store_tokens(&v);
         Ok(())
@@ -264,7 +263,7 @@ impl Tidal {
                 self.refresh()?;
             }
         }
-        self.settings.lock().access_token.clone().ok_or_else(|| anyhow!("not signed in"))
+        self.settings.lock().access_token.clone().ok_or_else(|| anyhow!(crate::i18n::t("not_signed_in")))
     }
 
     /// The server rejected `used`: refresh, unless another thread already did.
@@ -298,6 +297,7 @@ impl Tidal {
                     s.username = Some(name);
                 }
                 s.user_picture = u.get("picture").and_then(Value::as_str).map(str::to_string);
+                s.user_email = u.get("email").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_string);
             }
         }
         self.settings.lock().save();
@@ -311,11 +311,12 @@ impl Tidal {
         s.user_id = None;
         s.username = None;
         s.user_picture = None;
+        s.user_email = None;
         s.save();
     }
 
     fn user_id(&self) -> Result<u64> {
-        self.settings.lock().user_id.ok_or_else(|| anyhow!("not signed in"))
+        self.settings.lock().user_id.ok_or_else(|| anyhow!(crate::i18n::t("not_signed_in")))
     }
 
     fn country(&self) -> String {
@@ -334,7 +335,7 @@ impl Tidal {
         loop {
             attempt += 1;
             let token = self.token()?;
-            let resp = build(&token).send().context("network error")?;
+            let resp = build(&token).send().context(crate::i18n::t("network_error"))?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt == 1 {
                 // Token revoked or expired early: refresh once and retry.
@@ -352,12 +353,12 @@ impl Tidal {
                     .ok()
                     .and_then(|v| v.get("userMessage").or_else(|| v.get("description")).and_then(Value::as_str).map(str::to_string))
                     .unwrap_or_else(|| text.chars().take(200).collect());
-                bail!("TIDAL {status}: {msg}");
+                bail!(crate::i18n::text("service.response_error", &[status.to_string(), msg.to_string()]));
             }
             if text.trim().is_empty() {
                 return Ok((Value::Null, etag));
             }
-            return Ok((serde_json::from_str(&text).context("invalid JSON from TIDAL")?, etag));
+            return Ok((serde_json::from_str(&text).context(crate::i18n::t("invalid_json_from_tidal"))?, etag));
         }
     }
 
@@ -437,7 +438,7 @@ impl Tidal {
     }
 
     pub fn album(&self, id: u64) -> Result<(Album, Vec<Track>)> {
-        let album = Album::parse(&self.get(&format!("/albums/{id}"), &[])?).ok_or_else(|| anyhow!("album not found"))?;
+        let album = Album::parse(&self.get(&format!("/albums/{id}"), &[])?).ok_or_else(|| anyhow!(crate::i18n::t("album_not_found")))?;
         let items = self.paged(&format!("/albums/{id}/items"), &[], 1000)?;
         let tracks = items
             .iter()
@@ -448,15 +449,22 @@ impl Tidal {
     }
 
     pub fn playlist(&self, uuid: &str) -> Result<(Playlist, Vec<Track>)> {
-        let pl = Playlist::parse(&self.get(&format!("/playlists/{uuid}"), &[])?).ok_or_else(|| anyhow!("playlist not found"))?;
+        let pl =
+            Playlist::parse(&self.get(&format!("/playlists/{uuid}"), &[])?).ok_or_else(|| anyhow!(crate::i18n::t("playlist_not_found")))?;
         // `/tracks` (unlike `/items`) carries the date each track was added.
         let items = self.paged(&format!("/playlists/{uuid}/tracks"), &[], 5000)?;
         let tracks = items.iter().filter_map(|i| Track::parse(i).map(|t| t.with_added(i))).collect();
         Ok((pl, tracks))
     }
 
+    /// Just the artist (name and picture): one request.
+    pub fn artist_basic(&self, id: u64) -> Result<Artist> {
+        Artist::parse(&self.get(&format!("/artists/{id}"), &[])?).ok_or_else(|| anyhow!(crate::i18n::t("artist_not_found")))
+    }
+
     pub fn artist(&self, id: u64) -> Result<ArtistPage> {
-        let artist = Artist::parse(&self.get(&format!("/artists/{id}"), &[])?).ok_or_else(|| anyhow!("artist not found"))?;
+        let artist =
+            Artist::parse(&self.get(&format!("/artists/{id}"), &[])?).ok_or_else(|| anyhow!(crate::i18n::t("artist_not_found")))?;
         let top = self
             .get(&format!("/artists/{id}/toptracks"), &[("limit", "10".into())])?
             .get("items")
@@ -774,7 +782,7 @@ impl Tidal {
         let cc = self.country();
         let url = format!("{API_URL}/playlists/{uuid}");
         let (_, etag) = self.send_full(|token| self.http.get(&url).bearer_auth(token).query(&[("countryCode", cc.as_str())]))?;
-        etag.ok_or_else(|| anyhow!("TIDAL did not return a playlist version"))
+        etag.ok_or_else(|| anyhow!(crate::i18n::t("tidal_did_not_return_a_playlist_version")))
     }
 
     /// Send a write to a playlist with its current version (If-None-Match).
@@ -796,7 +804,7 @@ impl Tidal {
         let uid = self.user_id()?;
         let v =
             self.post_form(&format!("/users/{uid}/playlists"), &[("title", title.to_string()), ("description", description.to_string())])?;
-        Playlist::parse(&v).ok_or_else(|| anyhow!("TIDAL did not return the new playlist"))
+        Playlist::parse(&v).ok_or_else(|| anyhow!(crate::i18n::t("tidal_did_not_return_the_new_playlist")))
     }
 
     pub fn edit_playlist(&self, uuid: &str, title: &str, description: &str) -> Result<()> {
@@ -871,7 +879,21 @@ impl Tidal {
     }
 
     pub fn lyrics(&self, track_id: u64) -> Result<Lyrics> {
-        let v = self.get(&format!("/tracks/{track_id}/lyrics"), &[])?;
+        // Lyrics has one strict provider budget, without generic retry/refresh
+        // loops. Other authenticated requests keep the normal refresh behavior.
+        let (token, country) = {
+            let s = self.settings.lock();
+            (s.access_token.clone().ok_or_else(|| anyhow!(crate::i18n::t("not_signed_in")))?, s.country_code.clone())
+        };
+        let v: Value = self
+            .http
+            .get(format!("{API_URL}/tracks/{track_id}/lyrics"))
+            .bearer_auth(token)
+            .query(&[("countryCode", country.as_str())])
+            .timeout(Duration::from_secs(8))
+            .send()?
+            .error_for_status()?
+            .json()?;
         let synced = v.get("subtitles").and_then(Value::as_str).map(parse_lrc).unwrap_or_default();
         Ok(Lyrics {
             roman: Vec::new(),
@@ -879,6 +901,12 @@ impl Tidal {
             synced,
             provider: v.get("lyricsProvider").and_then(Value::as_str).unwrap_or("").to_string(),
         })
+    }
+
+    /// One track by id.
+    pub fn track(&self, track_id: u64) -> Result<Track> {
+        Track::parse(&self.get(&format!("/tracks/{track_id}"), &[])?)
+            .ok_or_else(|| anyhow!(crate::i18n::text("track_not_found", &[format!("{}", track_id)])))
     }
 
     pub fn track_radio(&self, track_id: u64) -> Result<Vec<Track>> {
@@ -891,10 +919,18 @@ impl Tidal {
     /// Resolve the audio stream for a track in the best quality allowed by
     /// `quality`. Hi-res comes as DASH, which the player handles natively.
     pub fn stream(&self, track_id: u64, quality: Quality) -> Result<StreamInfo> {
-        let mut last = anyhow!("no stream available");
+        let mut last = anyhow!(crate::i18n::t("no_stream_available"));
         for q in quality.api_values() {
             match self.stream_at(track_id, q) {
-                Ok(info) => return Ok(info),
+                Ok(mut info) => {
+                    // Same tier again when the signed links expire, so the
+                    // segment layout stays identical.
+                    let (t, q) = (self.clone(), q.to_string());
+                    info.renew = Some(Renewer(std::sync::Arc::new(move || {
+                        t.stream_at(track_id, &q).map(|i| i.source).map_err(|e| format!("{e:#}"))
+                    })));
+                    return Ok(info);
+                }
                 Err(e) => {
                     log::debug!("{q} unavailable for {track_id}: {e:#}");
                     last = e;
@@ -972,7 +1008,7 @@ impl Tidal {
             &[("audioquality", quality.into()), ("playbackmode", "STREAM".into()), ("assetpresentation", "FULL".into())],
         )?;
         let mime = v.get("manifestMimeType").and_then(Value::as_str).unwrap_or("");
-        let manifest = v.get("manifest").and_then(Value::as_str).ok_or_else(|| anyhow!("no manifest"))?;
+        let manifest = v.get("manifest").and_then(Value::as_str).ok_or_else(|| anyhow!(crate::i18n::t("no_manifest")))?;
         let manifest = String::from_utf8(base64::engine::general_purpose::STANDARD.decode(manifest)?)?;
         let audio_quality = v.get("audioQuality").and_then(Value::as_str).unwrap_or(quality).to_string();
         let bit_depth = v.get("bitDepth").and_then(Value::as_u64).map(|x| x as u32);
@@ -991,12 +1027,13 @@ impl Tidal {
                 sample_rate: sample_rate.or(mpd.sample_rate),
                 replay_gain,
                 peak,
+                renew: None,
             });
         }
-        let m: Value = serde_json::from_str(&manifest).context("parsing BTS manifest")?;
+        let m: Value = serde_json::from_str(&manifest).context(crate::i18n::t("parsing_bts_manifest"))?;
         if let Some(enc) = m.get("encryptionType").and_then(Value::as_str) {
             if enc != "NONE" {
-                bail!("encrypted stream ({enc}) is not supported");
+                bail!(crate::i18n::text("encrypted_stream_is_unsupported", &[enc.to_string()]));
             }
         }
         let url = m
@@ -1004,10 +1041,10 @@ impl Tidal {
             .and_then(Value::as_array)
             .and_then(|u| u.first())
             .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("no URL in manifest"))?
+            .ok_or_else(|| anyhow!(crate::i18n::t("no_url_in_manifest")))?
             .to_string();
         if !url.starts_with("https://") {
-            bail!("stream URL is not HTTPS");
+            bail!(crate::i18n::t("stream_url_is_not_https"));
         }
         let codec = m.get("codecs").and_then(Value::as_str).unwrap_or("flac").to_string();
         Ok(StreamInfo {
@@ -1019,6 +1056,7 @@ impl Tidal {
             sample_rate,
             replay_gain,
             peak,
+            renew: None,
         })
     }
 }
@@ -1046,15 +1084,33 @@ pub struct Lyrics {
 }
 
 fn parse_lrc(text: &str) -> Vec<(f64, String)> {
-    text.lines()
-        .filter_map(|l| {
-            let rest = l.trim().strip_prefix('[')?;
-            let (stamp, line) = rest.split_once(']')?;
-            let (m, sec) = stamp.split_once(':')?;
-            let t = m.parse::<f64>().ok()? * 60.0 + sec.parse::<f64>().ok()?;
-            Some((t, line.trim().to_string()))
-        })
-        .collect()
+    let offset = text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("[offset:")?.split_once(']')?.0.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+        .next_back()
+        .unwrap_or(0.)
+        / 1000.;
+    let mut out = Vec::new();
+    for line in text.trim_start_matches('\u{feff}').lines() {
+        let mut rest = line.trim();
+        let mut stamps = Vec::new();
+        while let Some(after) = rest.strip_prefix('[') {
+            let Some((stamp, after)) = after.split_once(']') else { break };
+            let Some((m, sec)) = stamp.split_once(':') else { break };
+            let Some((m, sec)) = m.parse::<u32>().ok().zip(sec.parse::<f64>().ok()) else { break };
+            if !sec.is_finite() || !(0.0..60.0).contains(&sec) {
+                break;
+            }
+            stamps.push((m as f64 * 60. + sec + offset).max(0.));
+            rest = after;
+        }
+        for at in stamps {
+            out.push((at, rest.trim().to_string()));
+        }
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
 }
 
 /// Strip TIDAL's `[wimpLink ...]text[/wimpLink]` markup from bios.

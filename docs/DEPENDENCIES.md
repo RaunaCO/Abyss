@@ -1,6 +1,6 @@
 # Dependencies and licences
 
-TIDE's own code is MIT ([LICENSE](../LICENSE)). The table lists the direct
+Abyss's own code is MIT ([LICENSE](../LICENSE)). The table lists the direct
 dependencies. The summary below covers the full graph compiled for
 `x86_64-pc-windows-msvc`: 565 crates, from `cargo metadata`, 2026-11-07.
 
@@ -11,8 +11,11 @@ dependencies. The summary below covers the full graph compiled for
 | `gpui` 0.2 | UI framework (Zed) | Apache-2.0 |
 | `reqwest` 0.12 (rustls, gzip, blocking, json) | HTTP | MIT OR Apache-2.0 |
 | `serde`, `serde_json` | Settings and API JSON | MIT OR Apache-2.0 |
+| `rusqlite` with bundled SQLite | Local Replay history and ratings | MIT (Rust bindings), public domain (SQLite) |
 | `roxmltree` | DASH manifests | MIT OR Apache-2.0 |
 | `symphonia` 0.5 (flac, isomp4, aac, mp3, wav, pcm) | Decoding | **MPL-2.0** |
+| `lofty` 0.25.5 (vendored, with `lofty_attr` and `ogg_pager`) | Local metadata and embedded lyrics | MIT OR Apache-2.0 |
+| `tempfile` | Transactional sibling files and one-time backups | MIT OR Apache-2.0 |
 | `rubato` | Sinc resampling | MIT |
 | `cpal` | Shared-mode audio output | Apache-2.0 |
 | `wasapi` (Windows) | Exclusive-mode output | MIT |
@@ -26,6 +29,10 @@ dependencies. The summary below covers the full graph compiled for
 | `embed-resource` (build) | Windows icon resource | MIT |
 
 ## Licences across the graph
+
+`base64` is required by TIDAL manifests, PKCE and encrypted token storage.
+Tokio remains transitive through HTTP and UI dependencies; it is not a direct
+application dependency. The lockfile was refreshed offline for 0.10.1.
 
 | Licence | Crates |
 | --- | --- |
@@ -53,8 +60,8 @@ cargo metadata --format-version 1 --filter-platform x86_64-pc-windows-msvc
 | --- | --- |
 | `assets/fonts/Inter-*.ttf` | SIL Open Font License 1.1 (`assets/fonts/Inter-LICENSE.txt`) |
 | IPADIC dictionary (inside the binary) | NAIST / ICOT terms (`assets/licenses/IPADIC-COPYING.txt`) |
-| Icons (`src/ui/icons.rs`) | Material Design icon paths, Apache-2.0 |
-| `assets/logo.png`, `assets/icon.ico` | Original TIDE artwork (MIT, with the project) |
+| Icons (`src/ui/icons.rs`) | Original Abyss icon family (MIT, with the project) since 0.9.1 |
+| `assets/logo.png`, `assets/icon.ico` | Original Abyss artwork (MIT, with the project) |
 
 ## Obligations when distributing binaries
 
@@ -81,3 +88,6 @@ A generated `THIRD_PARTY_NOTICES` file (e.g. with `cargo about`) covering items
   MD5 hash.
 - `souvlaki` is built with `use_zbus`. That only matters on Linux; the
   `zbus`/`zvariant` advisories do not apply to Windows builds.
+
+
+See its `PATCH.md` for the small host-process safety patch and regression test.

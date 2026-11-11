@@ -3,7 +3,7 @@
 ```mermaid
 flowchart LR
     M[playbackinfo manifest] -->|DASH MPD or JSON| SRC
-    SRC[Downloader<br/>stream.rs<br/>4 parallel segment fetches] --> BUF[(in-memory Buffer)]
+    SRC[Downloader<br/>stream.rs<br/>4 parallel segment fetches] --> BUF[(SegmentWindow<br/>init + 2 behind + 15 ahead)]
     BUF --> R[Reader<br/>blocking, seekable]
     R --> DEC[symphonia<br/>FLAC / MP4-AAC]
     DEC -->|f32| RS{device rate ==<br/>track rate?}
@@ -19,7 +19,7 @@ flowchart LR
 | Stage | Code | Notes |
 | --- | --- | --- |
 | Resolve | `tidal::stream` / `stream_at` | Tries `HI_RES_LOSSLESS → LOSSLESS → HIGH` for *Max*, fewer for lower tiers. Encrypted streams are refused. |
-| Download | `audio/stream.rs` | Single file: one progressive request. DASH: init segment, then media segments over 4 parallel connections, appended in order. Retries 3× with back-off. The whole track is kept **in memory** (no disk cache). |
+| Download | `audio/stream.rs` | DASH (every quality TIDAL serves this client, AAC included): init segment, then media segments over at most 4 parallel connections, appended in order into a **`SegmentWindow`**: the init segment is kept, segments the decoder has passed are dropped (2 kept behind), and downloads wait while they are 15 segments (~60 s) ahead, 30 (~2 min) once a segment arrives slower than twice real time. Network errors are retried for about 2 minutes (delay growing to ~5 s) while the player shows buffering; 4xx server errors other than expiry fail after 3 attempts. 401/403/410 (expired signed links, ~1 h) renew the manifest for the same quality and continue at the same segment. A segment needed again after it was dropped is fetched back. Single progressive files are kept whole, allocated once from Content-Length. Nothing is written to disk. |
 | Decode | `audio/decode.rs` | symphonia (`flac`, `isomp4`, `aac`, `mp3`, `wav`, `pcm`). Samples become interleaved `f32`. |
 | Seek | `audio::do_seek` | For DASH, the download restarts at the target segment, so seeking far ahead does not wait for the bytes in between. Otherwise symphonia seeks inside the buffer. `--probe` measured a seek to 150 s at 91 ms (debug build, 2026-11-07). |
 | Resample | `decode::Resampler2` | rubato `SincFixedIn` (sinc length 256, oversampling 256, cubic interpolation, Blackman-Harris² window). Its delay is trimmed so tracks start sample-accurately. Used **only** when the output rate differs from the track rate. |
@@ -51,7 +51,7 @@ different rates, as in any bit-perfect player.
 
 This is the design intent. It has **not** been verified with a digital
 loopback capture: that is a recommended test before claiming bit-perfect
-output publicly. If the device refuses the format, TIDE falls back to
+output publicly. If the device refuses the format, Abyss falls back to
 resampling or to shared mode and shows the actual format in the player's
 quality label.
 
@@ -66,10 +66,13 @@ What TIDAL returns depends on the OAuth client of the session (see
 
 ## Known limitations
 
-- **Memory:** a whole track is buffered in RAM. A 10-minute 24-bit/192 kHz FLAC
-  takes on the order of 200–300 MB while it plays (the previous and next track
-  can overlap during gapless hand-over). A bounded window over the buffer
-  would fix this but needs changes to `Reader` seeking. Not done.
+- **Network:** about 60 s (2 min on slow links) is buffered ahead and a
+  segment is retried for about 2 minutes, so an outage of roughly 3 minutes
+  stops the track with an error. The 0.1 design survived longer outages
+  because the whole track was downloaded in the first minute.
+- **Gapless** is implemented (next track queued when the current one has
+  finished downloading, i.e. ~60 s before its end) and works in testing, but
+  has not been verified by ear or with a sample-accurate capture.
 - Output backends other than Windows (cpal on Linux/macOS compiles, untested).
 - No parametric EQ or crossfade.
 

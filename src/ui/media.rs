@@ -42,7 +42,7 @@ impl Media {
             let _ = window;
             None
         };
-        let config = PlatformConfig { dbus_name: "tide", display_name: "TIDE", hwnd };
+        let config = PlatformConfig { dbus_name: "abyss", display_name: crate::i18n::t("app.name"), hwnd };
         let mut controls = match MediaControls::new(config) {
             Ok(c) => c,
             Err(e) => {

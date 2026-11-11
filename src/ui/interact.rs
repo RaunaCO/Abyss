@@ -20,10 +20,10 @@ use gpui::{prelude::*, Context, MouseButton, SharedString, Stateful};
 use super::AppView;
 
 /// Durations (s): entering is quick, leaving a little slower (feels softer).
-const HOVER_IN: f32 = 0.18;
-const HOVER_OUT: f32 = 0.32;
-const PRESS_IN: f32 = 0.07;
-const PRESS_OUT: f32 = 0.34;
+const HOVER_IN: f32 = super::motion::FAST.as_secs_f32();
+const HOVER_OUT: f32 = super::motion::CONTROL.as_secs_f32();
+const PRESS_IN: f32 = super::motion::PRESS.as_secs_f32();
+const PRESS_OUT: f32 = super::motion::CONTROL.as_secs_f32();
 
 #[derive(Clone, Copy)]
 struct Anim {
@@ -35,7 +35,7 @@ struct Anim {
 
 impl Anim {
     fn t(&self) -> f32 {
-        if self.dur <= 0.0 {
+        if self.dur <= 0.0 || super::motion::reduced_motion() {
             return 1.0;
         }
         (self.at.elapsed().as_secs_f32() / self.dur).clamp(0.0, 1.0)
@@ -43,7 +43,7 @@ impl Anim {
     fn value(&self) -> f32 {
         let t = self.t();
         // Smooth start and end (quintic smootherstep): no visible jolt either side.
-        let e = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+        let e = super::motion::ease_out(t);
         self.from + (self.to - self.from) * e
     }
     fn done(&self) -> bool {
@@ -65,9 +65,10 @@ pub fn set(key: &str, target: f32, dur: f32) {
                 let now = a.value();
                 *a = Anim { from: now, to: target, at: Instant::now(), dur };
             }
-            None => {
+            None if target != 0.0 => {
                 m.insert(key.to_string(), Anim { from: 0.0, to: target, at: Instant::now(), dur });
             }
+            None => {}
         }
     })
 }
@@ -91,6 +92,11 @@ pub fn follow(key: &str, target: f32, dur: f32) -> f32 {
                 if (a.to - target).abs() > 1e-4 {
                     let now = a.value();
                     *a = Anim { from: now, to: target, at: Instant::now(), dur };
+                }
+                // Still moving: ask for the next frame here, since this is often
+                // called after the frame's animations were checked.
+                if !a.done() {
+                    super::motion::want_frame("interact");
                 }
                 a.value()
             }
@@ -120,9 +126,9 @@ pub fn animating() -> bool {
     MAP.with(|m| {
         let mut m = m.borrow_mut();
         m.retain(|k, a| !(a.done() && a.to == 0.0 && (k.starts_with("h:") || k.starts_with("p:"))));
-        let busy = m.iter().find(|(_, a)| !a.done()).map(|(k, _)| k.clone());
-        if let Some(k) = &busy {
-            if std::env::var_os("TIDE_PERF").is_some() {
+        let busy = m.iter().find(|(_, a)| !a.done());
+        if let Some((k, _)) = busy {
+            if super::motion::perf_on() {
                 thread_local!(static LAST: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) });
                 LAST.with(|l| {
                     if l.get().is_none_or(|t| t.elapsed().as_secs_f32() > 1.0) {

@@ -1,7 +1,4 @@
-//! Full-window "Now playing", like the official app: a wash of the cover's
-//! colour behind everything, the cover very large on the left, and on the right
-//! the lyrics in big type (or credits / similar tracks) chosen with the tabs in
-//! the top right. The player bar stays underneath, transparent.
+//! Fullscreen playback with artwork and controls beside a tabbed detail panel.
 
 use super::sc;
 use gpui::{canvas, div, prelude::*, px, relative, AnimationExt, AnyElement, Context, FontWeight, SharedString, Window};
@@ -22,10 +19,10 @@ pub enum NpTab {
 impl NpTab {
     fn label(self) -> &'static str {
         match self {
-            NpTab::Queue => "Cola",
-            NpTab::Similar => "Similares",
-            NpTab::Credits => "Créditos",
-            NpTab::Lyrics => "Letra",
+            NpTab::Queue => crate::i18n::t("queue"),
+            NpTab::Similar => crate::i18n::t("similar"),
+            NpTab::Credits => crate::i18n::t("credits"),
+            NpTab::Lyrics => crate::i18n::t("lyrics"),
         }
     }
 }
@@ -33,62 +30,63 @@ impl NpTab {
 /// Human labels for TIDAL credit roles.
 fn role_label(role: &str) -> String {
     match role {
-        "Main Artist" | "MAIN_ARTIST" => "Artista principal".into(),
-        "Featured Artist" | "FEATURED_ARTIST" => "Artista invitado".into(),
-        "Producer" => "Producción".into(),
-        "Composer" => "Composición".into(),
-        "Lyricist" => "Letra".into(),
-        "Songwriter" | "Writer" => "Autoría".into(),
-        "Mixing Engineer" | "Mixer" => "Mezcla".into(),
-        "Mastering Engineer" => "Masterización".into(),
-        "Engineer" | "Recording Engineer" => "Ingeniería de sonido".into(),
-        "Record Label" => "Sello".into(),
-        "Vocals" | "Vocal" => "Voz".into(),
-        "Guitar" => "Guitarra".into(),
-        "Bass" | "Bass Guitar" => "Bajo".into(),
-        "Drums" => "Batería".into(),
-        "Keyboards" => "Teclados".into(),
+        "Main Artist" | "MAIN_ARTIST" => crate::i18n::t("main_artist").into(),
+        "Featured Artist" | "FEATURED_ARTIST" => crate::i18n::t("featured_artist").into(),
+        "Producer" => crate::i18n::t("production").into(),
+        "Composer" => crate::i18n::t("composition").into(),
+        "Lyricist" => crate::i18n::t("lyrics").into(),
+        "Songwriter" | "Writer" => crate::i18n::t("songwriting").into(),
+        "Mixing Engineer" | "Mixer" => crate::i18n::t("mixing").into(),
+        "Mastering Engineer" => crate::i18n::t("mastering").into(),
+        "Engineer" | "Recording Engineer" => crate::i18n::t("sound_engineering").into(),
+        "Record Label" => crate::i18n::t("record_label").into(),
+        "Vocals" | "Vocal" => crate::i18n::t("vocals").into(),
+        "Guitar" => crate::i18n::t("guitar").into(),
+        "Bass" | "Bass Guitar" => crate::i18n::t("bass").into(),
+        "Drums" => crate::i18n::t("drums").into(),
+        "Keyboards" => crate::i18n::t("keyboards").into(),
         other => other.to_string(),
     }
 }
 
 impl AppView {
     pub fn toggle_now_playing(&mut self, cx: &mut Context<Self>) {
-        if self.now.is_none() {
-            return;
-        }
-        let shown = self.now_playing_amount();
-        let opening = !(self.now_playing_open && self.np_anim.map(|(o, _)| o).unwrap_or(true));
-        // Start from where a running animation currently is.
-        let start = std::time::Instant::now()
-            - super::motion::PANEL_ANIM.mul_f32(if opening { shown } else { 1.0 - shown }).min(super::motion::PANEL_ANIM);
-        self.np_anim = Some((opening, start));
-        self.now_playing_open = true;
-        if opening {
+        let opening = !self.np_fullscreen_request.unwrap_or(self.now_playing_open);
+        self.np_fullscreen_request = Some(opening);
+        cx.notify();
+    }
+
+    pub fn toggle_lyrics(&mut self, cx: &mut Context<Self>) {
+        if self.now_playing_open {
+            self.np_tab = NpTab::Lyrics;
             self.load_np_data(cx);
+        } else {
+            self.show_lyrics = !self.show_lyrics;
+            if self.show_lyrics {
+                self.show_queue = false;
+                if let Some(id) = self.now.as_ref().map(|n| n.track.id) {
+                    self.load_lyrics(id, cx);
+                }
+            }
         }
         cx.notify();
     }
 
-    /// Open Now Playing on `tab`, or close it if that tab is already showing.
-    pub fn open_np_tab(&mut self, tab: NpTab, cx: &mut Context<Self>) {
-        let showing = self.now_playing_open && self.np_anim.map(|(o, _)| o).unwrap_or(true) && self.np_tab == tab;
-        self.np_tab = tab;
-        if showing || !self.now_playing_open {
-            self.toggle_now_playing(cx);
-        } else {
-            self.load_np_data(cx);
-            cx.notify();
-        }
-    }
-
     pub fn wants_lyrics(&self) -> bool {
-        self.show_lyrics || (self.now_playing_open && self.np_tab == NpTab::Lyrics)
+        if self.now_playing_open {
+            self.np_tab == NpTab::Lyrics || self.now.as_ref().is_some_and(|n| n.track.local_path.is_some())
+        } else {
+            self.show_lyrics
+        }
     }
 
     /// Fetch what the visible tab needs for the playing track.
     pub fn load_np_data(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.now.as_ref().map(|n| n.track.id) else { return };
+        if self.now.as_ref().is_some_and(|n| n.track.local_path.is_some()) {
+            self.load_lyrics(id, cx);
+            return;
+        }
         match self.np_tab {
             NpTab::Lyrics => self.load_lyrics(id, cx),
             NpTab::Queue => {}
@@ -149,77 +147,102 @@ fn tab_button(tab: NpTab, view: &AppView, cx: &mut Context<AppView>) -> AnyEleme
         .into_any_element()
 }
 
-/// "Cola": docks the play queue beside whichever tab is open, so lyrics and queue
-/// can be seen together.
-fn queue_toggle(view: &AppView, cx: &mut Context<AppView>) -> AnyElement {
-    let active = view.np_queue_side;
-    div()
-        .id("np-queue-toggle")
-        .h(sc(26.))
-        .px(sc(13.))
-        .flex()
-        .items_center()
-        .rounded(sc(13.))
-        .cursor_pointer()
-        .text_size(sc(11.))
-        .font_weight(FontWeight::BOLD)
-        .bg(if active { theme::text() } else { gpui::rgba(0x00000000) })
-        .text_color(if active { theme::bg() } else { gpui::rgba(0xffffffb3) })
-        .hover(|s| if active { s.opacity(0.9) } else { s.text_color(theme::text()) })
-        .active(|s| s.opacity(0.7))
-        .child("Cola")
-        .on_click(cx.listener(|this, _, _, cx| {
-            cx.stop_propagation();
-            this.np_queue_side = !this.np_queue_side;
-            cx.notify();
-        }))
-        .into_any_element()
+/// Space kept left of the lyrics for the glow of the current line.
+const LYRICS_GUTTER: f32 = 36.0;
+
+/// Follow the song: ease the lyrics scroll so `child` sits at `fraction` of the
+/// height. Measured from the laid-out children, so wrapped lines and stanza
+/// gaps are handled. Time-based (tau 140 ms), so it glides the same at any
+/// refresh rate; used both when following and when "Sincronizar" brings the
+/// view back to the current line.
+pub fn follow_lyrics(view: &mut AppView, child: usize, fraction: f32, next: Option<(usize, f32)>) {
+    super::smooth::stop("lyrics");
+    let handle = view.lyrics_scroll.clone();
+    let Some(b) = handle.bounds_for_item(child) else {
+        super::motion::want_frame("lyrics-layout");
+        return;
+    };
+    let vp = handle.bounds();
+    // Child bounds are layout positions, before the scroll offset is applied:
+    // the offset that puts the line at `fraction` of the height is absolute.
+    let mut line_top = f32::from(b.top()) - f32::from(vp.top());
+    if !super::motion::reduced_motion() {
+        if let Some((index, blend)) = next {
+            if let Some(next) = handle.bounds_for_item(index) {
+                line_top += (f32::from(next.top()) - f32::from(b.top())) * blend;
+            }
+        }
+    }
+    let off = handle.offset();
+    let max = f32::from(handle.max_offset().height);
+    let target = -(line_top - f32::from(vp.size.height) * fraction).clamp(0.0, max);
+    let dt = view.lyrics_scroll_at.elapsed().as_secs_f32().min(0.05);
+    view.lyrics_scroll_at = std::time::Instant::now();
+    let step =
+        if super::motion::reduced_motion() { target - f32::from(off.y) } else { (target - f32::from(off.y)) * (1.0 - (-dt / 0.14).exp()) };
+    // "Sincronizar" ends once the glide has arrived (and the spin was seen).
+    if let Some(at) = view.lyrics_sync_at {
+        if (target - f32::from(off.y)).abs() <= 0.6 && at.elapsed().as_secs_f32() >= 0.5 {
+            view.lyrics_sync_at = None;
+        } else {
+            super::motion::want_frame("lyrics-sync");
+        }
+    }
+    if (target - f32::from(off.y)).abs() > 0.6 {
+        handle.set_offset(gpui::point(off.x, gpui::px(f32::from(off.y) + step)));
+        super::motion::want_frame("lyrics-scroll");
+    } else if (target - f32::from(off.y)).abs() > 0.0 {
+        handle.set_offset(gpui::point(off.x, gpui::px(target)));
+    }
 }
 
-fn small_button(
-    id: &'static str,
-    label: &'static str,
-    active: bool,
-    cx: &mut Context<AppView>,
-    f: impl Fn(&mut AppView, &mut Context<AppView>) + 'static,
-) -> AnyElement {
-    div()
-        .id(id)
-        .h(sc(24.))
-        .px(sc(11.))
-        .flex()
-        .items_center()
-        .rounded(sc(12.))
-        .cursor_pointer()
-        .text_size(sc(10.5))
-        .font_weight(FontWeight::BOLD)
-        .bg(if active { theme::text() } else { gpui::rgba(0xffffff1f) })
-        .text_color(if active { theme::bg() } else { gpui::rgba(0xffffffd9) })
-        .hover(|s| s.opacity(0.85))
-        .active(|s| s.opacity(0.6))
-        .child(label)
-        .on_click(cx.listener(move |this, _, _, cx| {
-            cx.stop_propagation();
-            f(this, cx)
-        }))
-        .into_any_element()
+/// Artwork fits the available column and leaves room for metadata and controls.
+pub fn cover_size(_view: &AppView, window: &Window) -> f32 {
+    let vw = f32::from(window.viewport_size().width) / super::zoom();
+    let vh = f32::from(window.viewport_size().height) / super::zoom();
+    let stacked = vw < 820.;
+    let width = if stacked { (vw - 48.).min(520.) } else { (vw * 0.46 - 80.).min(640.) };
+    width.min((vh - 400.).max(120.)).max(80.)
+}
+
+/// Opacity of lyrics child `child` from where it sits in the visible area: lines
+/// fade out as they approach the top and bottom edges, so no line is ever
+/// shown cut in half against the panel edges or the tabs. Measured from the
+/// last layout (paint-only, no masks).
+pub fn edge_fade(handle: &gpui::ScrollHandle, child: usize, top_zone: f32, bottom_zone: f32) -> f32 {
+    let Some(b) = handle.bounds_for_item(child) else { return 1.0 };
+    let vp = handle.bounds();
+    let h = f32::from(vp.size.height);
+    if h <= 1.0 {
+        return 1.0;
+    }
+    // Child bounds are layout positions; add the scroll offset to get the
+    // position inside the visible area.
+    let top = f32::from(b.top()) - f32::from(vp.top()) + f32::from(handle.offset().y);
+    let mid = top + f32::from(b.size.height) / 2.0;
+    let z = super::zoom();
+    let smooth = |t: f32| {
+        let t = t.clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    smooth(mid / (top_zone * z)).min(smooth((h - mid) / (bottom_zone * z)))
 }
 
 /// Big lyrics (synced lines you can click, or plain text).
-fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
+pub(super) fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
+    let lyric_scale = (f32::from(window.viewport_size().height) / super::zoom() / 900.).clamp(0.55, 2.5);
     let pos = view.display_position();
     let glow_color = {
         let c = view.ambient(cx);
         // Lift the cover colour towards white so the halo reads on any cover.
         gpui::Rgba { r: c.r * 0.6 + 0.4, g: c.g * 0.6 + 0.4, b: c.b * 0.6 + 0.4, a: 1.0 }
     };
+    let show_roman = view.settings.lock().lyrics_romanize;
     match view.lyrics.get(&id) {
         Some(Load::Ready(l)) if !l.synced.is_empty() => {
             let l = l.clone();
             let roman = l.roman.clone();
-            let show_roman = view.settings.lock().lyrics_romanize;
-            let offset = view.lyrics_offset.get(&id).copied().unwrap_or(0.0);
-            let current = l.synced.iter().rposition(|(t, _)| *t + offset <= pos + 0.2);
+            let current = l.synced.iter().rposition(|(t, _)| *t <= pos + 0.15);
             if current != view.lyrics_line {
                 view.lyrics_prev = view.lyrics_line;
                 view.lyrics_changes += 1;
@@ -230,32 +253,11 @@ fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Contex
             // and stanza gaps are handled. Any manual scroll switches this off until
             // "Sincronizar" or a click on a line.
             if view.lyrics_follow {
-                let handle = view.lyrics_scroll.clone();
                 // Child 0 is the intro dots, line i is child i + 1.
-                let child = current.map(|c| c + 1).unwrap_or(0);
-                if let Some(b) = handle.bounds_for_item(child) {
-                    let vp = handle.bounds();
-                    // Child bounds are layout positions, before the scroll offset is applied:
-                    // the offset that puts the line at 32 % of the height is absolute.
-                    let line_top = f32::from(b.top()) - f32::from(vp.top());
-                    let off = handle.offset();
-                    let max = f32::from(handle.max_offset().height);
-                    let target = -(line_top - f32::from(vp.size.height) * 0.32).clamp(0.0, max);
-                    // Time-based ease (tau 140 ms), so it glides the same at any refresh rate.
-                    let dt = view.lyrics_scroll_at.elapsed().as_secs_f32().min(0.05);
-                    view.lyrics_scroll_at = std::time::Instant::now();
-                    let step = (target - f32::from(off.y)) * (1.0 - (-dt / 0.14).exp());
-                    if (target - f32::from(off.y)).abs() > 0.6 {
-                        handle.set_offset(gpui::point(off.x, gpui::px(f32::from(off.y) + step)));
-                        window.request_animation_frame();
-                    } else if (target - f32::from(off.y)).abs() > 0.0 {
-                        handle.set_offset(gpui::point(off.x, gpui::px(target)));
-                    }
-                } else {
-                    window.request_animation_frame();
-                }
+                follow_lyrics(view, current.map(|c| c + 1).unwrap_or(0), 0.32, upcoming(&l.synced, current, pos, 1));
             }
-            div()
+            super::smooth::register("lyrics", &view.lyrics_scroll);
+            let list = div()
                 .id("np-lyrics")
                 .size_full()
                 .overflow_y_scroll()
@@ -263,15 +265,16 @@ fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Contex
                 .on_scroll_wheel(cx.listener(|this, _, _, cx| {
                     if this.lyrics_follow {
                         this.lyrics_follow = false;
+                        this.lyrics_sync_at = None;
                         cx.notify();
                     }
                 }))
-                // Room around the lines so the glow of the current one is not cut by the box.
-                .pl(sc(80.))
-                .ml(sc(-80.))
-                .pt(sc(70.))
-                .pr(sc(80.))
-                .pb(sc(140.))
+                // Room around the lines so the glow of the current one is not cut by the
+                // scroll box (the cover column is narrower by the same amount).
+                .pl(sc(LYRICS_GUTTER))
+                .pt(sc(32.))
+                .pr(sc(36.))
+                .pb(sc(64.))
                 .flex()
                 .flex_col()
                 // Lines hug their text, so the glow surrounds the words and not the whole column.
@@ -286,28 +289,36 @@ fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Contex
                 })))
                 .children(l.synced.iter().enumerate().map(|(i, (t, line))| {
                     let active = Some(i) == current;
-                    let was_active = Some(i) == view.lyrics_prev;
-                    let changes = view.lyrics_changes;
-                    let at = *t + offset;
+                    let emphasis = line_emphasis(id, i, active);
+                    let reading = roman.get(i).and_then(|r| r.as_ref()).filter(|_| show_roman);
+                    let at = *t;
                     // A longer pause before a line opens a gap, like stanzas.
                     let gap_before = i > 0 && (*t - l.synced[i - 1].0) > 5.5;
                     // Official app: 32 px / 600 / 48 px line height, inactive lines at 55 % opacity.
+                    let edge = edge_fade(&view.lyrics_scroll, i + 1, 60.0, 130.0);
                     let base = div()
                         .id(("np-line", i))
+                        .opacity(edge)
                         .when(gap_before, |d| d.mt(sc(26.)))
                         .px(sc(10.))
                         .py(sc(8.))
                         .rounded(sc(10.))
                         .cursor_pointer()
-                        .text_size(sc(32.))
-                        .line_height(sc(46.))
+                        .text_size(sc(44. * lyric_scale))
+                        .line_height(sc(58. * lyric_scale))
                         .font_weight(FontWeight::SEMIBOLD)
                         .flex()
                         .flex_col()
-                        .child(if line.is_empty() { "♪".to_string() } else { line.clone() })
-                        // Pronunciation in Latin letters under Asian scripts.
-                        .when_some(roman.get(i).cloned().flatten().filter(|_| show_roman), |d, r| {
-                            d.child(div().text_size(sc(19.)).line_height(sc(26.)).font_weight(FontWeight::MEDIUM).opacity(0.8).child(r))
+                        .child(reading.cloned().unwrap_or_else(|| if line.is_empty() { "♪".into() } else { line.clone() }))
+                        .when(reading.is_some(), |d| {
+                            d.child(
+                                div()
+                                    .text_size(sc(26. * lyric_scale))
+                                    .line_height(sc(34. * lyric_scale))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .opacity(0.8)
+                                    .child(line.clone()),
+                            )
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.lyrics_follow = true;
@@ -315,56 +326,57 @@ fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Contex
                         }));
                     const INACTIVE: f32 = 0.55;
                     let white = |a: f32| super::fx::with_alpha(gpui::rgb(0xffffff), a);
-                    if active || was_active {
-                        // .46 s, cubic-bezier(.4, 0, .2, 1), like `--lyrics-duration/--lyrics-ease`.
-                        base.with_animation(
-                            ("np-line-fade", i * 10_000 + changes % 10_000),
-                            gpui::Animation::new(std::time::Duration::from_millis(460)).with_easing(super::motion::lyrics_ease),
-                            move |d, t| {
-                                let a = if active { INACTIVE + (1.0 - INACTIVE) * t } else { 1.0 - (1.0 - INACTIVE) * t };
-                                // 0 (dim) .. 1 (current): drives the glow around the line.
-                                let k = (a - INACTIVE) / (1.0 - INACTIVE);
-                                d.text_color(white(a)).shadow(vec![
-                                    gpui::BoxShadow {
-                                        color: gpui::Hsla::from(super::fx::with_alpha(glow_color, 0.30 * k)),
-                                        offset: gpui::point(sc(0.), sc(0.)),
-                                        blur_radius: sc(34.),
-                                        spread_radius: sc(2. * k),
-                                    },
-                                    gpui::BoxShadow {
-                                        color: gpui::Hsla::from(super::fx::with_alpha(glow_color, 0.16 * k)),
-                                        offset: gpui::point(sc(0.), sc(0.)),
-                                        blur_radius: sc(48.),
-                                        spread_radius: sc(4. * k),
-                                    },
-                                ])
+                    base.text_color(white(INACTIVE + (1. - INACTIVE) * emphasis))
+                        .shadow(vec![
+                            gpui::BoxShadow {
+                                color: gpui::Hsla::from(super::fx::with_alpha(glow_color, 0.30 * emphasis)),
+                                offset: gpui::point(sc(0.), sc(0.)),
+                                blur_radius: sc(34.),
+                                spread_radius: sc(2. * emphasis),
                             },
-                        )
+                            gpui::BoxShadow {
+                                color: gpui::Hsla::from(super::fx::with_alpha(glow_color, 0.16 * emphasis)),
+                                offset: gpui::point(sc(0.), sc(0.)),
+                                blur_radius: sc(48.),
+                                spread_radius: sc(4. * emphasis),
+                            },
+                        ])
+                        .hover(|s| s.text_color(white(0.85)))
                         .into_any_element()
-                    } else {
-                        base.text_color(white(INACTIVE)).hover(|s| s.text_color(white(0.85))).into_any_element()
-                    }
                 }))
-                .into_any_element()
+                .child(
+                    div()
+                        .pt(sc(24.))
+                        .text_size(sc(11.))
+                        .text_color(theme::text_secondary())
+                        .child(crate::i18n::text("lyrics.provider", std::slice::from_ref(&l.provider))),
+                )
+                .child(super::smooth::glide("lyrics"));
+            super::widgets::with_sync_button(list.into_any_element(), view, "np", false, cx)
         }
         Some(Load::Ready(l)) if !l.text.is_empty() => div()
             .id("np-lyrics")
             .size_full()
             .overflow_y_scroll()
-            .pr(sc(40.))
-            .pb(sc(140.))
-            .text_size(sc(24.))
-            .line_height(sc(34.))
+            .track_scroll(&super::smooth::handle("np-lyrics-text"))
+            .child(super::smooth::glide("np-lyrics-text"))
+            .pr(sc(24.))
+            .pb(sc(64.))
+            .text_size(sc(36. * lyric_scale))
+            .line_height(sc(48. * lyric_scale))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(gpui::rgba(0xffffffd9))
-            .child(l.text.clone())
+            .children(l.text.lines().enumerate().map(|(i, line)| {
+                let reading = l.roman.get(i).and_then(|r| r.as_ref()).filter(|_| show_roman);
+                div()
+                    .child(reading.cloned().unwrap_or_else(|| if line.is_empty() { "\u{a0}".into() } else { line.to_owned() }))
+                    .when(reading.is_some(), |d| d.child(div().text_size(sc(16.)).line_height(sc(23.)).opacity(0.8).child(line.to_owned())))
+            }))
             .into_any_element(),
-        Some(Load::Loading) => div().text_size(sc(16.)).text_color(gpui::rgba(0xffffff99)).child("Buscando letra…").into_any_element(),
-        _ => div()
-            .text_size(sc(16.))
-            .text_color(gpui::rgba(0xffffff99))
-            .child("Ningún proveedor tiene letra para esta pista.")
-            .into_any_element(),
+        Some(Load::Loading) => {
+            div().text_size(sc(16.)).text_color(gpui::rgba(0xffffff99)).child(crate::i18n::t("searching_for_lyrics")).into_any_element()
+        }
+        _ => missing_lyrics(cx),
     }
 }
 
@@ -374,8 +386,10 @@ fn credits_view(view: &AppView, id: u64) -> AnyElement {
             .id("np-credits")
             .size_full()
             .overflow_y_scroll()
-            .pr(sc(40.))
-            .pb(sc(140.))
+            .track_scroll(&super::smooth::handle("np-credits"))
+            .child(super::smooth::glide("np-credits"))
+            .pr(sc(24.))
+            .pb(sc(64.))
             .flex()
             .flex_col()
             .gap(sc(20.))
@@ -394,8 +408,14 @@ fn credits_view(view: &AppView, id: u64) -> AnyElement {
                     .child(div().text_size(sc(20.)).font_weight(FontWeight::BOLD).child(names.join(", ")))
             }))
             .into_any_element(),
-        Some(Load::Loading) => div().text_size(sc(16.)).text_color(gpui::rgba(0xffffff99)).child("Cargando créditos…").into_any_element(),
-        _ => div().text_size(sc(16.)).text_color(gpui::rgba(0xffffff99)).child("No hay créditos para esta pista.").into_any_element(),
+        Some(Load::Loading) => {
+            div().text_size(sc(16.)).text_color(gpui::rgba(0xffffff99)).child(crate::i18n::t("loading_credits")).into_any_element()
+        }
+        _ => div()
+            .text_size(sc(16.))
+            .text_color(gpui::rgba(0xffffff99))
+            .child(crate::i18n::t("no_credits_for_this_track"))
+            .into_any_element(),
     }
 }
 
@@ -403,17 +423,29 @@ fn similar_view(view: &mut AppView, id: u64, cx: &mut Context<AppView>) -> AnyEl
     let tracks = match view.similar.get(&id) {
         Some(Load::Ready(t)) => t.clone(),
         Some(Load::Loading) => {
-            return div().text_size(sc(16.)).text_color(gpui::rgba(0xffffff99)).child("Buscando pistas similares…").into_any_element()
+            return div()
+                .text_size(sc(16.))
+                .text_color(gpui::rgba(0xffffff99))
+                .child(crate::i18n::t("finding_similar_tracks"))
+                .into_any_element()
         }
-        _ => return div().text_size(sc(16.)).text_color(gpui::rgba(0xffffff99)).child("No hay pistas similares.").into_any_element(),
+        _ => {
+            return div()
+                .text_size(sc(16.))
+                .text_color(gpui::rgba(0xffffff99))
+                .child(crate::i18n::t("no_similar_tracks"))
+                .into_any_element()
+        }
     };
     let playing = view.now.as_ref().map(|n| n.track.id);
     div()
         .id("np-similar")
         .size_full()
         .overflow_y_scroll()
-        .pr(sc(40.))
-        .pb(sc(140.))
+        .track_scroll(&super::smooth::handle("np-similar"))
+        .child(super::smooth::glide("np-similar"))
+        .pr(sc(24.))
+        .pb(sc(64.))
         .flex()
         .flex_col()
         .children(tracks.iter().cloned().enumerate().map(|(i, t)| {
@@ -459,121 +491,194 @@ fn similar_view(view: &mut AppView, id: u64, cx: &mut Context<AppView>) -> AnyEl
 }
 
 pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
+    let vw = f32::from(window.viewport_size().width) / super::zoom();
+    let stacked = vw < 820.;
+    let margin = (vw * 0.035).clamp(20., 64.);
     let Some(track) = view.now.as_ref().map(|n| n.track.clone()) else {
-        view.now_playing_open = false;
-        return div().into_any_element();
+        return div()
+            .id("now-playing-empty")
+            .absolute()
+            .size_full()
+            .occlude()
+            .bg(theme::bg())
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(sc(28.))
+            .p(sc(margin))
+            .text_color(theme::text_secondary())
+            .child(crate::i18n::t("play_a_track_to_view_it_in_full_screen"))
+            .child(div().w(sc(360.)).max_w_full().child(super::player_bar::controls(view, true, vw, cx)))
+            .into_any_element();
     };
     let ambient = view.ambient(cx);
     let palette = view.palette(cx);
-    // The background drifts on its own; it no longer reacts to the audio.
-    let _vis = [0.5f32; 3];
     let view_blur = view.settings.lock().np_blur;
     if view.np_tilt.step() {
-        window.request_animation_frame();
+        super::motion::want_frame("tilt");
     }
-    let frames = if view_blur { track.cover(640).and_then(|u| super::images::frames(&u, cx)) } else { None };
+    let frames_url = if view_blur { track.cover(640) } else { None };
+    let frames = frames_url.as_deref().and_then(|u| super::images::frames(u, cx));
+    let (frames_prev, frames_now) = view.np_frames_fade.frame(frames_url.as_deref(), frames);
     let angle = view.bg_angle_now;
-    let amount = view.now_playing_amount();
-    let vw = f32::from(window.viewport_size().width) / super::zoom();
-    let vh = f32::from(window.viewport_size().height) / super::zoom();
-    let area_h = vh - theme::CAPTION_H;
-    let slide = (1.0 - amount) * area_h.max(400.0);
-    // The cover takes the space the original gives it: big, about a third of the width.
-    let size = (area_h - theme::PLAYER_H - 120.0).min(vw * if view.np_queue_side { 0.27 } else { 0.36 }).clamp(240.0, 760.0);
-
-    let synced_lyrics =
-        view.np_tab == NpTab::Lyrics && view.lyrics.get(&track.id).and_then(Load::ready).is_some_and(|l| !l.synced.is_empty());
-    let follow = view.lyrics_follow;
-    let offset = view.lyrics_offset.get(&track.id).copied().unwrap_or(0.0);
+    let size = cover_size(view, window);
+    let local = track.local_path.is_some();
     let id = track.id;
-
-    let body: AnyElement = match view.np_tab {
-        NpTab::Lyrics | NpTab::Queue => lyrics_view(view, id, window, cx),
+    if local && matches!(view.np_tab, NpTab::Credits | NpTab::Similar) {
+        view.np_tab = NpTab::Lyrics;
+    }
+    let tab = view.np_tab;
+    let body = match tab {
+        NpTab::Lyrics => lyrics_view(view, id, window, cx),
+        NpTab::Queue => super::pages::queue_panel(view, "np-queue", cx),
         NpTab::Credits => credits_view(view, id),
         NpTab::Similar => similar_view(view, id, cx),
     };
-
-    // Tabs in the top right, with sync controls on their left.
     let tabs = div()
-        .h(sc(52.))
         .flex_none()
-        .px(sc(24.))
         .flex()
+        .flex_wrap()
         .items_center()
-        .justify_end()
+        .justify_center()
         .gap(sc(6.))
-        .when(synced_lyrics, |d| {
-            d.child(small_button("np-sync", if follow { "Sincronizada" } else { "Sincronizar" }, !follow, cx, |this, cx| {
-                this.lyrics_follow = true;
-                cx.notify();
-            }))
-            .child(small_button("np-m", "−0,5 s", false, cx, move |this, cx| {
-                let o = this.lyrics_offset.entry(id).or_insert(0.0);
-                *o = ((*o - 0.5) * 10.0).round() / 10.0;
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .w(sc(44.))
-                    .text_center()
-                    .text_size(sc(10.5))
-                    .text_color(if offset == 0.0 { gpui::rgba(0xffffff66) } else { theme::accent() })
-                    .child(format!("{:+.1} s", offset)),
+        .pb(sc(20.))
+        .child(tab_button(NpTab::Queue, view, cx))
+        .when(!local, |d| d.child(tab_button(NpTab::Similar, view, cx)).child(tab_button(NpTab::Credits, view, cx)))
+        .child(tab_button(NpTab::Lyrics, view, cx));
+    let artwork = div()
+        .id("np-big-cover")
+        .relative()
+        .flex_none()
+        .size(sc(size))
+        .child(
+            canvas(
+                {
+                    let e = cx.entity();
+                    move |b, _, cx| e.update(cx, |v, _| v.np_cover_bounds = b)
+                },
+                |_, _, _, _| {},
             )
-            .child(small_button("np-p", "+0,5 s", false, cx, move |this, cx| {
-                let o = this.lyrics_offset.entry(id).or_insert(0.0);
-                *o = ((*o + 0.5) * 10.0).round() / 10.0;
-                cx.notify();
-            }))
-            .child(div().w(sc(18.)))
+            .absolute()
+            .size_full(),
+        )
+        // One continuous surface that follows the mouse: same
+        // drawing at rest and tilted, so nothing switches.
+        .child({
+            let url = track.cover(1280);
+            let src = url.as_deref().and_then(|u| super::images::sized(u, size, size, cx));
+            let (prev, now) = view.np_cover_fade.frame(url.as_deref(), src);
+            view.prefetch_next_covers(Some(size), cx);
+            view.np_tilt.surface(prev, now, size, ambient, theme::surface())
         })
-        .child(queue_toggle(view, cx))
-        .child(tab_button(NpTab::Similar, view, cx))
-        .child(tab_button(NpTab::Credits, view, cx))
-        .child(tab_button(NpTab::Lyrics, view, cx))
+        .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
+            // Screenshot tests pin the tilt (TIDE_TILT) and ignore the mouse.
+            if std::env::var_os("TIDE_TILT").is_some() {
+                return;
+            }
+            let b = this.np_cover_bounds;
+            let (w, h) = (f32::from(b.size.width).max(1.0), f32::from(b.size.height).max(1.0));
+            let x = (f32::from(ev.position.x) - f32::from(b.origin.x)) / w;
+            let y = (f32::from(ev.position.y) - f32::from(b.origin.y)) / h;
+            this.np_tilt.point(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+            cx.notify();
+        }))
+        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+            if !*hovered && std::env::var_os("TIDE_TILT").is_none() {
+                this.np_tilt.leave();
+                cx.notify();
+            }
+        }))
+        // Gesture: double-click the cover to like the track (big heart).
+        .children(super::haptics::heart_overlay(view, size))
+        .on_click({
+            let t = track.clone();
+            cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
+                if !local && ev.click_count() >= 2 {
+                    if !this.fav_ids.contains(&t.id) {
+                        this.toggle_favorite(&t, cx);
+                    }
+                    this.heart_burst();
+                    cx.notify();
+                }
+            })
+        });
+    let left = div()
+        .id("np-artwork-column")
+        .min_w(sc(0.))
+        .flex_none()
+        .when(stacked, |d| d.w_full())
+        .when(!stacked, |d| d.w(relative(0.46)).h_full().overflow_y_scroll())
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(sc(24.))
+        .child(artwork)
         .child(
             div()
-                .id("np-collapse")
-                .ml(sc(10.))
-                .size(sc(28.))
+                .w_full()
+                .max_w(sc(520.))
+                .flex_none()
                 .flex()
+                .flex_col()
                 .items_center()
-                .justify_center()
-                .rounded(sc(14.))
-                .cursor_pointer()
-                .hover(|s| s.bg(gpui::rgba(0xffffff1f)))
-                .active(|s| s.opacity(0.6))
-                .child(Icon::ChevDown.el(16., gpui::rgba(0xffffffd9)))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.toggle_now_playing(cx)
-                })),
-        );
-
+                .gap(sc(8.))
+                .text_center()
+                .child(
+                    div()
+                        .w_full()
+                        .text_size(sc(if stacked { 24. } else { 30. }))
+                        .line_height(sc(36.))
+                        .font_weight(FontWeight::BOLD)
+                        .line_clamp(2)
+                        .child(track.display_title()),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .text_size(sc(17.))
+                        .line_height(sc(24.))
+                        .text_color(gpui::rgba(0xffffffb3))
+                        .line_clamp(2)
+                        .child(track.artist_names()),
+                ),
+        )
+        .child(div().w_full().max_w(sc(500.)).flex_none().child(super::player_bar::controls(view, true, vw, cx)));
+    let details = div()
+        .min_w(sc(0.))
+        .min_h(sc(0.))
+        .flex()
+        .flex_col()
+        .when(stacked, |d| d.w_full().h(sc(480.)).flex_none())
+        .when(!stacked, |d| d.flex_1().h_full())
+        .child(tabs)
+        .child(div().relative().flex_1().min_h(sc(0.)).flex().flex_col().child(body).with_animation(
+            ("np-detail", tab as usize),
+            super::motion::animation(super::motion::PANEL),
+            super::motion::enter,
+        ));
     div()
         .id("now-playing")
+        // Dark palette in both themes (see theme::dark_scope).
+        .text_color(theme::text())
         .absolute()
         .left(sc(0.))
-        .right(sc(0.))
-        .top(sc(theme::CAPTION_H + slide))
-        .bottom(sc(0.))
-        .opacity(0.35 + 0.65 * amount)
+        .top(sc(0.))
+        .size_full()
         .occlude()
         .bg(theme::bg())
         // The official background: the cover, blurred and saturated, turning slowly about
         // its centre (see `fx::rotating_backdrop`). Flat colour when that setting is chosen.
-        .child(match (view_blur, frames) {
-            (true, Some(f)) => div()
+        .child(match (view_blur, frames_now) {
+            // New cover's background fades in over the old one (never over black).
+            (true, Some((f, a))) => div()
                 .absolute()
                 .top(sc(0.))
                 .left(sc(0.))
                 .size_full()
-                .child(super::fx::rotating_backdrop(&f, angle))
-                .with_animation(
-                    ("np-backdrop", track.id as usize),
-                    gpui::Animation::new(std::time::Duration::from_millis(650)).with_easing(super::motion::ease_out),
-                    |d, t| d.opacity(t),
-                )
+                .children(frames_prev.map(|p| super::fx::rotating_backdrop(&p, angle)))
+                .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().opacity(a).child(super::fx::rotating_backdrop(&f, angle)))
                 .into_any_element(),
             (true, None) => div()
                 .absolute()
@@ -590,9 +695,10 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
         })
         // Changing light: soft sweeps of the cover's colours that come and go, as if the
         // lighting of the room slowly changed. Independent of the music.
-        .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().with_animation(
+        .child(super::motion::looping(
+            div().absolute().top(sc(0.)).left(sc(0.)).size_full(),
+            std::time::Duration::from_secs(28),
             "np-light",
-            gpui::Animation::new(std::time::Duration::from_secs(28)).repeat(),
             {
                 let (c0, c1) = (palette[0], palette[1]);
                 move |d, t| {
@@ -612,121 +718,73 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 }
             },
         ))
-        // Veil so the lyrics stay readable: lighter at the top, darker towards the player.
+        // A soft veil keeps the text and controls readable over the artwork.
         .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(gpui::linear_gradient(
             180.,
             gpui::linear_color_stop(gpui::rgba(0x00000057), 0.),
             gpui::linear_color_stop(gpui::rgba(0x000000c2), 1.),
         )))
         .child(
-            div().absolute().top(sc(0.)).left(sc(0.)).size_full().flex().flex_col().pb(sc(theme::PLAYER_H)).child(tabs).child(
-                div()
-                    .flex_1()
-                    .min_h(sc(0.))
-                    .flex()
-                    .child(
-                        div()
-                            .w(relative(if view.np_queue_side { 0.36 } else { 0.47 }))
-                            .flex_none()
-                            .h_full()
-                            .pl(sc((vw * 0.07).min(180.)))
-                            .flex()
-                            .items_center()
-                            .child(
-                                div()
-                                    .id("np-big-cover")
-                                    .relative()
-                                    .flex_none()
-                                    .size(sc(size))
-                                    .rounded(sc(4.))
-                                    // The shadow stays on the flat footprint while the cover tilts above it.
-                                    .shadow(view.np_tilt.shadow(ambient))
-                                    .child(
-                                        canvas(
-                                            {
-                                                let e = cx.entity();
-                                                move |b, _, cx| e.update(cx, |v, _| v.np_cover_bounds = b)
-                                            },
-                                            |_, _, _, _| {},
-                                        )
-                                        .absolute()
-                                        .size_full(),
-                                    )
-                                    .child(
-                                        match (
-                                            view.np_tilt.tilted(),
-                                            track.cover(1280).and_then(|u| super::images::sized(&u, size, size, cx)),
-                                        ) {
-                                            (true, Some(image)) => view.np_tilt.cover_3d(image, size),
-                                            _ => cover(track.cover(1280), size, false, cx),
-                                        },
-                                    )
-                                    // The cover follows the mouse (3D tilt and glare).
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .top(sc(0.))
-                                            .left(sc(0.))
-                                            .size(sc(size))
-                                            .rounded(sc(4.))
-                                            .overflow_hidden()
-                                            .children(view.np_tilt.overlays(size)),
-                                    )
-                                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
-                                        // Screenshot tests pin the tilt (TIDE_TILT) and ignore the mouse.
-                                        if std::env::var_os("TIDE_TILT").is_some() {
-                                            return;
-                                        }
-                                        let b = this.np_cover_bounds;
-                                        let (w, h) = (f32::from(b.size.width).max(1.0), f32::from(b.size.height).max(1.0));
-                                        let x = (f32::from(ev.position.x) - f32::from(b.origin.x)) / w;
-                                        let y = (f32::from(ev.position.y) - f32::from(b.origin.y)) / h;
-                                        this.np_tilt.point(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
-                                        cx.notify();
-                                    }))
-                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                        if !*hovered && std::env::var_os("TIDE_TILT").is_none() {
-                                            this.np_tilt.leave();
-                                            cx.notify();
-                                        }
-                                    }))
-                                    // Gesture: double-click the cover to like the track (big heart).
-                                    .children(super::haptics::heart_overlay(view, size))
-                                    .on_click({
-                                        let t = track.clone();
-                                        cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
-                                            if ev.click_count() >= 2 {
-                                                if !this.fav_ids.contains(&t.id) {
-                                                    this.toggle_favorite(&t, cx);
-                                                }
-                                                this.heart_burst();
-                                                cx.notify();
-                                            }
-                                        })
-                                    })
-                                    .with_animation(
-                                        ("np-cover", track.id as usize),
-                                        gpui::Animation::new(std::time::Duration::from_millis(600)).with_easing(super::motion::ease_out),
-                                        |d, t| d.opacity(t),
-                                    ),
-                            ),
-                    )
-                    .child(div().flex_1().min_w(sc(0.)).h_full().pt(sc(8.)).child(body))
-                    .when(view.np_queue_side, |d| {
-                        d.child(
-                            div()
-                                .w(sc(370.))
-                                .flex_none()
-                                .h_full()
-                                .pt(sc(8.))
-                                .pb(sc(90.))
-                                .pr(sc(24.))
-                                .flex()
-                                .flex_col()
-                                .child(super::pages::queue_panel(view, cx)),
-                        )
-                    }),
-            ),
+            div()
+                .id("np-layout")
+                .relative()
+                .size_full()
+                .p(sc(margin))
+                .flex()
+                .gap(sc(margin))
+                .when(stacked, |d| d.flex_col().overflow_y_scroll())
+                .child(left)
+                .child(details),
         )
+        .into_any_element()
+}
+
+/// Shared transition state keeps both lyric presentations consistent.
+pub fn line_emphasis(id: u64, line: usize, active: bool) -> f32 {
+    let target = if active { 1. } else { 0. };
+    if super::motion::reduced_motion() {
+        return target;
+    }
+    let key = format!("lyric-emphasis-{id}-{line}");
+    super::interact::set(&key, target, super::motion::seconds(super::motion::PANEL));
+    let value = super::interact::get(&key);
+    if (value - target).abs() > 0.001 {
+        super::motion::want_frame("lyrics-highlight");
+    }
+    value
+}
+
+pub fn upcoming(lines: &[(f64, String)], current: Option<usize>, position: f64, first: usize) -> Option<(usize, f32)> {
+    let next = current.map(|i| i + 1).unwrap_or(0);
+    // Move toward the next layout position in the last 350 ms, with the same
+    // 150 ms lead used by the active-line selection.
+    let at = lines.get(next)?.0;
+    let blend = ((position + 0.15 - at + 0.35) / 0.35).clamp(0., 1.) as f32;
+    let blend = super::motion::lyrics_ease(blend);
+    Some((next + first, blend))
+}
+
+pub fn missing_lyrics(cx: &mut Context<AppView>) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(sc(12.))
+        .p(sc(16.))
+        .child(div().text_size(sc(14.)).text_color(theme::text_secondary()).child(crate::i18n::t("no_provider_has_lyrics_for_this_track")))
+        .child(super::widgets::pill(
+            "retry-lyrics",
+            crate::i18n::t("lyrics.retry"),
+            None,
+            false,
+            |v, _, _, cx| {
+                if let Some(track) = v.now.as_ref().map(|n| n.track.clone()) {
+                    crate::tidal::lyrics::forget_missing(&track);
+                    v.lyrics.remove(&track.id);
+                    v.load_lyrics(track.id, cx);
+                    cx.notify();
+                }
+            },
+            cx,
+        ))
         .into_any_element()
 }

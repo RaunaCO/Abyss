@@ -34,7 +34,16 @@ impl AppView {
             "artists" => self.navigate(Page::MyArtists, cx),
             "playlists" => self.navigate(Page::MyPlaylists, cx),
             "mixes" => self.navigate(Page::MyMixes, cx),
+            "replay" => self.navigate(Page::Replay, cx),
+            "discover" => self.navigate(Page::Discover, cx),
+            "recent" => self.navigate(Page::Recent, cx),
             "settings" => self.navigate(Page::Settings, cx),
+            // TIDE_IMPORT=<file or folder>: import it as if dropped on the window.
+            "import" => {
+                if let Some(p) = std::env::var_os("TIDE_IMPORT") {
+                    self.import_local_paths(vec![p.into()], cx);
+                }
+            }
             "menu" => self.app_menu = Some(vec![2, 7]),
             "quicksearch" => {
                 self.search_input.update(cx, |i, cx| i.set_text("cynic", cx));
@@ -91,7 +100,21 @@ impl AppView {
                             })
                             .detach();
                         }
-                        this.toggle_now_playing(cx);
+                        // Screenshots of the floating "Sincronizar" button.
+                        // (after the lyrics have loaded, which turns following back on)
+                        if std::env::var_os("TIDE_LYRICS_UNFOLLOW").is_some() {
+                            cx.spawn(async move |this, cx| {
+                                cx.background_executor().timer(std::time::Duration::from_secs(6)).await;
+                                let _ = this.update(cx, |this, cx| {
+                                    this.lyrics_follow = false;
+                                    cx.notify();
+                                });
+                            })
+                            .detach();
+                        }
+                        if std::env::var_os("TIDE_DEMO_NP_CLOSED").is_none() {
+                            this.toggle_now_playing(cx);
+                        }
                         if let Some((x, y)) = std::env::var("TIDE_TILT").ok().and_then(|v| {
                             let (a, b) = v.split_once(',')?;
                             Some((a.parse::<f32>().ok()?, b.parse::<f32>().ok()?))
@@ -100,10 +123,7 @@ impl AppView {
                         }
                         this.np_tab = match tab.as_str() {
                             "nowplaying-credits" => super::now_playing::NpTab::Credits,
-                            "nowplaying-queue" => {
-                                this.np_queue_side = true;
-                                super::now_playing::NpTab::Lyrics
-                            }
+                            "nowplaying-queue" => super::now_playing::NpTab::Queue,
                             _ => super::now_playing::NpTab::Lyrics,
                         };
                         if let Some(id) = this.now.as_ref().map(|n| n.track.id) {
@@ -115,4 +135,40 @@ impl AppView {
             _ => {}
         }
     }
+}
+
+/// `TIDE_ICON_SHEET=1`: every icon at 14, 18 and 24 px over the app background,
+/// drawn by the real renderer (for checking the icon family).
+pub fn icon_sheet() -> Option<gpui::AnyElement> {
+    use super::icons::Icon;
+    use super::{sc, theme};
+    use gpui::{div, prelude::*};
+    std::env::var_os("TIDE_ICON_SHEET")?;
+    Some(
+        div()
+            .absolute()
+            .top(sc(0.))
+            .left(sc(0.))
+            .size_full()
+            .bg(theme::bg())
+            .p(sc(24.))
+            .flex()
+            .flex_wrap()
+            .gap(sc(10.))
+            .children(Icon::ALL.iter().map(|&i| {
+                div()
+                    .w(sc(118.))
+                    .h(sc(58.))
+                    .rounded(sc(8.))
+                    .bg(theme::surface())
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(sc(12.))
+                    .child(i.el(14., theme::text()))
+                    .child(i.el(18., theme::text()))
+                    .child(i.el(24., theme::text()))
+            }))
+            .into_any_element(),
+    )
 }

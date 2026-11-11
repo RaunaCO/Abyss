@@ -19,17 +19,17 @@ pub enum Quality {
 impl Quality {
     pub fn label(self) -> &'static str {
         match self {
-            Quality::Low => "Low",
-            Quality::High => "High",
-            Quality::Max => "Max",
+            Quality::Low => crate::i18n::t("low"),
+            Quality::High => crate::i18n::t("high"),
+            Quality::Max => crate::i18n::t("max"),
         }
     }
 
     pub fn description(self) -> &'static str {
         match self {
-            Quality::Low => "Hasta 320 kbps (AAC)",
-            Quality::High => "Hasta 16-bit, 44.1 kHz (FLAC)",
-            Quality::Max => "Hasta 24-bit, 192 kHz (FLAC)",
+            Quality::Low => crate::i18n::t("up_to_320_kbps_aac"),
+            Quality::High => crate::i18n::t("up_to_16_bit_44_1_khz_flac"),
+            Quality::Max => crate::i18n::t("up_to_24_bit_192_khz_flac"),
         }
     }
 
@@ -63,6 +63,12 @@ pub struct Settings {
     pub username: Option<String>,
     pub user_picture: Option<String>,
 
+    /// None follows the system UI language. Supported overrides are BCP 47 base codes.
+    pub language: Option<String>,
+    /// One-time welcome, repeatable without clearing this completion marker.
+    pub welcome_complete: bool,
+    /// Canonical onboarding choice: tidal or local. Saved tokens are preserved.
+    pub preferred_service: String,
     pub quality: Quality,
     /// WASAPI exclusive mode: bit-perfect output at the track's own sample rate.
     pub exclusive_mode: bool,
@@ -84,20 +90,33 @@ pub struct Settings {
     pub shuffle: bool,
     pub repeat: Repeat,
     pub recent_searches: Vec<String>,
-    /// Discord Rich Presence ("Listening to TIDE"), like Spotify's.
+    /// Discord Rich Presence ("Listening to Abyss").
     pub discord: bool,
     /// Now Playing background: blurred cover (true) or flat colour (false).
     pub np_blur: bool,
+    /// Light interface theme (dark is the default).
+    pub light_theme: bool,
+    /// Accent colour, 0xRRGGBB (Abyss's cyan by default; never the system's).
+    pub accent: u32,
+    /// Library: last category shown ("tracks", "albums", "artists") and the
+    /// list (false) / grid (true) choice of each.
+    pub lib_last: String,
+    pub lib_grid: std::collections::HashMap<String, bool>,
+    /// Account e-mail as TIDAL reports it (shown in the sidebar), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_email: Option<String>,
     /// Extra columns in track lists: BPM and ratings; and the Uploads tab on Home.
     pub audio_metadata: bool,
     pub show_ratings: bool,
     pub hide_uploads: bool,
     /// Show the Latin pronunciation under lyrics in Asian scripts.
     pub lyrics_romanize: bool,
+    pub wide_side_panel: bool,
+    pub side_panel_width: Option<f32>,
     /// Look up lyrics on third-party services (LRCLIB, NetEase, lyrics.ovh)
     /// when TIDAL has none. Sends the track title, artist, album and length.
     pub external_lyrics: bool,
-    /// Application ID of the Discord application named TIDE.
+    /// Application ID of the Discord application named Abyss.
     pub discord_client_id: String,
 
     /// OAuth client used for the device login. Can be replaced in settings.json.
@@ -124,6 +143,9 @@ impl Default for Settings {
             country_code: "US".into(),
             username: None,
             user_picture: None,
+            language: None,
+            welcome_complete: false,
+            preferred_service: "tidal".into(),
             quality: Quality::Max,
             exclusive_mode: false,
             force_volume: false,
@@ -139,10 +161,17 @@ impl Default for Settings {
             recent_searches: Vec::new(),
             discord: true,
             np_blur: true,
+            light_theme: false,
+            accent: crate::ui::theme::DEFAULT_ACCENT,
+            lib_last: "tracks".into(),
+            lib_grid: Default::default(),
+            user_email: None,
             audio_metadata: true,
             show_ratings: true,
             hide_uploads: false,
             lyrics_romanize: true,
+            wide_side_panel: false,
+            side_panel_width: None,
             external_lyrics: true,
             discord_client_id: String::new(),
             // Replaced by whichever client the user signed in with.
@@ -152,28 +181,79 @@ impl Default for Settings {
     }
 }
 
-/// TIDAL's device-authorization client (TV / limited-input flow). Its
-/// sessions get FLAC only for hi-res tracks; 16-bit tracks come as AAC.
-/// Application ID of TIDE's Discord application (registered once by the project,
-/// so users need no setup). Public identifier, not a secret.
-pub const DISCORD_APP_ID: &str = "1568272471487025294";
+/// Public application identifier. No verified Abyss ID is bundled.
+// The owner must register or rename the Discord application for Abyss.
+// An empty ID keeps activity publishing inactive until one is configured.
+pub const DISCORD_APP_ID: &str = "";
 
+/// TIDAL device-authorization client (TV flow), retained for compatibility.
 pub const DEVICE_CLIENT_ID: &str = "fX2JxdmntZWK0ixT";
 pub const DEVICE_CLIENT_SECRET: &str = "1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg=";
 
 pub fn config_dir() -> PathBuf {
-    let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("tide");
-    // One-time migration from the project's former name (tidal-gpui).
-    let old = base.join("tidal-gpui");
-    if !dir.exists() && old.exists() {
-        let _ = std::fs::rename(&old, &dir);
+    // Tests and side-by-side runs can use their own settings, ratings and
+    // recents instead of the user's.
+    if let Some(dir) = std::env::var_os("ABYSS_CONFIG_DIR").or_else(|| std::env::var_os("TIDE_CONFIG_DIR")) {
+        return PathBuf::from(dir);
     }
-    dir
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("abyss")
 }
 
 pub fn cache_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".")).join("tide")
+    if let Some(dir) = std::env::var_os("ABYSS_CACHE_DIR").or_else(|| std::env::var_os("TIDE_CACHE_DIR")) {
+        return PathBuf::from(dir);
+    }
+    dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".")).join("abyss")
+}
+
+/// Run before loading any stores or installing the panic hook. Stage the entire
+/// tree, then publish it with one directory rename. Existing Abyss data wins.
+/// Originals and incomplete copies are retained, including on failure.
+pub fn prepare_config() -> std::io::Result<()> {
+    if std::env::var_os("ABYSS_CONFIG_DIR").or_else(|| std::env::var_os("TIDE_CONFIG_DIR")).is_some() {
+        return Ok(());
+    }
+    let destination = config_dir();
+    if destination.exists() {
+        return Ok(());
+    }
+    let base = destination.parent().unwrap();
+    let source = [base.join("tide"), base.join("tidal-gpui")].into_iter().find(|p| p.is_dir());
+    let Some(source) = source else { return Ok(()) };
+    let staging = base.join(format!(".abyss-import-{}-{:016x}", std::process::id(), rand::random::<u64>()));
+    std::fs::create_dir(&staging)?;
+    copy_config_tree(&source, &staging)?;
+    match std::fs::rename(&staging, &destination) {
+        Ok(()) => Ok(()),
+        // A concurrent startup may have finished its own copy first.
+        Err(_) if destination.is_dir() => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn copy_config_tree(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = destination.join(entry.file_name());
+        let kind = entry.file_type()?;
+        // Do not follow links out of the source tree or overwrite any files.
+        if kind.is_symlink() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, crate::i18n::t("migration.symbolic_link")));
+        }
+        if kind.is_dir() {
+            std::fs::create_dir(&to)?;
+            copy_config_tree(&from, &to)?;
+        } else if kind.is_file() {
+            let mut input = std::fs::File::open(&from)?;
+            let mut output = std::fs::OpenOptions::new().write(true).create_new(true).open(&to)?;
+            std::io::copy(&mut input, &mut output)?;
+            output.sync_all()?;
+        } else {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, crate::i18n::t("migration.unsupported_entry")));
+        }
+    }
+    Ok(())
 }
 
 fn settings_path() -> PathBuf {
@@ -206,6 +286,7 @@ impl Settings {
             // Plaintext tokens from an older version: rewrite them protected.
             s.save();
         }
+        crate::i18n::set_language(s.language.as_deref());
         s
     }
 

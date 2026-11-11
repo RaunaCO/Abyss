@@ -126,7 +126,7 @@ pub fn render(view: &AppView, cx: &mut Context<AppView>) -> Option<AnyElement> {
                     .w(sc(if dragging { 8. } else { 4. }))
                     .rounded(sc(4.))
                     .bg(gpui::rgba(if dragging { 0xffffffaa } else { 0xffffff40 }))
-                    .group_hover("sb", |s| s.w(sc(8.)).bg(gpui::rgba(0xffffff80))),
+                    .group_hover("sb", |s| s.w(sc(8.)).bg(theme::ink(0.5))),
             )
             // The letter bubble beside the thumb.
             .when_some(label, |d, l| {
@@ -137,10 +137,10 @@ pub fn render(view: &AppView, cx: &mut Context<AppView>) -> Option<AnyElement> {
                         .right(sc(22.))
                         .size(sc(52.))
                         .rounded(sc(14.))
-                        .bg(theme::elevated())
+                        .bg(theme::liquid_glass(0.2))
                         .border_1()
-                        .border_color(theme::border())
-                        .shadow_lg()
+                        .border_color(theme::popover_border())
+                        .shadow(theme::popover_shadow())
                         .flex()
                         .items_center()
                         .justify_center()

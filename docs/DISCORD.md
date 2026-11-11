@@ -1,22 +1,23 @@
 # Discord Rich Presence
 
-TIDE shows what you are listening to on your Discord profile, the same card
-Spotify uses ("Listening to ..."): track title, artist, album cover (album name
-on hover), a progress bar and an *Escuchar en TIDAL* button. The card is hidden
-while paused, like Spotify.
+Abyss shows what you are listening to on your Discord profile. The card shows
+the track title, artist, album cover (album name on hover), a progress bar and
+an *Escuchar en TIDAL* button. The card is hidden while paused.
 
 ## Setup
-None: TIDE ships with the Application ID of its own Discord application (named
-**TIDE**, which is what Discord shows after "Listening to"). Use the switch in
-Settings -> Discord to turn it off. Forks can use their own application via the
-`TIDE_DISCORD_ID` environment variable or `discord_client_id` in `settings.json`.
+Abyss does not ship a verified Discord application ID under its new name.
+Activity publishing stays inactive until the owner supplies one. Enter the
+Application ID in Settings > Privacy, set `discord_client_id` in
+`settings.json`, or use `ABYSS_DISCORD_ID`. The legacy `TIDE_DISCORD_ID`
+is accepted as a fallback. The owner must register or rename their Discord
+application to **Abyss**; the client cannot rename it through local IPC.
 
-**Privacy:** the card is visible to your Discord contacts and servers. It is
-on by default. Turn it off in Settings → Discord. Any local program could open
-a pipe with Discord's name before Discord does and receive the same activity
-data. That is a limitation of Discord's IPC design.
+**Privacy:** when configured and enabled, the card is visible to contacts and
+servers. The saved Discord switch is preserved during migration. Disable it
+in Settings > Privacy to hide activity. Any local program could impersonate
+the IPC pipe and receive activity data, a limitation of Discord's IPC design.
 
-Discord desktop must be running. TIDE talks to it only through its local IPC
+Discord desktop must be running. Abyss talks to it only through its local IPC
 pipe (`\.\pipe\discord-ipc-N`); nothing else is sent. Cover art is passed to
 Discord as the TIDAL image URL. Updates happen on track change, pause/resume
 and seeking (Discord allows about 5 updates per 20 s).

@@ -24,14 +24,24 @@ pub enum SortKey {
 impl SortKey {
     pub fn label(self) -> &'static str {
         match self {
-            SortKey::Added => "Recientes",
-            SortKey::Name => "Nombre",
-            SortKey::Artist => "Artista",
-            SortKey::Album => "Álbum",
-            SortKey::Year => "Año",
-            SortKey::Duration => "Duración",
-            SortKey::Count => "Nº de pistas",
-            SortKey::Rating => "Valoración",
+            SortKey::Added => crate::i18n::t("date_added"),
+            SortKey::Name => crate::i18n::t("alphabetical"),
+            SortKey::Artist => crate::i18n::t("artist"),
+            SortKey::Album => crate::i18n::t("album"),
+            SortKey::Year => crate::i18n::t("release_year"),
+            SortKey::Duration => crate::i18n::t("duration"),
+            SortKey::Count => crate::i18n::t("track_count"),
+            SortKey::Rating => crate::i18n::t("rating.label"),
+        }
+    }
+    /// Shorter label for narrow layouts (the Library selector).
+    pub fn short_label(self) -> &'static str {
+        match self {
+            SortKey::Added => crate::i18n::t("sort.added"),
+            SortKey::Name => crate::i18n::t("a_z"),
+            SortKey::Year => crate::i18n::t("year"),
+            SortKey::Count => crate::i18n::t("tracks"),
+            other => other.label(),
         }
     }
     fn code(self) -> &'static str {
@@ -227,6 +237,79 @@ impl AppView {
                 }
             });
         }
+        self.rebuild_library();
+    }
+
+    /// The Library's lists: TIDAL favourites and local files together, in the
+    /// chosen order. Local files are shown even while (or without) TIDAL
+    /// loading, so imported music is in the Library at once.
+    pub fn rebuild_library(&mut self) {
+        let (tk, td) = self.sort_of("tracks");
+        let (ak, ad) = self.sort_of("albums");
+        let ratings = self.ratings.clone();
+
+        let mut tracks: Vec<crate::tidal::Track> = self.local_tracks.clone();
+        tracks.extend(self.fav_tracks.ready().cloned().unwrap_or_default());
+        let ranks = self.sort_ranks.entry("lib-tracks").or_default();
+        rank(ranks, &tracks, |t| t.id.to_string());
+        tracks.sort_by(|a, b| {
+            let o = match tk {
+                SortKey::Name => text_key(&a.title).cmp(&text_key(&b.title)),
+                SortKey::Artist => text_key(&a.artist_names()).cmp(&text_key(&b.artist_names())),
+                SortKey::Album => {
+                    let t = |x: &crate::tidal::Track| x.album.as_ref().map(|a| text_key(&a.title)).unwrap_or_default();
+                    t(a).cmp(&t(b)).then(a.volume_number.cmp(&b.volume_number)).then(a.track_number.cmp(&b.track_number))
+                }
+                SortKey::Duration => a.duration.cmp(&b.duration),
+                SortKey::Rating => ratings.get(b.id).cmp(&ratings.get(a.id)),
+                // Newest first by the date each was added (TIDAL and local use
+                // the same format), then the order they arrived in.
+                _ => b.added.cmp(&a.added).then(ranks.get(&a.id.to_string()).cmp(&ranks.get(&b.id.to_string()))),
+            };
+            if td {
+                o.reverse()
+            } else {
+                o
+            }
+        });
+        self.lib_tracks = tracks;
+
+        let mut albums: Vec<crate::tidal::Album> = self.local_albums.clone();
+        albums.extend(self.fav_albums.ready().cloned().unwrap_or_default());
+        let ranks = self.sort_ranks.entry("lib-albums").or_default();
+        rank(ranks, &albums, |a| a.id.to_string());
+        albums.sort_by(|a, b| {
+            let o = match ak {
+                SortKey::Name => text_key(&a.title).cmp(&text_key(&b.title)),
+                SortKey::Artist => text_key(&a.artist_names()).cmp(&text_key(&b.artist_names())).then(a.release_date.cmp(&b.release_date)),
+                SortKey::Year => b.release_date.cmp(&a.release_date),
+                SortKey::Rating => ratings.get_album(b.id).cmp(&ratings.get_album(a.id)),
+                _ => ranks.get(&a.id.to_string()).cmp(&ranks.get(&b.id.to_string())),
+            };
+            if ad {
+                o.reverse()
+            } else {
+                o
+            }
+        });
+        self.lib_albums = albums;
+        let (rk, rd) = self.sort_of("artists");
+        let mut artists = self.local_artists.clone();
+        artists.extend(self.fav_artists.ready().cloned().unwrap_or_default());
+        let ranks = self.sort_ranks.entry("lib-artists").or_default();
+        rank(ranks, &artists, |a| a.id.to_string());
+        artists.sort_by(|a, b| {
+            let order = match rk {
+                SortKey::Name => text_key(&a.name).cmp(&text_key(&b.name)),
+                _ => ranks.get(&a.id.to_string()).cmp(&ranks.get(&b.id.to_string())),
+            };
+            if rd {
+                order.reverse()
+            } else {
+                order
+            }
+        });
+        self.lib_artists = artists;
     }
 }
 
@@ -238,7 +321,7 @@ pub fn bar(view: &mut AppView, section: &'static str, cx: &mut Context<AppView>)
         .flex()
         .items_center()
         .gap(sc(8.))
-        .child(div().text_size(sc(12.)).text_color(theme::text_dim()).mr(sc(4.)).child("Ordenar por"))
+        .child(div().text_size(sc(12.)).text_color(theme::text_dim()).mr(sc(4.)).child(crate::i18n::t("sort_by")))
         .children(options(section).iter().map(|&k| {
             let active = k == cur;
             let label: SharedString =
@@ -251,9 +334,17 @@ pub fn bar(view: &mut AppView, section: &'static str, cx: &mut Context<AppView>)
                 .text_size(sc(12.))
                 .font_weight(if active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
                 .cursor_pointer()
-                .bg(if active { theme::text() } else { theme::surface() })
+                .relative()
+                .when(active, |d| d.bg(theme::text()))
+                .when(!active, |d| {
+                    d.bg(theme::liquid_glass(0.)).border_1().border_color(theme::glass_rim(0.)).child(super::glass::sheen(
+                        SharedString::from(format!("glass-sort-{section}-{}", k.code())),
+                        999.,
+                        0.9,
+                    ))
+                })
                 .text_color(if active { theme::bg() } else { theme::text_secondary() })
-                .hover(|s| if active { s.opacity(0.9) } else { s.bg(theme::elevated()).text_color(theme::text()) })
+                .hover(|s| if active { s.opacity(0.9) } else { s.text_color(theme::text()) })
                 .active(|s| s.opacity(0.7))
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| this.set_sort(section, k, cx)))

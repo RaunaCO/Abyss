@@ -14,3 +14,6 @@ vault/
 graphify-out/
 docs/GRAPH.md
 .graphifyignore
+
+# Release artifacts (built by scripts/package.ps1)
+/dist

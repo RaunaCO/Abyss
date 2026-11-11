@@ -1,4 +1,12 @@
-//! Embedded SVG icons (Material Design icon paths, Apache-2.0).
+//! Abyss's own icon family, embedded as SVG.
+//!
+//! Drawn on a 24 px grid (live area 3..21) with one consistent language: a
+//! 1.7 stroke with round caps and joins, geometric shapes, generous negative
+//! space. Solid glyphs (play, pause, skip, filled heart and star) are filled
+//! AND stroked, so their corners are softened like the outlines. Window
+//! controls use a hairline (1 px) stroke. Every glyph is a single colour; the
+//! colour comes from the element (`text_color`). Original artwork, part of
+//! Abyss (MIT).
 
 use super::sc;
 use std::borrow::Cow;
@@ -32,6 +40,8 @@ pub enum Icon {
     Back,
     Forward,
     Settings,
+    Sun,
+    Moon,
     Playlist,
     Album,
     Track,
@@ -55,9 +65,81 @@ pub enum Icon {
     WinMax,
     WinRestore,
     WinClose,
+    Fullscreen,
+    ExitFullscreen,
+    Sync,
+    Library,
+    SignOut,
+    Grid,
+    List,
+    Stats,
+    Upload,
 }
 
 impl Icon {
+    /// Every icon, for the diagnostic sheet (`TIDE_ICON_SHEET`).
+    pub const ALL: [Icon; 59] = [
+        Icon::Play,
+        Icon::Pause,
+        Icon::PlayRound,
+        Icon::ChevUp,
+        Icon::PauseRound,
+        Icon::Next,
+        Icon::Prev,
+        Icon::Shuffle,
+        Icon::Repeat,
+        Icon::RepeatOne,
+        Icon::Heart,
+        Icon::HeartFilled,
+        Icon::Star,
+        Icon::Collapse,
+        Icon::StarHalf,
+        Icon::StarOutline,
+        Icon::Search,
+        Icon::Home,
+        Icon::Explore,
+        Icon::VolumeUp,
+        Icon::VolumeOff,
+        Icon::Queue,
+        Icon::Back,
+        Icon::Forward,
+        Icon::Settings,
+        Icon::Sun,
+        Icon::Moon,
+        Icon::Playlist,
+        Icon::Album,
+        Icon::Track,
+        Icon::Artist,
+        Icon::Mix,
+        Icon::Lyrics,
+        Icon::More,
+        Icon::Close,
+        Icon::Explicit,
+        Icon::Clock,
+        Icon::Radio,
+        Icon::Menu,
+        Icon::Plus,
+        Icon::ChevDown,
+        Icon::Edit,
+        Icon::Link,
+        Icon::Calendar,
+        Icon::Trophy,
+        Icon::VideoBox,
+        Icon::WinMin,
+        Icon::WinMax,
+        Icon::WinRestore,
+        Icon::WinClose,
+        Icon::Fullscreen,
+        Icon::ExitFullscreen,
+        Icon::Sync,
+        Icon::Library,
+        Icon::SignOut,
+        Icon::Grid,
+        Icon::List,
+        Icon::Stats,
+        Icon::Upload,
+    ];
+
     fn name(self) -> &'static str {
         match self {
             Icon::Play => "play",
@@ -85,6 +167,8 @@ impl Icon {
             Icon::Back => "back",
             Icon::Forward => "forward",
             Icon::Settings => "settings",
+            Icon::Sun => "sun",
+            Icon::Moon => "moon",
             Icon::Playlist => "playlist",
             Icon::Album => "album",
             Icon::Track => "track",
@@ -108,7 +192,27 @@ impl Icon {
             Icon::WinMax => "win_max",
             Icon::WinRestore => "win_restore",
             Icon::WinClose => "win_close",
+            Icon::Fullscreen => "fullscreen",
+            Icon::ExitFullscreen => "exit_fullscreen",
+            Icon::Sync => "sync",
+            Icon::Library => "library",
+            Icon::SignOut => "sign_out",
+            Icon::Grid => "grid",
+            Icon::List => "list",
+            Icon::Stats => "stats",
+            Icon::Upload => "upload",
         }
+    }
+
+    /// The icon in a fixed `size` box, drawn scaled by `scale` around its centre.
+    /// The scale is a paint transform, so it changes smoothly (no whole-pixel
+    /// steps) and never moves the layout around it.
+    pub fn el_scaled(self, size: f32, color: Rgba, scale: f32) -> Svg {
+        let el = self.el(size, color);
+        if (scale - 1.0).abs() < 0.001 {
+            return el;
+        }
+        el.with_transformation(gpui::Transformation::scale(gpui::size(scale, scale)))
     }
 
     pub fn el(self, size: f32, color: Rgba) -> Svg {
@@ -118,71 +222,169 @@ impl Icon {
     }
 }
 
-fn path(name: &str) -> Option<&'static str> {
+fn markup(name: &str) -> Option<&'static str> {
     Some(match name {
-        "play" => "M8 5v14l11-7z",
-        "pause" => "M6 5h4v14H6zM14 5h4v14h-4z",
-        "chev_up" => "M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z",
-        "play_round" => "M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z",
-        "pause_round" => "M8 19c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2s-2 .9-2 2v10c0 1.1.9 2 2 2zm6-12v10c0 1.1.9 2 2 2s2-.9 2-2V7c0-1.1-.9-2-2-2s-2 .9-2 2z",
-        "next" => "M6 6l8.5 6L6 18zM16 6h2v12h-2z",
-        "prev" => "M18 6l-8.5 6L18 18zM6 6h2v12H6z",
-        "shuffle" => "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z",
-        "repeat" => "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z",
-        "repeat_one" => "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z",
-        "heart" => "M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z",
-        "heart_filled" => "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z",
-        "collapse" => "M18.41 16.59L13.82 12l4.59-4.59L17 6l-6 6 6 6zM6 6h2v12H6z",
-        "star" => "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z",
-        "star_half" => "M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4V6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z",
-        "star_outline" => "M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z",
-        "search" => "M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z",
-        "home" => "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z",
-        "explore" => "M12 10.9c-.61 0-1.1.49-1.1 1.1s.49 1.1 1.1 1.1c.61 0 1.1-.49 1.1-1.1s-.49-1.1-1.1-1.1zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19z",
-        "volume_up" => "M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z",
-        "volume_off" => "M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z",
-        "queue" => "M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z",
-        "back" => "M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z",
-        "forward" => "M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z",
-        "settings" => "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z",
-        "playlist" => "M19 9H2v2h17V9zm0-4H2v2h17V5zM2 15h13v-2H2v2zm15-2v6l5-3-5-3z",
-        "album" => "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-5.5c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z",
-        "track" => "M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z",
-        "artist" => "M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z",
-        "mix" => "M7 18h2V6H7v12zm4 4h2V2h-2v20zm-8-8h2v-4H3v4zm12 4h2V6h-2v12zm4-8v4h2v-4h-2z",
-        "lyrics" => "M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z",
-        "more" => "M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z",
-        "close" => "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
-        "explicit" => "M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z",
-        "clock" => "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
-        "radio" => "M3.24 6.15C2.51 6.43 2 7.17 2 8v12c0 1.1.89 2 2 2h16c1.11 0 2-.9 2-2V8c0-1.11-.89-2-2-2H8.3l8.26-3.34L15.88 1 3.24 6.15zM7 20c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm13-8h-2v-2h-2v2H4V8h16v4z",
-        "calendar" => "M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zM9 14H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2zm-8 4H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2z",
-        "trophy" => "M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94A5.01 5.01 0 0011 15.9V19H7v2h10v-2h-4v-3.1a5.01 5.01 0 003.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z",
-        "video_box" => "M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM10 8v8l6-4z",
-        "edit" => "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
-        "link" => "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z",
-        "chev_down" => "M7.4 9.6L12 14.2l4.6-4.6 1.4 1.4-6 6-6-6z",
-        "menu" => "M3 6h18v1.6H3zM3 11.2h18v1.6H3zM3 16.4h18V18H3z",
-        "plus" => "M11.2 4h1.6v7.2H20v1.6h-7.2V20h-1.6v-7.2H4v-1.6h7.2z",
-        // Thin window-control glyphs.
-        "win_min" => "M5 11.5h14v1H5z",
-        "win_max" => "M5 5h14v1H5zM5 18h14v1H5zM5 5h1v14H5zM18 5h1v14h-1z",
-        "win_restore" => "M5 8h11v1H5zM5 18h11v1H5zM5 8h1v11H5zM15 8h1v11h-1zM8 5h11v1H8zM18 5h1v11h-1zM8 5h1v3H8zM16 15h3v1h-3z",
-        "win_close" => "M6.7 6l5.3 5.3L17.3 6l.7.7-5.3 5.3 5.3 5.3-.7.7-5.3-5.3L6.7 18l-.7-.7 5.3-5.3L6 6.7z",
+        "play" => r##"<path fill="#fff" d="M8 5.6v12.8a.6.6 0 0 0 .9.5l10.2-6.4a.6.6 0 0 0 0-1L8.9 5.1a.6.6 0 0 0-.9.5z"/>"##,
+        "play_round" => r##"<path fill="#fff" d="M8.6 6.2v11.6a.6.6 0 0 0 .9.5l9.2-5.8a.6.6 0 0 0 0-1L9.5 5.7a.6.6 0 0 0-.9.5z"/>"##,
+        "pause" => {
+            r##"<rect fill="#fff" stroke="none" x="6.2" y="5" width="3.9" height="14" rx="1.2"/><rect fill="#fff" stroke="none" x="13.9" y="5" width="3.9" height="14" rx="1.2"/>"##
+        }
+        "pause_round" => {
+            r##"<rect fill="#fff" stroke="none" x="6.4" y="5.4" width="3.8" height="13.2" rx="1.6"/><rect fill="#fff" stroke="none" x="13.8" y="5.4" width="3.8" height="13.2" rx="1.6"/>"##
+        }
+        "next" => {
+            r##"<path fill="#fff" d="M6 6.7v10.6a.6.6 0 0 0 .9.5l8-5.3a.6.6 0 0 0 0-1l-8-5.3a.6.6 0 0 0-.9.5z"/><path d="M18 6v12"/>"##
+        }
+        "prev" => {
+            r##"<path fill="#fff" d="M18 6.7v10.6a.6.6 0 0 1-.9.5l-8-5.3a.6.6 0 0 1 0-1l8-5.3a.6.6 0 0 1 .9.5z"/><path d="M6 6v12"/>"##
+        }
+        "shuffle" => {
+            r##"<path d="M3.8 7.2h2.9c1.5 0 2.9.8 3.7 2l3.2 5.6c.8 1.2 2.2 2 3.7 2H20"/><path d="M3.8 16.8h2.9c1.5 0 2.9-.8 3.7-2"/><path d="M13.6 9.2c.8-1.2 2.2-2 3.7-2H20"/><path d="M17.6 4.8L20 7.2l-2.4 2.4M17.6 14.4l2.4 2.4-2.4 2.4"/>"##
+        }
+        "repeat" => {
+            r##"<path d="M4.5 11.2V10a3.2 3.2 0 0 1 3.2-3.2h11.6"/><path d="M16.8 4.3l2.5 2.5-2.5 2.5"/><path d="M19.5 12.8V14a3.2 3.2 0 0 1-3.2 3.2H4.7"/><path d="M7.2 19.7l-2.5-2.5 2.5-2.5"/>"##
+        }
+        "repeat_one" => {
+            r##"<path d="M4.5 11.2V10a3.2 3.2 0 0 1 3.2-3.2h11.6"/><path d="M16.8 4.3l2.5 2.5-2.5 2.5"/><path d="M19.5 12.8V14a3.2 3.2 0 0 1-3.2 3.2H4.7"/><path d="M7.2 19.7l-2.5-2.5 2.5-2.5"/><path d="M11 10.6l1.4-.9v4.6"/>"##
+        }
+        "heart" => {
+            r##"<path d="M12 19.6c-.9-.5-7.8-4.6-7.8-9.9C4.2 7 6.1 5 8.5 5c1.5 0 2.7.7 3.5 1.9C12.8 5.7 14 5 15.5 5c2.4 0 4.3 2 4.3 4.7 0 5.3-6.9 9.4-7.8 9.9z"/>"##
+        }
+        "heart_filled" => {
+            r##"<path fill="#fff" d="M12 19.6c-.9-.5-7.8-4.6-7.8-9.9C4.2 7 6.1 5 8.5 5c1.5 0 2.7.7 3.5 1.9C12.8 5.7 14 5 15.5 5c2.4 0 4.3 2 4.3 4.7 0 5.3-6.9 9.4-7.8 9.9z"/>"##
+        }
+        "star" => r##"<path fill="#fff" d="M12 4.3l2.3 4.6 5.1.8-3.7 3.6.9 5.1-4.6-2.4-4.6 2.4.9-5.1-3.7-3.6 5.1-.8z"/>"##,
+        "star_outline" => r##"<path d="M12 4.3l2.3 4.6 5.1.8-3.7 3.6.9 5.1-4.6-2.4-4.6 2.4.9-5.1-3.7-3.6 5.1-.8z"/>"##,
+        "star_half" => {
+            r##"<path d="M12 4.3l2.3 4.6 5.1.8-3.7 3.6.9 5.1-4.6-2.4-4.6 2.4.9-5.1-3.7-3.6 5.1-.8z"/><path fill="#fff" d="M12 4.3v11.7l-4.6 2.4.9-5.1-3.7-3.6 5.1-.8z"/>"##
+        }
+        "collapse" => r##"<path d="M5.5 5v14"/><path d="M15.5 7l-5 5 5 5"/>"##,
+        "chev_up" => r##"<path d="M7 14.5l5-5 5 5"/>"##,
+        "chev_down" => r##"<path d="M7 9.5l5 5 5-5"/>"##,
+        "back" => r##"<path d="M14.5 6.5L9 12l5.5 5.5"/>"##,
+        "forward" => r##"<path d="M9.5 6.5L15 12l-5.5 5.5"/>"##,
+        "search" => r##"<circle cx="10.8" cy="10.8" r="6.1"/><path d="M15.3 15.3l4.2 4.2"/>"##,
+        "home" => r##"<path d="M4.6 10.4L12 4.7l7.4 5.7v7.7a1.6 1.6 0 0 1-1.6 1.6h-3.4v-5.2H9.6v5.2H6.2a1.6 1.6 0 0 1-1.6-1.6z"/>"##,
+        "explore" => r##"<circle cx="12" cy="12" r="8.2"/><path fill="#fff" d="M15.2 8.8l-1.9 4.5-4.5 1.9 1.9-4.5z"/>"##,
+        "volume_up" => {
+            r##"<path fill="#fff" d="M4.6 9.6h2.7l3.8-3.3v11.4l-3.8-3.3H4.6z"/><path d="M14.6 9.3a3.9 3.9 0 0 1 0 5.4"/><path d="M17.3 6.7a7.6 7.6 0 0 1 0 10.6"/>"##
+        }
+        "volume_off" => {
+            r##"<path fill="#fff" d="M4.6 9.6h2.7l3.8-3.3v11.4l-3.8-3.3H4.6z"/><path d="M15.3 9.7l4.6 4.6M19.9 9.7l-4.6 4.6"/>"##
+        }
+        "queue" => r##"<path d="M4.5 6.8h11M4.5 11.6h11M4.5 16.4h6"/><path fill="#fff" d="M15.4 14.2v5.2l4.1-2.6z"/>"##,
+        "sun" => {
+            r##"<circle cx="12" cy="12" r="4"/><path d="M12 2.8v2m0 14.4v2M2.8 12h2m14.4 0h2M5.5 5.5l1.4 1.4m10.2 10.2 1.4 1.4m0-13-1.4 1.4M6.9 17.1l-1.4 1.4"/>"##
+        }
+        "moon" => r##"<path d="M20.6 14A8.8 8.8 0 0 1 10 3.4 8.8 8.8 0 1 0 20.6 14Z"/>"##,
+        "settings" => {
+            r##"<path d="M4.5 8h8.7M17.7 8h1.8M4.5 16h1.8M10.8 16h8.7"/><circle cx="15.5" cy="8" r="2.2"/><circle cx="8.5" cy="16" r="2.2"/>"##
+        }
+        "playlist" => {
+            r##"<path d="M4.5 6.6h11M4.5 11.2h11M4.5 15.8h5.6"/><circle cx="15.6" cy="17.4" r="2.1"/><path d="M17.7 17.4V10.6l2.1.9"/>"##
+        }
+        "album" => r##"<circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="2.3"/>"##,
+        "track" => r##"<circle cx="8.4" cy="17" r="2.6"/><path d="M11 17V5.4l6.6 1.8"/>"##,
+        "artist" => r##"<circle cx="12" cy="8.6" r="3.6"/><path d="M5.4 19.6c.7-3.3 3.4-5.6 6.6-5.6s5.9 2.3 6.6 5.6"/>"##,
+        "mix" => r##"<path d="M4 10.2v3.6M8 7v10M12 4.6v14.8M16 8v8M20 10.2v3.6"/>"##,
+        "lyrics" => {
+            r##"<path d="M5.4 5.4h13.2a1.6 1.6 0 0 1 1.6 1.6v8.4a1.6 1.6 0 0 1-1.6 1.6H10.2l-3.9 3v-3h-.9a1.6 1.6 0 0 1-1.6-1.6V7a1.6 1.6 0 0 1 1.6-1.6z"/><path d="M8.2 9.4h7.6M8.2 12.8h4.8"/>"##
+        }
+        "more" => {
+            r##"<circle fill="#fff" stroke="none" cx="5.8" cy="12" r="1.6"/><circle fill="#fff" stroke="none" cx="12" cy="12" r="1.6"/><circle fill="#fff" stroke="none" cx="18.2" cy="12" r="1.6"/>"##
+        }
+        "close" => r##"<path d="M6.6 6.6l10.8 10.8M17.4 6.6L6.6 17.4"/>"##,
+        "explicit" => r##"<rect x="4.4" y="4.4" width="15.2" height="15.2" rx="3.2"/><path d="M14.2 8.4H10v7.2h4.2M10 12h3.6"/>"##,
+        "clock" => r##"<circle cx="12" cy="12" r="8.2"/><path d="M12 7.4V12l3.1 2"/>"##,
+        "radio" => {
+            r##"<circle fill="#fff" stroke="none" cx="12" cy="12" r="1.9"/><path d="M8.6 15.4a4.8 4.8 0 0 1 0-6.8M15.4 8.6a4.8 4.8 0 0 1 0 6.8M5.8 18.2a8.8 8.8 0 0 1 0-12.4M18.2 5.8a8.8 8.8 0 0 1 0 12.4"/>"##
+        }
+        "menu" => r##"<path d="M4.5 7.2h15M4.5 12h15M4.5 16.8h15"/>"##,
+        "plus" => r##"<path d="M12 5v14M5 12h14"/>"##,
+        "edit" => r##"<path d="M15.4 5.3l3.3 3.3-9.6 9.6H5.8v-3.3z"/><path d="M13.3 7.4l3.3 3.3"/>"##,
+        "link" => {
+            r##"<path d="M10 14l4-4"/><path d="M8.6 11.4L7.1 12.9a3.5 3.5 0 0 0 5 5l1.5-1.5M15.4 12.6l1.5-1.5a3.5 3.5 0 0 0-5-5l-1.5 1.5"/>"##
+        }
+        "calendar" => r##"<rect x="4.4" y="5.6" width="15.2" height="14" rx="2.6"/><path d="M4.4 10.2h15.2M8.4 3.6v4M15.6 3.6v4"/>"##,
+        "trophy" => {
+            r##"<path d="M8 4.6h8v5.2a4 4 0 0 1-8 0z"/><path d="M8 6.6H5.4v1.2a3 3 0 0 0 3 3M16 6.6h2.6v1.2a3 3 0 0 1-3 3M12 13.8v3.6M8.6 19.6h6.8"/>"##
+        }
+        "video_box" => r##"<rect x="3.6" y="5.6" width="16.8" height="12.8" rx="2.6"/><path fill="#fff" d="M10.4 9.6v4.8l3.9-2.4z"/>"##,
+        // Two upright volumes and one leaning: the collection.
+        "library" => r##"<path d="M5.4 4.8v14.4M9.8 4.8v14.4"/><path d="M13.8 5.6l4.6 13.4"/>"##,
+        // Door frame with an arrow leaving it.
+        "sign_out" => {
+            r##"<path d="M10.2 4.8H6.8a1.8 1.8 0 0 0-1.8 1.8v10.8a1.8 1.8 0 0 0 1.8 1.8h3.4"/><path d="M14.6 8l4 4-4 4M18.4 12H9.8"/>"##
+        }
+        // Three bars rising, on a base line: statistics.
+        "stats" => r##"<path d="M4.6 19.2h14.8M7.6 15.6v-3.2M12 15.6V8.4M16.4 15.6V5.4"/>"##,
+        // Arrow rising out of a tray.
+        "upload" => {
+            r##"<path d="M12 15.2V4.8M7.8 9l4.2-4.2L16.2 9"/><path d="M5 14.6v3.2a1.6 1.6 0 0 0 1.6 1.6h10.8a1.6 1.6 0 0 0 1.6-1.6v-3.2"/>"##
+        }
+        "grid" => {
+            r##"<rect x="4.6" y="4.6" width="6" height="6" rx="1.4"/><rect x="13.4" y="4.6" width="6" height="6" rx="1.4"/><rect x="4.6" y="13.4" width="6" height="6" rx="1.4"/><rect x="13.4" y="13.4" width="6" height="6" rx="1.4"/>"##
+        }
+        "list" => {
+            r##"<path d="M9.4 6.8h9.6M9.4 12h9.6M9.4 17.2h9.6"/><circle fill="#fff" stroke="none" cx="5.4" cy="6.8" r="1.15"/><circle fill="#fff" stroke="none" cx="5.4" cy="12" r="1.15"/><circle fill="#fff" stroke="none" cx="5.4" cy="17.2" r="1.15"/>"##
+        }
+        "sync" => {
+            r##"<path d="M5.11 10.78A7 7 0 0 1 18.06 8.5M15.06 7.41L18.06 8.5 18.62 5.35M18.89 13.22A7 7 0 0 1 5.94 15.5M8.94 16.59L5.94 15.5 5.38 18.65"/>"##
+        }
+        "win_min" => r##"<path stroke-width="1" stroke-linecap="butt" d="M6 12h12"/>"##,
+        "win_max" => r##"<rect stroke-width="1" x="6.5" y="6.5" width="11" height="11" rx="1.2"/>"##,
+        "win_restore" => {
+            r##"<rect stroke-width="1" x="6.5" y="8.5" width="9" height="9" rx="1.2"/><path stroke-width="1" d="M8.5 6.5h7.8a1.2 1.2 0 0 1 1.2 1.2v7.8"/>"##
+        }
+        "fullscreen" => r##"<path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5"/>"##,
+        "exit_fullscreen" => r##"<path d="M4 9h5V4m6 0v5h5M4 15h5v5m6 0v-5h5"/>"##,
+        "win_close" => r##"<path stroke-width="1" d="M7 7l10 10M17 7L7 17"/>"##,
         _ => return None,
     })
+}
+
+/// Angles the turning sync glyph is drawn at (7.5 degree steps).
+const SYNC_STEPS: u32 = 48;
+
+/// The sync glyph turned by `radians` (clockwise), at the nearest drawn step.
+pub fn sync_turned(size: f32, color: Rgba, radians: f32) -> Svg {
+    let k = ((radians / std::f32::consts::TAU).rem_euclid(1.0) * SYNC_STEPS as f32).round() as u32 % SYNC_STEPS;
+    let px_size = (size * super::zoom()).round().max(1.0);
+    svg().path(SharedString::from(format!("icons/sync@{k}.svg"))).size(px(px_size)).flex_none().text_color(color)
 }
 
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, p: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+        // The pointer of the album dropdown: a triangle with a softened apex.
+        if p == "shapes/tip.svg" {
+            return Ok(Some(Cow::Borrowed(
+                br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 12"><path fill="#fff" d="M0 12L10.2 1.6Q12 0 13.8 1.6L24 12Z"/></svg>"##,
+            )));
+        }
         let Some(name) = p.strip_prefix("icons/").and_then(|n| n.strip_suffix(".svg")) else {
             return Ok(None);
         };
-        Ok(path(name).map(|d| {
+        // "sync@k": the sync glyph turned by k steps (see `sync_turned`), drawn
+        // as vectors so every angle is as crisp as the still icon.
+        if let Some(k) = name.strip_prefix("sync@").and_then(|k| k.parse::<u32>().ok()) {
+            let deg = (k % SYNC_STEPS) as f32 * 360.0 / SYNC_STEPS as f32;
+            let m = markup("sync").unwrap_or_default();
+            return Ok(Some(Cow::Owned(
+                format!(
+                    r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate({deg} 12 12)">{m}</g></svg>"##
+                )
+                .into_bytes(),
+            )));
+        }
+        // Stroke attributes are inherited by every shape; filled shapes set their own.
+        Ok(markup(name).map(|m| {
             Cow::Owned(
-                format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#fff" d="{d}"/></svg>"##).into_bytes(),
+                format!(
+                    r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">{m}</svg>"##
+                )
+                .into_bytes(),
             )
         }))
     }

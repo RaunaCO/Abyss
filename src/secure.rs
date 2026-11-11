@@ -4,7 +4,7 @@
 //! the current user's logon credentials, so `settings.json` copied to another
 //! account or machine, or read from a backup, does not reveal them. DPAPI does
 //! **not** protect against other programs running as the same user: they can
-//! ask Windows to decrypt the blob just as TIDE does.
+//! ask Windows to decrypt the blob just as Abyss does.
 //!
 //! On other platforms there is no equivalent wired up yet: `protect` returns
 //! `None` and the caller keeps the plaintext fields (documented in

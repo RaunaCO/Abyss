@@ -1,4 +1,4 @@
-//! Albums played in TIDE, newest first. TIDAL only learns what was played
+//! Albums played in Abyss, newest first. TIDAL only learns what was played
 //! through its own playback reports, so the home shortcuts would never change
 //! after listening here; this local list feeds "Escuchado recientemente".
 

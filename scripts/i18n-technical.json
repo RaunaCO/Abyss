@@ -1,0 +1,85 @@
+{
+  "src/ui/debug.rs": [
+    "Hip-Hop"
+  ],
+  "src/ui/images.rs": [
+    "RIFF",
+    "blur|{k}"
+  ],
+  "src/ui/info.rs": [
+    "FLAC",
+    "AAC",
+    "HIGH",
+    "LOW"
+  ],
+  "src/ui/input.rs": [
+    "TextInput"
+  ],
+  "src/ui/mod.rs": [
+    "App && !TextInput",
+    "App",
+    "TIDAL",
+    "PLAYLIST",
+    "ALBUM",
+    "ARTIST"
+  ],
+  "src/ui/now_playing.rs": [
+    "Main Artist",
+    "MAIN_ARTIST",
+    "Featured Artist",
+    "FEATURED_ARTIST",
+    "Producer",
+    "Composer",
+    "Lyricist",
+    "Songwriter",
+    "Writer",
+    "Mixing Engineer",
+    "Mixer",
+    "Mastering Engineer",
+    "Engineer",
+    "Recording Engineer",
+    "Record Label",
+    "Vocals",
+    "Vocal",
+    "Guitar",
+    "Bass",
+    "Bass Guitar",
+    "Drums",
+    "Keyboards",
+    "\\u{a0}"
+  ],
+  "src/ui/pages.rs": [
+    "most listened",
+    "UPLOADS",
+    "\\u{a0}"
+  ],
+  "src/ui/playlists.rs": [
+    "USER"
+  ],
+  "src/ui/replay.rs": [
+    "USERPROFILE",
+    "Pictures",
+    "Abyss",
+    "Replay-{y}-{m:02}-{d:02}-{:02}{:02}{:02}.png"
+  ],
+  "src/ui/scrollbar.rs": [
+    "The ",
+    "the "
+  ],
+  "src/ui/sort.rs": [
+    "the "
+  ],
+  "src/ui/theme.rs": [
+    "Inter"
+  ],
+  "src/ui/widgets.rs": [
+    "HIRES_LOSSLESS",
+    "LOSSLESS",
+    "DOLBY_ATMOS",
+    "MQA",
+    "SONY_360RA"
+  ],
+  "src/ui/onboarding.rs": [
+    "Welcome"
+  ]
+}

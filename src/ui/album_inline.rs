@@ -38,26 +38,34 @@ impl AppView {
 }
 
 /// The unfolded panel: cover and details on the left, tracks on the right.
-pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: &mut Context<AppView>) -> AnyElement {
+pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, card_w: f32, cx: &mut Context<AppView>) -> AnyElement {
     let id = album.id;
     let tracks = view.albums.get(&id).and_then(Load::ready).map(|(_, t)| t.clone());
     let playing_id = view.now.as_ref().map(|n| n.track.id);
     let playing = view.now.is_some() && !view.snap.paused && !view.ended;
     let artist_id = album.artists.first().map(|a| a.id);
-    // Caret under the clicked card.
-    let caret_x = 24.0 + 8.0 + column as f32 * (theme::CARD_W + 8.0) + theme::CARD_W / 2.0 - 10.0;
+    // Centre of the clicked card, where the tip points.
+    // (same metrics as the grid above it: real card width and gap)
+    let tip_cx = column as f32 * (card_w + theme::GAP) + card_w / 2.0;
+    let grid_w = cols as f32 * card_w + cols.saturating_sub(1) as f32 * theme::GAP;
+    let stacked = grid_w < 570.;
+    let inset = if stacked { super::widgets::PANEL_PAD_SM } else { super::widgets::PANEL_PAD };
+    let cover_size = (grid_w - 2. * inset).clamp(1., if stacked { 144. } else { 200. });
+    let list_w = if stacked { grid_w - 2. * inset } else { grid_w - 200. - 24. - 2. * inset };
 
     let total: u64 = tracks.as_ref().map(|t| t.iter().map(|x| x.duration as u64).sum()).unwrap_or(album.duration as u64);
     let n = tracks.as_ref().map(|t| t.len()).unwrap_or(album.number_of_tracks as usize);
-    let meta = format!(
-        "{}{} pistas · {}",
-        if album.year().is_empty() { String::new() } else { format!("{} · ", album.year()) },
-        n,
-        fmt_long(total)
+    let meta = crate::i18n::text(
+        "tracks.count_duration",
+        &[
+            (if album.year().is_empty() { String::new() } else { format!("{} · ", album.year()) }).to_string(),
+            format!("{}", n),
+            fmt_long(total).to_string(),
+        ],
     );
 
     let list: AnyElement = match &tracks {
-        None => div().p(sc(20.)).text_color(theme::text_dim()).child("Cargando pistas…").into_any_element(),
+        None => div().p(sc(20.)).text_color(theme::text_dim()).child(crate::i18n::t("loading_tracks")).into_any_element(),
         Some(tracks) => {
             let multi_disc = tracks.iter().any(|t| t.volume_number > 1);
             let row = |i: usize, cx: &mut Context<AppView>| -> AnyElement {
@@ -72,8 +80,10 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                 let (h, p) = (super::interact::hover(&rk), super::interact::press(&rk));
                 let row = div()
                     .id(("inline-track", i))
-                    .h(sc(34.))
+                    .h(sc(42.))
                     .px(sc(10.))
+                    .border_b_1()
+                    .border_color(theme::divider())
                     .flex()
                     .items_center()
                     .gap(sc(10.))
@@ -105,7 +115,7 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                             .flex_none()
                             .flex()
                             .justify_center()
-                            .text_size(sc(12.))
+                            .text_size(sc(theme::TYPE_LABEL))
                             .text_color(if current { theme::accent() } else { theme::text_dim() })
                             .child(div().group_hover(group.clone(), |s| s.invisible()).child(if current {
                                 super::widgets::eq_bars(playing, theme::accent()).into_any_element()
@@ -144,18 +154,22 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                             .text_color(if current { theme::accent() } else { theme::text() })
                             .child(t.display_title()),
                     )
-                    // Stars: always shown when rated, otherwise on hover.
-                    .child(
-                        div()
-                            .flex_none()
-                            .when(rated == 0, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
-                            .child(super::widgets::stars("inl", t.id, 12., view, cx)),
-                    )
+                    // Ratings give way to the title in the narrowest layout.
+                    .when(list_w >= 300., |d| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .when(rated == 0, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
+                                .child(super::widgets::stars("inl", t.id, 12., view, cx)),
+                        )
+                    })
                     // Like: always shown when liked, otherwise on hover.
                     .child(
                         div()
                             .id(("inline-fav", i))
                             .flex_none()
+                            // Local files cannot be TIDAL favourites.
+                            .when(t_fav.local_path.is_some(), |d| d.invisible())
                             .cursor_pointer()
                             .when(!fav, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
                             .active(|s| s.opacity(0.5))
@@ -169,7 +183,13 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                                 this.toggle_favorite(&t_fav, cx)
                             })),
                     )
-                    .child(div().flex_none().text_size(sc(12.)).text_color(theme::text_secondary()).child(fmt_time(t.duration as f64)))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(sc(theme::TYPE_LABEL))
+                            .text_color(theme::text_secondary())
+                            .child(fmt_time(t.duration as f64)),
+                    )
                     .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         if ev.click_count() >= 2 {
@@ -191,8 +211,6 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
             // Adapt to the room: as many columns as fit (>= 260 px each), but only as
             // many as the album needs (about 10 rows per column), so long albums
             // spread out instead of growing very tall.
-            let grid_w = cols as f32 * (theme::CARD_W + 8.0);
-            let list_w = (grid_w - 200.0 - 24.0 - 40.0).max(260.0);
             let fit = ((list_w + 16.0) / 276.0).floor().clamp(1.0, 4.0) as usize;
             let need = tracks.len().div_ceil(10).clamp(1, 4);
             let ncols = fit.min(need);
@@ -223,7 +241,7 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                                 .text_size(sc(10.5))
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(theme::text_dim())
-                                .child(format!("DISCO {d}"))
+                                .child(crate::i18n::text("disc.heading", &[format!("{}", d)]))
                                 .into_any_element(),
                         })
                         .collect();
@@ -235,61 +253,94 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
     };
 
     let a_open = album.clone();
+    // The tip and the panel are one surface: the tip is drawn after the panel,
+    // over its top border, in the panel's colour, with a 1 px rim matching the
+    // border (the border over the panel colour) along its two sides.
+    const TIP_W: f32 = 24.0;
+    const TIP_H: f32 = 12.0;
+    // The tip continues the glass panel: its top colour and rim.
+    let surface = theme::glass_top();
+    let rim = theme::glass_rim(0.);
+    let tip_left = (tip_cx - TIP_W / 2.0).max(14.0);
+    let tip = |w: f32, h: f32, color: gpui::Rgba| gpui::svg().path("shapes/tip.svg").w(sc(w)).h(sc(h)).text_color(color);
     div()
         .pb(sc(18.))
-        .child(
-            // Caret pointing at the open album.
-            div()
-                .h(sc(10.))
-                .relative()
-                .child(div().absolute().left(sc(caret_x - 24.0)).top(sc(2.)).size(sc(16.)).rounded(sc(3.)).bg(theme::surface())),
-        )
+        .relative()
+        // Room for the tip above the panel.
+        .pt(sc(TIP_H - 1.0))
         .child(
             div()
                 .id(("inline-panel", id as usize))
-                .p(sc(20.))
-                .rounded(sc(12.))
-                .bg(theme::surface())
+                .p(sc(inset))
+                .relative()
+                .rounded(sc(14.))
+                .bg(theme::liquid_glass(0.))
                 .border_1()
-                .border_color(theme::border())
-                .shadow_lg()
+                .border_color(theme::glass_rim(0.))
+                .shadow(theme::glass_shadow())
+                .child(super::glass::sheen(("inline-panel-glass", id as usize), 14., 0.55))
                 .flex()
+                .when(stacked, |d| d.flex_col())
                 .gap(sc(24.))
                 .child(
                     div()
-                        .w(sc(200.))
+                        .when(stacked, |d| d.w_full())
+                        .when(!stacked, |d| d.w(sc(200.)))
                         .flex_none()
                         .flex()
                         .flex_col()
                         .gap(sc(8.))
-                        .child(div().shadow_lg().child(cover(album.cover(640), 200., false, cx)))
-                        .child(div().pt(sc(6.)).text_size(sc(17.)).font_weight(FontWeight::BOLD).line_clamp(2).child(album.title.clone()))
-                        .child(
+                        // Click the cover to see it full screen.
+                        .child({
+                            let big = album.cover(1280).or_else(|| album.cover(640));
+                            let small = album.cover(640);
                             div()
-                                .id("inline-artist")
-                                .text_size(sc(13.))
-                                .text_color(theme::text_secondary())
+                                .id("inline-cover")
                                 .cursor_pointer()
-                                .hover(|s| s.underline().text_color(theme::text()))
-                                .child(album.artist_names())
+                                .shadow_lg()
+                                .child(cover(album.cover(640), cover_size, false, cx))
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(a) = artist_id {
-                                        this.navigate(Page::Artist(a), cx)
+                                    cx.stop_propagation();
+                                    if let Some(u) = big.clone() {
+                                        this.open_cover_view(u, small.clone(), cx);
                                     }
-                                })),
+                                }))
+                        })
+                        .child(
+                            super::widgets::nav_link(
+                                div().id("inline-title").pt(sc(6.)).text_size(sc(17.)).font_weight(FontWeight::BOLD).line_clamp(2),
+                                format!("inl-title-{id}"),
+                                cx,
+                            )
+                            .child(album.title.clone())
+                            .on_click(cx.listener(move |this, _, _, cx| this.navigate(Page::Album(id), cx))),
                         )
-                        .child(div().text_size(sc(12.)).text_color(theme::text_dim()).child(meta))
+                        .child(
+                            super::widgets::nav_link_secondary(
+                                div().id("inline-artist").text_size(sc(13.)),
+                                format!("inl-artist-{id}"),
+                                cx,
+                            )
+                            .child(album.artist_names())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(a) = artist_id.filter(|a| *a != 0) {
+                                    this.navigate(Page::Artist(a), cx)
+                                }
+                            })),
+                        )
+                        .child(div().text_size(sc(theme::TYPE_LABEL)).text_color(theme::text_dim()).child(meta))
                         .child(super::widgets::album_stars("inl-album", id, 15., view, cx))
                         .child(div().flex().gap(sc(6.)).children(quality_badge(&album.tags)))
                         .child(
                             div()
                                 .pt(sc(8.))
                                 .flex()
+                                .flex_wrap()
                                 .items_center()
                                 .gap(sc(6.))
                                 .child(pill(
                                     "inline-play",
-                                    "Reproducir",
+                                    crate::i18n::t("play"),
                                     Some(Icon::Play),
                                     true,
                                     move |this, _, _, cx| {
@@ -336,10 +387,25 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, cx: 
                 )
                 .child(list),
         )
-        .with_animation(
-            ("inline-anim", view.inline_anim),
-            Animation::new(std::time::Duration::from_millis(260)).with_easing(super::motion::ease_out),
-            |el, t| el.opacity(t).top(sc((1.0 - t) * -10.0)),
+        .child(
+            div()
+                .absolute()
+                .top(sc(0.))
+                .left(sc(tip_left - 1.0))
+                .w(sc(TIP_W + 2.0))
+                .h(sc(TIP_H + 1.0))
+                // Rim (one size larger, behind), then the fill reaching 1 px into
+                // the panel so it covers the border line under its base.
+                // (the rim is cut exactly at the bottom of the panel's border line)
+                .child(div().absolute().top(sc(0.)).left(sc(0.)).w(sc(TIP_W + 2.0)).h(sc(TIP_H)).overflow_hidden().child(tip(
+                    TIP_W + 2.0,
+                    TIP_H + 1.0,
+                    rim,
+                )))
+                .child(div().absolute().top(sc(1.5)).left(sc(1.)).child(tip(TIP_W, TIP_H, surface))),
         )
+        .with_animation(("inline-anim", view.inline_anim), super::motion::animation(super::motion::PANEL), |el, t| {
+            el.opacity(t).top(sc((1.0 - t) * -10.0))
+        })
         .into_any_element()
 }

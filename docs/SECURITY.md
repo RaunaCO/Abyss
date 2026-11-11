@@ -1,8 +1,8 @@
 # Security
 
-How TIDE handles credentials, network traffic and local data, what has been
+How Abyss handles credentials, network traffic and local data, what has been
 checked, and what is still open. Report vulnerabilities privately through
-GitHub's security advisories for `RaunaCO/TIDE` rather than public issues.
+GitHub's security advisories for `RaunaCO/Abyss` rather than public issues.
 
 ## Threat model
 
@@ -54,8 +54,8 @@ GitHub's security advisories for `RaunaCO/TIDE` rather than public issues.
   local malware as DPAPI, which it uses internally. The tokens would also need
   splitting (2.5 KB blob limit), and the settings file would no longer be
   self-contained. DPAPI on the existing file is the smaller change.
-- `settings.json` lives in `%APPDATA%\tide`, which inherits the user-only ACL
-  of the profile. TIDE does not change ACLs.
+- `settings.json` lives in `%APPDATA%\abyss`, which inherits the user-only ACL
+  of the profile. Abyss does not change ACLs.
 
 The OAuth `client_id` / `client_secret` are stored in plaintext. They are
 TIDAL's public app credentials, not user secrets.
@@ -65,7 +65,7 @@ TIDAL's public app credentials, not user secrets.
 - One `reqwest` blocking client with **rustls** (no OpenSSL) and certificate
   validation on. Connect timeout 10 s, request timeout 30 s, and longer
   per-request timeouts for audio (60–120 s).
-- User-Agent: `TIDE/<version> (https://github.com/RaunaCO/TIDE)`. LRCLIB asks
+- User-Agent: `Abyss/<version> (https://github.com/RaunaCO/TIDE)`. LRCLIB asks
   clients to identify themselves. The User-Agent contains nothing about the
   user.
 - Stream URLs from manifests are rejected unless they are `https://`.
@@ -88,7 +88,7 @@ TIDAL's public app credentials, not user secrets.
 
 ## Logging and crash reports
 
-- `env_logger`, default filter `tide=info`, written to stderr. Release builds
+- `env_logger`, default filter `Abyss=info,tide=info`, written to stderr. Release builds
   are GUI-subsystem apps, so nothing is visible unless stderr is redirected.
 - Tokens are never logged. Download errors are logged with
   `reqwest::Error::without_url()` because TIDAL's CDN URLs carry signatures.
@@ -96,8 +96,8 @@ TIDAL's public app credentials, not user secrets.
   expired token so a refresh happened, browsing albums. The output contained
   neither token, nor the words `Bearer`/`access_token`/`refresh_token`, nor
   signed-URL query parameters.
-- Panics are written to `%APPDATA%\tide\crash.log` (message + backtrace),
-  overwriting the previous one. Panic messages in TIDE do not contain tokens.
+- Panics are written to `%APPDATA%\abyss\crash.log` (message + backtrace),
+  overwriting the previous one. Panic messages in Abyss do not contain tokens.
   The backtrace contains local paths. Review it before attaching it to an
   issue.
 
@@ -107,7 +107,7 @@ TIDAL's public app credentials, not user secrets.
 18 "unmaintained" warnings. All of them are transitive, through `gpui` (font
 shaping: `rustybuzz`, `ttf-parser`, …), through `souvlaki` (`zbus`/`zvariant`,
 Linux-only and not compiled on Windows) or through `async-std`/`instant`/`paste`.
-None is directly actionable in TIDE without upstream releases.
+None is directly actionable in Abyss without upstream releases.
 
 Run `cargo install cargo-audit && cargo audit` before each release.
 

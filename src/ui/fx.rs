@@ -10,8 +10,8 @@ use gpui::{
 
 use super::{images, motion, theme, AppView};
 
-pub const AMBIENT_FADE: Duration = Duration::from_millis(900);
-pub const HEART_POP: Duration = Duration::from_millis(480);
+pub const AMBIENT_FADE: Duration = motion::AMBIENT_FADE;
+pub const HEART_POP: Duration = motion::PANEL;
 
 pub fn with_alpha(c: Rgba, a: f32) -> Rgba {
     Rgba { a, ..c }
@@ -26,24 +26,6 @@ pub fn tint(color: Rgba, strength: f32) -> gpui::Background {
     linear_gradient(180., linear_color_stop(with_alpha(color, strength), 0.), linear_color_stop(with_alpha(theme::bg(), 0.0), 1.))
 }
 
-/// Coloured glow under a cover.
-pub fn glow(color: Rgba, strength: f32, blur: f32) -> Vec<BoxShadow> {
-    vec![
-        BoxShadow {
-            color: Hsla::from(with_alpha(color, 0.55 * strength)),
-            offset: gpui::point(sc(0.), sc(18.)),
-            blur_radius: sc(blur),
-            spread_radius: sc(-6.),
-        },
-        BoxShadow {
-            color: Hsla::from(gpui::rgba(0x00000099)),
-            offset: gpui::point(sc(0.), sc(10.)),
-            blur_radius: sc(30.),
-            spread_radius: sc(0.),
-        },
-    ]
-}
-
 /// Delay an animation's start: the first `delay` fraction stays at 0.
 pub fn delayed(delay: f32) -> impl Fn(f32) -> f32 {
     move |t| motion::ease_out(((t - delay) / (1.0 - delay)).clamp(0.0, 1.0))
@@ -52,21 +34,29 @@ pub fn delayed(delay: f32) -> impl Fn(f32) -> f32 {
 /// Cards fade and rise in one after another.
 pub fn stagger(id: impl Into<ElementId>, index: usize, el: AnyElement) -> AnyElement {
     // A light cascade: short, so content never feels like it is waiting.
-    let delay = (index as f32 * 0.035).min(0.25);
+    if motion::reduced_motion() || index >= 8 {
+        return el;
+    }
+    let delay = (index as f32 * motion::STAGGER).min(0.25);
     div()
         .relative()
         .flex_none()
         .child(el)
-        .with_animation(id, Animation::new(Duration::from_millis(320)).with_easing(delayed(delay)), |d, t| {
-            d.opacity(t).top(sc((1.0 - t) * 10.0))
-        })
+        .with_animation(id, Animation::new(motion::PANEL).with_easing(delayed(delay)), |d, t| d.opacity(t).top(sc((1.0 - t) * 10.0)))
         .into_any_element()
 }
 
 impl AppView {
     /// Colour of the playing cover, cross-faded when the track changes.
     pub fn ambient(&mut self, cx: &mut Context<Self>) -> Rgba {
-        let target = self.now.as_ref().and_then(|n| n.track.cover(640)).and_then(|u| images::color(&u, cx)).unwrap_or(theme::accent());
+        // Until the new cover's colour is known, keep fading toward the old
+        // one (instead of jumping to a fallback colour and back).
+        let target = match self.now.as_ref().and_then(|n| n.track.cover(640)).and_then(|u| images::color(&u, cx)) {
+            Some(c) => c,
+            None if self.now.is_some() && self.ambient_seen => self.ambient_to,
+            None => theme::accent(),
+        };
+        self.ambient_seen |= self.now.is_some();
         if target != self.ambient_to {
             let current = self.ambient_now();
             self.ambient_from = current;
@@ -82,7 +72,7 @@ impl AppView {
     }
 
     pub fn ambient_animating(&self) -> bool {
-        self.ambient_at.elapsed() < AMBIENT_FADE
+        !motion::reduced_motion() && self.ambient_at.elapsed() < AMBIENT_FADE
     }
 
     /// Size multiplier for a heart that was just liked (bouncy pop).
@@ -97,37 +87,36 @@ impl AppView {
     }
 }
 
-/// Soft ring that breathes around the play button while music plays.
-pub fn play_pulse(color: Rgba, playing: bool) -> AnyElement {
-    if !playing {
-        return div().into_any_element();
-    }
-    div()
-        .absolute()
-        .top(sc(0.))
-        .left(sc(0.))
-        .size(sc(40.))
-        .rounded(sc(20.))
-        .border_2()
-        .border_color(with_alpha(color, 0.6))
-        .with_animation("play-pulse", Animation::new(Duration::from_millis(1800)).repeat().with_easing(motion::ease_out), |d, t| {
-            let grow = 18.0 * t;
-            d.size(sc(40.0 + grow)).top(sc(-grow / 2.0)).left(sc(-grow / 2.0)).rounded(sc(20.0 + grow / 2.0)).opacity(1.0 - t)
-        })
-        .into_any_element()
-}
-
 impl AppView {
     /// Colours of the playing cover (three entries; the ambient colour while loading).
     pub fn palette(&mut self, cx: &mut Context<Self>) -> Vec<Rgba> {
         let url = self.now.as_ref().and_then(|n| n.track.cover(640));
         let pal = url.map(|u| images::palette(&u, cx)).unwrap_or_default();
-        if pal.len() >= 3 {
+        // The new palette (or the last one, while the new one is computed)
+        // fades in over the ambient fade's duration.
+        let target = if pal.len() >= 3 {
             pal
+        } else if self.palette_to.len() >= 3 {
+            self.palette_to.clone()
         } else {
             let a = self.ambient(cx);
             vec![a, a, a]
+        };
+        if target != self.palette_to {
+            let t = motion::ease_out(motion::progress(self.palette_at, AMBIENT_FADE));
+            self.palette_from = if self.palette_to.len() >= 3 {
+                self.palette_from.iter().zip(&self.palette_to).map(|(a, b)| lerp(*a, *b, t)).collect()
+            } else {
+                target.clone()
+            };
+            self.palette_to = target;
+            self.palette_at = Instant::now();
         }
+        let t = motion::ease_out(motion::progress(self.palette_at, AMBIENT_FADE));
+        if t < 1.0 {
+            motion::want_frame("ambient");
+        }
+        self.palette_from.iter().zip(&self.palette_to).map(|(a, b)| lerp(*a, *b, t)).collect()
     }
 }
 
@@ -213,6 +202,9 @@ impl AppView {
     /// Angle (degrees) of the rotating background right now; updates the state machine.
     /// Asks for another frame while the background is moving.
     pub fn bg_angle(&mut self, window: &mut gpui::Window) -> f32 {
+        if motion::reduced_motion() {
+            return 0.0;
+        }
         let now = Instant::now();
         let playing = self.now.is_some() && !self.snap.paused && !self.ended && !self.snap.buffering;
         let scrubbing = self.drag == Some(super::Drag::Progress);
@@ -234,22 +226,23 @@ impl AppView {
             (false, false, s) => s,
         };
         if matches!(self.bg_spin, BgSpin::Spinning { .. } | BgSpin::Coasting { .. }) {
-            window.request_animation_frame();
+            super::motion::want_frame("bg-spin");
         }
+        let _ = window;
         self.bg_spin.angle(now, frac).rem_euclid(360.0)
     }
 }
 
 /// The turning cover: two neighbouring pre-rotated frames cross-faded, so the motion is
-/// continuous even though frames are 2 degrees apart. Fills its parent.
-pub fn rotating_backdrop(frames: &std::sync::Arc<Vec<std::sync::Arc<gpui::Image>>>, angle: f32) -> AnyElement {
+/// continuous between samples. Fills its parent.
+pub fn rotating_backdrop(frames: &std::sync::Arc<Vec<std::sync::Arc<gpui::RenderImage>>>, angle: f32) -> AnyElement {
     let n = frames.len().max(1);
     let pos = angle / images::FRAME_STEP_DEG;
     let i = (pos.floor() as usize) % n;
     let j = (i + 1) % n;
     let frac = pos - pos.floor();
-    let layer = |f: &std::sync::Arc<gpui::Image>| {
-        gpui::img(f.clone()).absolute().top(sc(0.)).left(sc(0.)).size_full().object_fit(gpui::ObjectFit::Cover)
+    let layer = |f: &std::sync::Arc<gpui::RenderImage>| {
+        gpui::img(gpui::ImageSource::Render(f.clone())).absolute().top(sc(0.)).left(sc(0.)).size_full().object_fit(gpui::ObjectFit::Cover)
     };
     div()
         .absolute()

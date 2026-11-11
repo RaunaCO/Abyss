@@ -1,21 +1,56 @@
-//! TIDE: an unofficial native TIDAL client in Rust + GPUI.
+//! Abyss: an unofficial native TIDAL client in Rust + GPUI.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
 mod config;
 mod discord;
+mod history;
+mod i18n;
+mod local;
 mod ratings;
 mod recents;
 mod romanize;
 mod secure;
+mod storage;
 mod tidal;
 mod ui;
 
 use gpui::{prelude::*, px, size, App, Application, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions};
 
+/// Crash reports must not carry signed links or tokens: query strings of URLs
+/// and anything after "Bearer " are replaced.
+fn redact(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let mut line = line.to_string();
+        if let Some(i) = line.find("Bearer ") {
+            line.truncate(i + 7);
+            line.push_str("[redacted]");
+        }
+        let mut cleaned = String::new();
+        let mut rest = line.as_str();
+        while let Some(q) = rest.find("http").and_then(|h| rest[h..].find('?').map(|q| h + q)) {
+            cleaned.push_str(&rest[..q]);
+            cleaned.push_str("?[redacted]");
+            let tail = &rest[q + 1..];
+            let end = tail.find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ')').unwrap_or(tail.len());
+            rest = &tail[end..];
+        }
+        cleaned.push_str(rest);
+        out.push_str(&cleaned);
+        out.push('\n');
+    }
+    out
+}
+
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("tide=info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("Abyss=info,tide=info")).init();
+    i18n::set_language(None);
+    if let Err(error) = config::prepare_config() {
+        eprintln!("{}", i18n::text("migration.failed", &[error.to_string()]));
+        return;
+    }
     // A panic inside a window callback aborts the process without a trace; keep the message.
     std::panic::set_hook(Box::new(|info| {
         let text = format!(
@@ -24,12 +59,16 @@ fn main() {
 ",
             std::backtrace::Backtrace::force_capture()
         );
-        let _ = std::fs::create_dir_all(config::config_dir());
-        let _ = std::fs::write(config::config_dir().join("crash.log"), &text);
+        let text = redact(&text);
+        let dir = config::config_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        // Keep the previous report as crash.old.log (two reports at most).
+        let _ = std::fs::rename(dir.join("crash.log"), dir.join("crash.old.log"));
+        let _ = std::fs::write(dir.join("crash.log"), &text);
         eprintln!("{text}");
     }));
 
-    // Diagnostics: `TIDE --probe <track id>` prints what TIDAL offers.
+    // Diagnostics: `Abyss --probe <track id>` prints what TIDAL offers.
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--probe") {
         let settings = std::sync::Arc::new(parking_lot::Mutex::new(config::Settings::load()));
@@ -95,7 +134,16 @@ fn main() {
                 );
                 let mp4 = matches!(info.source, tidal::StreamSource::Segments(_)) || !info.codec.eq_ignore_ascii_case("flac");
                 let start = std::time::Instant::now();
-                let buf = audio::stream::start(t.http().clone(), info.source.clone(), info.seg_secs.clone());
+                // TIDE_PROBE_EXPIRE=1: break every link's signature first, so the
+                // CDN refuses them and the stream must renew its links itself.
+                let source = match (&info.source, std::env::var_os("TIDE_PROBE_EXPIRE")) {
+                    (tidal::StreamSource::Segments(urls), Some(_)) => {
+                        println!("probe: links deliberately invalidated");
+                        tidal::StreamSource::Segments(urls.iter().map(|u| u.replace("Signature=", "Signature=X")).collect())
+                    }
+                    (s, _) => s.clone(),
+                };
+                let buf = audio::stream::start(t.http().clone(), source, info.seg_secs.clone(), info.renew.clone().map(|r| r.0));
                 match audio::decode::Decoder::open(buf.clone(), mp4) {
                     Ok(mut d) => {
                         println!(
@@ -149,6 +197,8 @@ fn main() {
         return;
     }
 
+    i18n::set_language(config::Settings::load().language.as_deref());
+
     Application::new().with_assets(ui::icons::Assets).run(|cx: &mut App| {
         // Bundled Inter (SIL Open Font License, assets/fonts/Inter-LICENSE.txt).
         let fonts: Vec<std::borrow::Cow<'static, [u8]>> = vec![
@@ -167,7 +217,7 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from("TIDE")),
+                    title: Some(SharedString::from(crate::i18n::t("app.name"))),
                     appears_transparent: true,
                     ..Default::default()
                 }),

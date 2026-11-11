@@ -33,18 +33,23 @@ pub struct OutputPrefs {
     pub normalize: bool,
 }
 
+pub enum Source {
+    Stream(StreamInfo),
+    Local(std::path::PathBuf),
+}
+
 pub enum Cmd {
     /// Replace everything and play this track (from `start` seconds).
     Play {
         key: u64,
-        info: StreamInfo,
+        source: Source,
         start: f64,
         paused: bool,
     },
     /// Track to continue with when the current one ends (replaces the old one).
     Queue {
         key: u64,
-        info: StreamInfo,
+        source: Source,
     },
     ClearQueue,
     Pause,
@@ -97,7 +102,7 @@ struct Mark {
     offset: f64,
     duration: f64,
     source: Option<(u32, u32)>,
-    buffer: Arc<Buffer>,
+    buffer: Option<Arc<Buffer>>,
 }
 
 #[derive(Default)]
@@ -155,8 +160,14 @@ impl Player {
             snap.position = (m.offset + elapsed).min(if m.duration > 0.0 { m.duration } else { f64::MAX });
             snap.duration = m.duration;
             snap.source = m.source;
-            let (have, total, done) = m.buffer.downloaded();
-            snap.downloaded = if done { 1.0 } else { total.map(|t| have as f32 / t.max(1) as f32).unwrap_or(0.0) };
+            snap.downloaded = m.buffer.as_ref().map_or(1.0, |buffer| {
+                let (have, total, done) = buffer.downloaded();
+                if done {
+                    1.0
+                } else {
+                    total.map_or(0.0, |t| have as f32 / t.max(1) as f32)
+                }
+            });
         } else if let Some(k) = v.loading {
             snap.key = Some(k);
             if let Some((pos, dur, src)) = v.seek_hint {
@@ -188,22 +199,54 @@ enum DecMsg {
 struct Worker {
     rx: Receiver<DecMsg>,
     seek_tx: Sender<f64>,
-    buffer: Arc<Buffer>,
+    buffer: Option<Arc<Buffer>>,
 }
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.buffer.cancel();
+        if let Some(buffer) = &self.buffer {
+            buffer.cancel();
+        }
     }
 }
 
-fn spawn_worker(http: &Client, info: &StreamInfo) -> Worker {
-    let mp4 = matches!(info.source, StreamSource::Segments(_)) || !info.codec.eq_ignore_ascii_case("flac");
-    let buffer = stream::start(http.clone(), info.source.clone(), info.seg_secs.clone());
+enum DecodeInput {
+    Stream { buffer: Arc<Buffer>, mp4: bool },
+    Local(std::path::PathBuf),
+}
+
+impl DecodeInput {
+    fn open(&self) -> anyhow::Result<Decoder> {
+        match self {
+            Self::Stream { buffer, mp4 } => Decoder::open(buffer.clone(), *mp4),
+            Self::Local(path) => Decoder::open_file(path),
+        }
+    }
+
+    fn seek(&self, decoder: &mut Decoder, seconds: f64) -> anyhow::Result<f64> {
+        match self {
+            Self::Stream { buffer, mp4 } => do_seek(decoder, buffer, *mp4, seconds),
+            Self::Local(_) => decoder.seek(seconds),
+        }
+    }
+
+    fn cancelled(&self) -> bool {
+        matches!(self, Self::Stream { buffer, .. } if buffer.is_cancelled())
+    }
+}
+
+fn spawn_worker(http: &Client, source: Source) -> Worker {
+    let (input, buffer) = match source {
+        Source::Stream(info) => {
+            let mp4 = matches!(info.source, StreamSource::Segments(_)) || !info.codec.eq_ignore_ascii_case("flac");
+            let buffer = stream::start(http.clone(), info.source, info.seg_secs, info.renew.map(|r| r.0));
+            (DecodeInput::Stream { buffer: buffer.clone(), mp4 }, Some(buffer))
+        }
+        Source::Local(path) => (DecodeInput::Local(path), None),
+    };
     let (tx, rx) = mpsc::sync_channel::<DecMsg>(24);
     let (seek_tx, seek_rx) = mpsc::channel::<f64>();
-    let buf = buffer.clone();
-    std::thread::Builder::new().name("decode".into()).spawn(move || decode_loop(buf, mp4, tx, seek_rx)).expect("spawn decoder");
+    std::thread::Builder::new().name("decode".into()).spawn(move || decode_loop(input, tx, seek_rx)).expect("spawn decoder");
     Worker { rx, seek_tx, buffer }
 }
 
@@ -246,12 +289,11 @@ pub fn do_seek(dec: &mut Decoder, buf: &Arc<Buffer>, mp4: bool, t: f64) -> anyho
     }
 }
 
-fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Receiver<f64>) {
-    let open = || Decoder::open(buf.clone(), mp4);
-    let mut dec = match open() {
+fn decode_loop(input: DecodeInput, tx: SyncSender<DecMsg>, seek_rx: Receiver<f64>) {
+    let mut dec = match input.open() {
         Ok(d) => d,
         Err(e) => {
-            if !buf.is_cancelled() {
+            if !input.cancelled() {
                 let _ = tx.send(DecMsg::Error(format!("{e:#}")));
             }
             return;
@@ -267,7 +309,7 @@ fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Rec
             target = Some(t);
         }
         if let Some(t) = target {
-            let reached = match do_seek(&mut dec, &buf, mp4, t) {
+            let reached = match input.seek(&mut dec, t) {
                 Ok(at) => at,
                 Err(e) => {
                     let _ = tx.send(DecMsg::Error(format!("{e:#}")));
@@ -291,7 +333,7 @@ fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Rec
                 // Stay alive: the user may still seek back into this track.
                 match seek_rx.recv() {
                     Ok(t) => {
-                        let reached = do_seek(&mut dec, &buf, mp4, t).unwrap_or(0.0);
+                        let reached = input.seek(&mut dec, t).unwrap_or(0.0);
                         if tx.send(DecMsg::Seeked(reached)).is_err() {
                             return;
                         }
@@ -300,7 +342,7 @@ fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Rec
                 }
             }
             Err(e) => {
-                if !buf.is_cancelled() {
+                if !input.cancelled() {
                     let _ = tx.send(DecMsg::Error(format!("{e:#}")));
                 }
                 return;
@@ -313,7 +355,6 @@ fn decode_loop(buf: Arc<Buffer>, mp4: bool, tx: SyncSender<DecMsg>, seek_rx: Rec
 
 struct Track {
     key: u64,
-    info: StreamInfo,
     worker: Worker,
     rate: Option<u32>,
     bits: u32,
@@ -416,11 +457,11 @@ impl Engine {
 
     fn handle(&mut self, cmd: Cmd) {
         match cmd {
-            Cmd::Play { key, info, start, paused } => {
+            Cmd::Play { key, source, start, paused } => {
                 self.stop_all();
                 self.paused = paused;
                 self.out_shared.paused.store(paused, Ordering::Relaxed);
-                let mut t = self.make_track(key, info);
+                let mut t = self.make_track(key, source);
                 if start > 0.5 {
                     let _ = t.worker.seek_tx.send(start);
                     t.seeking = true;
@@ -430,9 +471,9 @@ impl Engine {
                 v.loading = Some(key);
                 v.buffering = true;
             }
-            Cmd::Queue { key, info } => {
+            Cmd::Queue { key, source } => {
                 if self.next.as_ref().map(|n| n.key) != Some(key) {
-                    self.next = Some(self.make_track(key, info));
+                    self.next = Some(self.make_track(key, source));
                 }
             }
             Cmd::ClearQueue => self.next = None,
@@ -492,14 +533,16 @@ impl Engine {
         g.clamp(0.05, 4.0)
     }
 
-    fn make_track(&self, key: u64, info: StreamInfo) -> Track {
-        let worker = spawn_worker(&self.http, &info);
-        let norm = self.norm_gain(&info);
+    fn make_track(&self, key: u64, source: Source) -> Track {
+        let (norm, bits) = match &source {
+            Source::Stream(info) => (self.norm_gain(info), info.bit_depth.unwrap_or(16)),
+            Source::Local(_) => (1.0, 16),
+        };
+        let worker = spawn_worker(&self.http, source);
         Track {
             norm,
             key,
-            bits: info.bit_depth.unwrap_or(16),
-            info,
+            bits,
             worker,
             rate: None,
             duration: 0.0,

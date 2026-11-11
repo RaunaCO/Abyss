@@ -1,17 +1,17 @@
 //! Symphonia decoding to interleaved stereo f32, plus sinc resampling.
 
-use std::sync::Arc;
+use std::{fs::File, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{Decoder as _, DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
-use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
-use symphonia::core::units::Time;
+use symphonia::core::meta::{MetadataOptions, MetadataRevision, StandardTagKey};
+use symphonia::core::probe::{Hint, ProbeResult};
+use symphonia::core::units::{Time, TimeBase};
 
 use super::stream::{Buffer, Reader};
 
@@ -19,12 +19,71 @@ pub struct Decoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn symphonia::core::codecs::Decoder>,
     track_id: u32,
+    time_base: Option<TimeBase>,
     pub sample_rate: u32,
     pub channels: usize,
     pub bits_per_sample: Option<u32>,
     /// Total length in seconds if known.
     pub duration: Option<f64>,
     buf: Option<SampleBuffer<f32>>,
+}
+
+#[derive(Default)]
+pub struct FileMetadata {
+    pub title: Option<String>,
+    pub album: Option<String>,
+    pub artist: Option<String>,
+    pub duration: Option<f64>,
+}
+
+impl FileMetadata {
+    fn read_tags(&mut self, revision: &MetadataRevision) {
+        for tag in revision.tags() {
+            let slot = match tag.std_key {
+                Some(StandardTagKey::TrackTitle) => &mut self.title,
+                Some(StandardTagKey::Album) => &mut self.album,
+                Some(StandardTagKey::Artist) => &mut self.artist,
+                _ => continue,
+            };
+            if slot.is_none() {
+                let value = tag.value.to_string();
+                let value = value.trim();
+                if !value.is_empty() {
+                    *slot = Some(value.to_owned());
+                }
+            }
+        }
+    }
+}
+
+fn probe(source: MediaSourceStream, hint: &Hint) -> Result<ProbeResult> {
+    symphonia::default::get_probe()
+        .format(hint, source, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
+        .context("Formato de audio no reconocido")
+}
+
+fn probe_file(path: &Path) -> Result<ProbeResult> {
+    let file = File::open(path).context("No se pudo abrir el archivo de audio")?;
+    let mut hint = Hint::new();
+    if let Some(extension) = path.extension().and_then(|s| s.to_str()) {
+        hint.with_extension(&extension.to_ascii_lowercase());
+    }
+    probe(MediaSourceStream::new(Box::new(file), Default::default()), &hint)
+}
+
+pub fn inspect_file(path: &Path) -> Result<FileMetadata> {
+    let mut probed = probe_file(path)?;
+    let mut tags = FileMetadata::default();
+    if let Some(metadata) = probed.metadata.get() {
+        if let Some(revision) = metadata.current() {
+            tags.read_tags(revision);
+        }
+    }
+    if let Some(revision) = probed.format.metadata().current() {
+        tags.read_tags(revision);
+    }
+    tags.duration = Decoder::from_format(probed.format)?.duration;
+    Ok(tags)
 }
 
 impl Decoder {
@@ -34,11 +93,19 @@ impl Decoder {
         let mss = MediaSourceStream::new(Box::new(Reader::new(buffer, seekable)), MediaSourceStreamOptions { buffer_len: 256 * 1024 });
         let mut hint = Hint::new();
         hint.with_extension(if mp4 { "mp4" } else { "flac" });
-        let probed = symphonia::default::get_probe()
-            .format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
-            .context("unrecognised audio format")?;
-        let format = probed.format;
-        let track = format.tracks().iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL).ok_or_else(|| anyhow!("no audio track"))?;
+        Self::from_format(probe(mss, &hint)?.format)
+    }
+
+    pub fn open_file(path: &Path) -> Result<Self> {
+        Self::from_format(probe_file(path)?.format)
+    }
+
+    fn from_format(format: Box<dyn FormatReader>) -> Result<Self> {
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL && t.codec_params.sample_rate.is_some())
+            .ok_or_else(|| anyhow!("El archivo no contiene una pista de audio compatible"))?;
         let params = track.codec_params.clone();
         let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default()).context("unsupported codec")?;
         let sample_rate = params.sample_rate.ok_or_else(|| anyhow!("unknown sample rate"))?;
@@ -53,6 +120,7 @@ impl Decoder {
         };
         Ok(Self {
             track_id: track.id,
+            time_base: params.time_base,
             format,
             decoder,
             sample_rate,
@@ -115,7 +183,10 @@ impl Decoder {
             .seek(SeekMode::Accurate, SeekTo::Time { time: t, track_id: Some(self.track_id) })
             .map_err(|e| anyhow!("seek failed: {e}"))?;
         self.decoder.reset();
-        Ok(to.actual_ts as f64 / self.sample_rate as f64)
+        Ok(self.time_base.map_or(to.actual_ts as f64 / self.sample_rate as f64, |base| {
+            let time = base.calc_time(to.actual_ts);
+            time.seconds as f64 + time.frac
+        }))
     }
 }
 

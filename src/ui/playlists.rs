@@ -2,6 +2,7 @@
 //! save other people's playlists, plus the dialogs for it.
 
 use super::sc;
+use gpui::AnimationExt;
 use gpui::{div, prelude::*, px, AnyElement, Context, Focusable, FontWeight, Window};
 
 use super::input::TextInput;
@@ -22,6 +23,25 @@ pub enum Dialog {
         uuid: String,
         title: String,
     },
+    /// Confirm signing out (from the sidebar's account panel).
+    SignOut,
+    /// Confirm a "Remove" from a context menu (changes the TIDAL account).
+    ConfirmRemove(RemoveKind),
+}
+
+/// What a context menu's "Remove" takes away.
+#[derive(Clone)]
+pub enum RemoveKind {
+    /// A track from one of the user's playlists (by position).
+    PlaylistTrack {
+        uuid: String,
+        index: usize,
+        title: String,
+    },
+    /// A track, album or artist from the collection (favourites / follows).
+    FavTrack(Track),
+    FavAlbum(crate::tidal::Album),
+    Unfollow(u64, String),
 }
 
 /// What is being dragged when reordering a playlist.
@@ -37,8 +57,8 @@ impl Render for DraggedTrack {
         div()
             .px(sc(14.))
             .py(sc(8.))
-            .rounded(sc(6.))
-            .bg(theme::elevated())
+            .rounded(sc(10.))
+            .bg(theme::liquid_glass(0.3))
             .border_1()
             .border_color(theme::accent())
             .text_color(theme::text())
@@ -49,6 +69,10 @@ impl Render for DraggedTrack {
     }
 }
 
+fn playlist_is_editable(playlist: &Playlist, uid: Option<u64>) -> bool {
+    Some(playlist.creator_id) == uid || playlist.kind == "USER"
+}
+
 impl AppView {
     pub fn user_id(&self) -> Option<u64> {
         self.settings.lock().user_id
@@ -57,10 +81,7 @@ impl AppView {
     /// Playlists the user created (editable).
     pub fn own_playlists(&self) -> Vec<Playlist> {
         let uid = self.user_id();
-        self.my_playlists
-            .ready()
-            .map(|l| l.iter().filter(|p| Some(p.creator_id) == uid || p.kind == "USER").cloned().collect())
-            .unwrap_or_default()
+        self.my_playlists.ready().map(|l| l.iter().filter(|p| playlist_is_editable(p, uid)).cloned().collect()).unwrap_or_default()
     }
 
     /// A playlist's picture: its own image, or a mosaic of its first albums.
@@ -91,7 +112,7 @@ impl AppView {
 
     pub fn is_own_playlist(&self, uuid: &str) -> bool {
         let uid = self.user_id();
-        let check = |p: &Playlist| p.uuid == uuid && (Some(p.creator_id) == uid || p.kind == "USER");
+        let check = |p: &Playlist| p.uuid == uuid && playlist_is_editable(p, uid);
         self.my_playlists.ready().map(|l| l.iter().any(check)).unwrap_or(false)
             || self.playlists.get(uuid).and_then(Load::ready).map(|(p, _)| Some(p.creator_id) == uid).unwrap_or(false)
     }
@@ -109,10 +130,17 @@ impl AppView {
         };
         self.dlg_title.update(cx, |i, cx| i.set_text(&title, cx));
         self.dlg_desc.update(cx, |i, cx| i.set_text(&desc, cx));
+        // Confirmations have no text field: keep the focus on the window so
+        // Escape reaches it (the hidden field would swallow it).
+        let has_fields = matches!(dialog, Dialog::NewPlaylist { .. } | Dialog::EditPlaylist { .. });
         self.dialog = Some(dialog);
         self.menu = None;
-        let fh = self.dlg_title.read(cx).focus_handle(cx);
-        window.focus(&fh);
+        if has_fields {
+            let fh = self.dlg_title.read(cx).focus_handle(cx);
+            window.focus(&fh);
+        } else {
+            window.focus(&self.focus);
+        }
         cx.notify();
     }
 
@@ -129,17 +157,36 @@ impl AppView {
         match dialog {
             Dialog::NewPlaylist { add } => {
                 if title.is_empty() {
-                    return self.notify_toast("Escribe un nombre para la playlist", cx);
+                    return self.notify_toast(crate::i18n::t("enter_a_playlist_name"), cx);
                 }
                 self.create_playlist(title, desc, add, cx);
             }
             Dialog::EditPlaylist { uuid } => {
                 if title.is_empty() {
-                    return self.notify_toast("El nombre no puede estar vacío", cx);
+                    return self.notify_toast(crate::i18n::t("the_name_cannot_be_empty"), cx);
                 }
                 self.edit_playlist(uuid, title, desc, cx);
             }
             Dialog::DeletePlaylist { uuid, .. } => self.delete_playlist(uuid, cx),
+            Dialog::SignOut => self.sign_out(cx),
+            Dialog::ConfirmRemove(k) => match k {
+                RemoveKind::PlaylistTrack { uuid, index, .. } => self.remove_playlist_track(uuid, index, cx),
+                RemoveKind::FavTrack(t) => {
+                    if self.fav_ids.contains(&t.id) {
+                        self.toggle_favorite(&t, cx)
+                    }
+                }
+                RemoveKind::FavAlbum(a) => {
+                    if self.fav_album_ids.contains(&a.id) {
+                        self.toggle_favorite_album(&a, cx)
+                    }
+                }
+                RemoveKind::Unfollow(id, _) => {
+                    if self.fav_artist_ids.contains(&id) {
+                        self.toggle_follow_artist(id, cx)
+                    }
+                }
+            },
         }
         self.close_dialog(window, cx);
     }
@@ -159,10 +206,10 @@ impl AppView {
                     if let Load::Ready(list) = &mut this.my_playlists {
                         list.insert(0, pl.clone());
                     }
-                    this.notify_toast(format!("Playlist «{}» creada", pl.title), cx);
+                    this.notify_toast(crate::i18n::text("playlist_created", &[pl.title.to_string()]), cx);
                     this.navigate(Page::Playlist(pl.uuid), cx);
                 }
-                Err(e) => this.notify_toast(format!("No se pudo crear la playlist: {e:#}"), cx),
+                Err(e) => this.notify_toast(crate::i18n::text("could_not_create_the_playlist", &[format!("{:#}", e)]), cx),
             },
         );
     }
@@ -184,9 +231,9 @@ impl AppView {
                             p.description = desc.clone();
                         }
                     }
-                    this.notify_toast("Playlist actualizada", cx);
+                    this.notify_toast(crate::i18n::t("playlist_updated"), cx);
                 }
-                Err(e) => this.notify_toast(format!("No se pudo editar: {e:#}"), cx),
+                Err(e) => this.notify_toast(crate::i18n::text("could_not_edit", &[format!("{:#}", e)]), cx),
             },
         );
     }
@@ -205,21 +252,25 @@ impl AppView {
                     if this.page == Page::Playlist(uuid.clone()) {
                         this.navigate(Page::MyPlaylists, cx);
                     }
-                    this.notify_toast("Playlist eliminada", cx);
+                    this.notify_toast(crate::i18n::t("playlist_deleted"), cx);
                 }
-                Err(e) => this.notify_toast(format!("No se pudo eliminar: {e:#}"), cx),
+                Err(e) => this.notify_toast(crate::i18n::text("could_not_delete", &[format!("{:#}", e)]), cx),
             },
         );
     }
 
     pub fn add_tracks_to_playlist(&mut self, uuid: String, tracks: Vec<Track>, cx: &mut Context<Self>) {
+        if tracks.iter().any(|track| track.local_path.is_some()) {
+            self.notify_toast(crate::i18n::text("local_files_cannot_be_added_to_playlists", &[crate::i18n::t("tidal").to_string()]), cx);
+            return;
+        }
         let ids: Vec<u64> = tracks.iter().map(|t| t.id).collect();
         let name = self
             .my_playlists
             .ready()
             .and_then(|l| l.iter().find(|p| p.uuid == uuid))
             .map(|p| p.title.clone())
-            .unwrap_or_else(|| "la playlist".into());
+            .unwrap_or_else(|| crate::i18n::t("the_playlist").into());
         let u = uuid.clone();
         self.fetch(
             cx,
@@ -236,9 +287,16 @@ impl AppView {
                         }
                     }
                     let n = tracks.len();
-                    this.notify_toast(if n == 1 { format!("Añadida a «{name}»") } else { format!("{n} pistas añadidas a «{name}»") }, cx);
+                    this.notify_toast(
+                        if n == 1 {
+                            crate::i18n::text("added_to", &[name.to_string()])
+                        } else {
+                            crate::i18n::text("tracks_added_to", &[format!("{}", n), name.to_string()])
+                        },
+                        cx,
+                    );
                 }
-                Err(e) => this.notify_toast(format!("No se pudo añadir: {e:#}"), cx),
+                Err(e) => this.notify_toast(crate::i18n::text("could_not_add", &[format!("{:#}", e)]), cx),
             },
         );
     }
@@ -256,11 +314,11 @@ impl AppView {
             cx,
             move |t| t.remove_from_playlist(&u, index),
             move |this, r, cx| match r {
-                Ok(()) => this.notify_toast("Eliminada de la playlist", cx),
+                Ok(()) => this.notify_toast(crate::i18n::t("removed_from_playlist"), cx),
                 Err(e) => {
                     this.playlists.remove(&uuid);
                     this.load_page_data(cx);
-                    this.notify_toast(format!("No se pudo quitar: {e:#}"), cx);
+                    this.notify_toast(crate::i18n::text("could_not_remove", &[format!("{:#}", e)]), cx);
                 }
             },
         );
@@ -285,7 +343,7 @@ impl AppView {
                 if let Err(e) = r {
                     this.playlists.remove(&uuid);
                     this.load_page_data(cx);
-                    this.notify_toast(format!("No se pudo mover: {e:#}"), cx);
+                    this.notify_toast(crate::i18n::text("could_not_move", &[format!("{:#}", e)]), cx);
                 }
             },
         );
@@ -306,8 +364,11 @@ impl AppView {
             cx,
             move |t| t.set_favorite_playlist(&u, save),
             move |this, r, cx| match r {
-                Ok(()) => this.notify_toast(if save { "Guardada en Mi colección" } else { "Quitada de Mi colección" }, cx),
-                Err(e) => this.notify_toast(format!("Error: {e:#}"), cx),
+                Ok(()) => this.notify_toast(
+                    if save { crate::i18n::t("saved_to_my_collection") } else { crate::i18n::t("removed_from_my_collection") },
+                    cx,
+                ),
+                Err(e) => this.notify_toast(crate::i18n::text("error", &[format!("{:#}", e)]), cx),
             },
         );
         cx.notify();
@@ -325,8 +386,10 @@ impl AppView {
             cx,
             move |t| t.set_favorite_artist(id, follow),
             move |this, r, cx| match r {
-                Ok(()) => this.notify_toast(if follow { "Siguiendo al artista" } else { "Has dejado de seguir al artista" }, cx),
-                Err(e) => this.notify_toast(format!("Error: {e:#}"), cx),
+                Ok(()) => {
+                    this.notify_toast(if follow { crate::i18n::t("following_artist") } else { crate::i18n::t("unfollowed_artist") }, cx)
+                }
+                Err(e) => this.notify_toast(crate::i18n::text("error", &[format!("{:#}", e)]), cx),
             },
         );
         cx.notify();
@@ -337,59 +400,100 @@ impl AppView {
 pub fn dialog_overlay(view: &mut AppView, cx: &mut Context<AppView>) -> Option<AnyElement> {
     let dialog = view.dialog.clone()?;
     let field = |label: &'static str, input: gpui::Entity<TextInput>| {
-        div().flex().flex_col().gap(sc(6.)).child(div().text_size(sc(12.)).text_color(theme::text_secondary()).child(label)).child(
-            div()
-                .h(sc(40.))
-                .px(sc(12.))
-                .flex()
-                .items_center()
-                .rounded(sc(6.))
-                .bg(theme::surface())
-                .border_1()
-                .border_color(theme::border())
-                .child(input),
-        )
+        div()
+            .flex()
+            .flex_col()
+            .gap(sc(6.))
+            .child(div().text_size(sc(theme::TYPE_LABEL)).text_color(theme::text_secondary()).child(label))
+            .child(
+                div()
+                    .h(sc(40.))
+                    .px(sc(12.))
+                    .flex()
+                    .items_center()
+                    .rounded(sc(6.))
+                    .bg(theme::surface())
+                    .border_1()
+                    .border_color(theme::border())
+                    .child(input),
+            )
     };
     let (heading, body, confirm, danger): (String, AnyElement, &str, bool) = match &dialog {
         Dialog::NewPlaylist { add } => (
-            "Nueva playlist".into(),
+            crate::i18n::t("playlist.create").into(),
             div()
                 .flex()
                 .flex_col()
                 .gap(sc(14.))
-                .child(field("Nombre", view.dlg_title.clone()))
-                .child(field("Descripción (opcional)", view.dlg_desc.clone()))
+                .child(field(crate::i18n::t("name"), view.dlg_title.clone()))
+                .child(field(crate::i18n::t("description_optional"), view.dlg_desc.clone()))
                 .when(!add.is_empty(), |d| {
-                    d.child(div().text_size(sc(13.)).text_color(theme::text_secondary()).child(format!(
-                        "Se añadirá{} {} pista{}.",
-                        if add.len() == 1 { "" } else { "n" },
-                        add.len(),
-                        if add.len() == 1 { "" } else { "s" }
-                    )))
+                    d.child(div().text_size(sc(13.)).text_color(theme::text_secondary()).child(if add.len() == 1 {
+                        crate::i18n::t("one_track_will_be_added").to_string()
+                    } else {
+                        crate::i18n::text("tracks_will_be_added", &[add.len().to_string()])
+                    }))
                 })
                 .into_any_element(),
-            "Crear",
+            crate::i18n::t("create"),
             false,
         ),
         Dialog::EditPlaylist { .. } => (
-            "Editar playlist".into(),
+            crate::i18n::t("edit_playlist").into(),
             div()
                 .flex()
                 .flex_col()
                 .gap(sc(14.))
-                .child(field("Nombre", view.dlg_title.clone()))
-                .child(field("Descripción", view.dlg_desc.clone()))
+                .child(field(crate::i18n::t("name"), view.dlg_title.clone()))
+                .child(field(crate::i18n::t("description"), view.dlg_desc.clone()))
                 .into_any_element(),
-            "Guardar",
+            crate::i18n::t("save"),
             false,
         ),
-        Dialog::DeletePlaylist { title, .. } => (
-            "Eliminar playlist".into(),
+        Dialog::SignOut => (
+            crate::i18n::t("sign_out").into(),
             div()
                 .text_color(theme::text_secondary())
-                .child(format!("¿Seguro que quieres eliminar «{title}»? No se puede deshacer."))
+                .child(crate::i18n::text("account.signout_explanation", &[crate::i18n::t("tidal").to_string()]))
                 .into_any_element(),
-            "Eliminar",
+            crate::i18n::t("sign_out"),
+            true,
+        ),
+        Dialog::ConfirmRemove(k) => {
+            let (title, text, button) = match k {
+                RemoveKind::PlaylistTrack { title, .. } => (
+                    crate::i18n::t("remove_from_playlist"),
+                    crate::i18n::text("playlist.confirm_remove", &[title.to_string(), crate::i18n::t("tidal").to_string()]),
+                    crate::i18n::t("remove"),
+                ),
+                RemoveKind::FavTrack(t) => (
+                    crate::i18n::t("remove_from_your_collection"),
+                    crate::i18n::text(
+                        "remove_from_your_favorite_tracks_in",
+                        &[t.display_title().to_string(), crate::i18n::t("tidal").to_string()],
+                    ),
+                    crate::i18n::t("remove"),
+                ),
+                RemoveKind::FavAlbum(a) => (
+                    crate::i18n::t("remove_from_your_collection"),
+                    crate::i18n::text("remove_from_your_albums_in", &[a.title.to_string(), crate::i18n::t("tidal").to_string()]),
+                    crate::i18n::t("remove"),
+                ),
+                RemoveKind::Unfollow(_, name) => (
+                    crate::i18n::t("unfollow"),
+                    crate::i18n::text("unfollow_in", &[name.to_string(), crate::i18n::t("tidal").to_string()]),
+                    crate::i18n::t("unfollow"),
+                ),
+            };
+            (title.into(), div().text_color(theme::text_secondary()).child(text).into_any_element(), button, true)
+        }
+        Dialog::DeletePlaylist { title, .. } => (
+            crate::i18n::t("delete_playlist").into(),
+            div()
+                .text_color(theme::text_secondary())
+                .child(crate::i18n::text("delete_this_cannot_be_undone", &[title.to_string()]))
+                .into_any_element(),
+            crate::i18n::t("delete"),
             true,
         ),
     };
@@ -408,27 +512,36 @@ pub fn dialog_overlay(view: &mut AppView, cx: &mut Context<AppView>) -> Option<A
                 .justify_center()
                 .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
                 .child(
-                    div()
+                    super::widgets::floating_panel(16.)
                         .id("dialog")
                         .w(sc(460.))
-                        .p(sc(24.))
-                        .rounded(sc(10.))
-                        .bg(theme::elevated())
-                        .border_1()
-                        .border_color(theme::border())
-                        .shadow_lg()
+                        .max_w_full()
+                        .max_h(gpui::relative(0.9))
+                        .overflow_y_scroll()
+                        .p(sc(super::widgets::PANEL_PAD))
                         .flex()
                         .flex_col()
                         .gap(sc(18.))
                         .on_click(|_, _, cx| cx.stop_propagation())
+                        .child(super::glass::sheen("playlist-dialog-glass", 16., 0.75))
                         .child(div().text_size(sc(20.)).font_weight(FontWeight::BOLD).child(heading))
                         .child(body)
                         .child(
                             div()
+                                .pt(sc(12.))
+                                .border_t_1()
+                                .border_color(theme::divider())
                                 .flex()
                                 .justify_end()
                                 .gap(sc(10.))
-                                .child(pill("dlg-cancel", "Cancelar", None, false, |this, _, window, cx| this.close_dialog(window, cx), cx))
+                                .child(pill(
+                                    "dlg-cancel",
+                                    crate::i18n::t("cancel"),
+                                    None,
+                                    false,
+                                    |this, _, window, cx| this.close_dialog(window, cx),
+                                    cx,
+                                ))
                                 .child(div().when(danger, |d| d.text_color(theme::danger())).child(pill(
                                     "dlg-ok",
                                     confirm.to_string(),
@@ -437,7 +550,8 @@ pub fn dialog_overlay(view: &mut AppView, cx: &mut Context<AppView>) -> Option<A
                                     |this, _, window, cx| this.submit_dialog(window, cx),
                                     cx,
                                 ))),
-                        ),
+                        )
+                        .with_animation("dialog-entrance", super::motion::animation(super::motion::PANEL), super::motion::enter),
                 ),
         )
         .with_priority(3)

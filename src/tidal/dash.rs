@@ -19,23 +19,23 @@ const MAX_SEGMENTS: u64 = 20_000;
 
 pub fn parse(xml: &str) -> Result<Mpd> {
     let doc = roxmltree::Document::parse(xml)?;
-    // TIDE only plays streams the account receives unencrypted. A protected
+    // Abyss only plays streams the account receives unencrypted. A protected
     // (DRM) representation is refused outright, never worked around.
     if doc.descendants().any(|n| n.has_tag_name("ContentProtection")) {
-        return Err(anyhow!("protected (DRM) stream is not supported"));
+        return Err(anyhow!(crate::i18n::t("protected_drm_stream_is_unsupported")));
     }
     // Pick the representation with the highest bandwidth.
     let rep = doc
         .descendants()
         .filter(|n| n.has_tag_name("Representation"))
         .max_by_key(|n| n.attribute("bandwidth").and_then(|b| b.parse::<u64>().ok()).unwrap_or(0))
-        .ok_or_else(|| anyhow!("MPD without Representation"))?;
+        .ok_or_else(|| anyhow!(crate::i18n::t("mpd_without_representation")))?;
 
     let template = rep
         .descendants()
         .find(|n| n.has_tag_name("SegmentTemplate"))
         .or_else(|| rep.parent()?.children().find(|n| n.has_tag_name("SegmentTemplate")))
-        .ok_or_else(|| anyhow!("MPD without SegmentTemplate"))?;
+        .ok_or_else(|| anyhow!(crate::i18n::t("mpd_without_segment_template")))?;
 
     let rep_id = rep.attribute("id").unwrap_or("");
     let bandwidth = rep.attribute("bandwidth").unwrap_or("");
@@ -47,8 +47,8 @@ pub fn parse(xml: &str) -> Result<Mpd> {
         s
     };
 
-    let init = template.attribute("initialization").ok_or_else(|| anyhow!("no init segment"))?;
-    let media = template.attribute("media").ok_or_else(|| anyhow!("no media template"))?;
+    let init = template.attribute("initialization").ok_or_else(|| anyhow!(crate::i18n::t("no_initialization_segment")))?;
+    let media = template.attribute("media").ok_or_else(|| anyhow!(crate::i18n::t("no_media_template")))?;
     let start: u64 = template.attribute("startNumber").and_then(|s| s.parse().ok()).unwrap_or(1);
 
     let mut count: u64 = 0;
@@ -60,7 +60,7 @@ pub fn parse(xml: &str) -> Result<Mpd> {
             let d: f64 = s.attribute("d").and_then(|d| d.parse().ok()).unwrap_or(0.0);
             count += 1 + r.max(0) as u64;
             if count > MAX_SEGMENTS {
-                return Err(anyhow!("MPD with too many segments ({count})"));
+                return Err(anyhow!(crate::i18n::text("mpd_has_too_many_segments", &[format!("{}", count)])));
             }
             for _ in 0..=r.max(0) {
                 seg_secs.push(d / timescale);
@@ -68,14 +68,14 @@ pub fn parse(xml: &str) -> Result<Mpd> {
         }
     }
     if count == 0 {
-        return Err(anyhow!("MPD without segment timeline"));
+        return Err(anyhow!(crate::i18n::t("mpd_without_segment_timeline")));
     }
     if timescale.is_nan() || timescale <= 0.0 {
-        return Err(anyhow!("MPD with invalid timescale"));
+        return Err(anyhow!(crate::i18n::t("mpd_with_invalid_timescale")));
     }
     // Audio is only fetched over TLS.
     if !init.starts_with("https://") || !media.starts_with("https://") {
-        return Err(anyhow!("MPD with non-HTTPS segment URLs"));
+        return Err(anyhow!(crate::i18n::t("mpd_has_non_https_segment_urls")));
     }
 
     let mut urls = Vec::with_capacity(count as usize + 1);

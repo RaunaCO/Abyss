@@ -6,6 +6,7 @@
 use std::rc::Rc;
 
 use super::sc;
+use gpui::AnimationExt;
 use gpui::{deferred, div, prelude::*, AnyElement, Context, Focusable, FontWeight, SharedString, Window};
 
 use super::{theme, AppView, Page};
@@ -30,24 +31,27 @@ fn item(label: &str, shortcut: &'static str, run: impl Fn(&mut AppView, &mut Win
 fn menu(view: &AppView) -> Vec<Entry> {
     let playing = view.now.is_some() && !view.snap.paused && !view.ended;
     let repeat = view.repeat;
-    let mark = |on: bool, text: &str| format!("{}{text}", if on { "✓ " } else { "    " });
+    // The check goes after the label, so labels stay aligned with the other rows.
+    let mark = |on: bool, text: &str| format!("{text}{}", if on { "  ✓" } else { "" });
     vec![
         Entry::Sub {
-            label: "Archivo",
+            label: crate::i18n::t("file"),
             entries: vec![
-                item("Cerrar sesión", "", |this, _, cx| this.sign_out(cx)),
-                item("Ajustes", "Ctrl+P", |this, _, cx| this.navigate(Page::Settings, cx)),
+                item(crate::i18n::t("sign_out"), "", |this, _, cx| this.sign_out(cx)),
+                item(crate::i18n::t("settings"), crate::i18n::t("ctrl_p"), |this, _, cx| this.navigate(Page::Settings, cx)),
                 Entry::Sep,
-                item("Salir", "", |_, _, cx| cx.quit()),
+                item(crate::i18n::t("quit"), "", |_, _, cx| cx.quit()),
             ],
         },
         Entry::Sub {
-            label: "Navegación",
+            label: crate::i18n::t("navigation"),
             entries: vec![
-                item("Inicio", "Ctrl+H", |this, _, cx| this.navigate(Page::Home, cx)),
-                item("Atrás", "Alt+←", |this, _, cx| this.go_back(cx)),
-                item("Adelante", "Alt+→", |this, _, cx| this.go_forward(cx)),
-                item("Buscar", "Ctrl+F", |this, window, cx| {
+                item(crate::i18n::t("home"), crate::i18n::t("ctrl_h"), |this, _, cx| this.navigate(Page::Home, cx)),
+                item(crate::i18n::t("explore"), "", |this, _, cx| this.navigate(Page::Explore, cx)),
+                item(crate::i18n::t("mixes_and_radio"), "", |this, _, cx| this.navigate(Page::MyMixes, cx)),
+                item(crate::i18n::t("back"), crate::i18n::t("shortcut.back"), |this, _, cx| this.go_back(cx)),
+                item(crate::i18n::t("forward"), crate::i18n::t("shortcut.forward"), |this, _, cx| this.go_forward(cx)),
+                item(crate::i18n::t("search"), crate::i18n::t("ctrl_f"), |this, window, cx| {
                     let fh = this.search_input.focus_handle(cx);
                     window.focus(&fh);
                     this.search_open = true;
@@ -55,68 +59,77 @@ fn menu(view: &AppView) -> Vec<Entry> {
             ],
         },
         Entry::Sub {
-            label: "Reproducción",
+            label: crate::i18n::t("playback"),
             entries: vec![
-                item(if playing { "Pausar" } else { "Reproducir" }, "Espacio", |this, _, cx| this.toggle_play(cx)),
+                item(if playing { crate::i18n::t("pause") } else { crate::i18n::t("play") }, crate::i18n::t("space"), |this, _, cx| {
+                    this.toggle_play(cx)
+                }),
                 Entry::Sep,
-                item("Anterior", "Ctrl+←", |this, _, cx| this.prev(cx)),
-                item("Siguiente", "Ctrl+→", |this, _, cx| this.next(cx)),
+                item(crate::i18n::t("previous"), crate::i18n::t("shortcut.previous"), |this, _, cx| this.prev(cx)),
+                item(crate::i18n::t("next"), crate::i18n::t("shortcut.next"), |this, _, cx| this.next(cx)),
                 Entry::Sep,
-                item("Retroceder 10 s", "Ctrl+Mayús+←", |this, _, cx| {
+                item(crate::i18n::t("back_10_s"), crate::i18n::t("shortcut.seek_back"), |this, _, cx| {
                     let p = (this.snap.position - 10.0).max(0.0);
                     this.seek(p, cx)
                 }),
-                item("Avanzar 10 s", "Ctrl+Mayús+→", |this, _, cx| {
+                item(crate::i18n::t("forward_10_s"), crate::i18n::t("shortcut.seek_forward"), |this, _, cx| {
                     let p = this.snap.position + 10.0;
                     this.seek(p, cx)
                 }),
                 Entry::Sep,
                 Entry::Sub {
-                    label: "Repetir",
+                    label: crate::i18n::t("repeat"),
                     entries: vec![
-                        item(&mark(repeat == Repeat::Off, "No repetir"), "", |this, _, cx| set_repeat(this, Repeat::Off, cx)),
-                        item(&mark(repeat == Repeat::All, "Repetir todo"), "", |this, _, cx| set_repeat(this, Repeat::All, cx)),
-                        item(&mark(repeat == Repeat::One, "Repetir una"), "", |this, _, cx| set_repeat(this, Repeat::One, cx)),
+                        item(&mark(repeat == Repeat::Off, crate::i18n::t("repeat_off")), "", |this, _, cx| {
+                            set_repeat(this, Repeat::Off, cx)
+                        }),
+                        item(&mark(repeat == Repeat::All, crate::i18n::t("repeat_all")), "", |this, _, cx| {
+                            set_repeat(this, Repeat::All, cx)
+                        }),
+                        item(&mark(repeat == Repeat::One, crate::i18n::t("repeat_one")), "", |this, _, cx| {
+                            set_repeat(this, Repeat::One, cx)
+                        }),
                     ],
                 },
-                item(&mark(view.shuffle, "Aleatorio"), "Ctrl+S", |this, _, cx| this.toggle_shuffle(cx)),
+                item(&mark(view.shuffle, crate::i18n::t("shuffle")), crate::i18n::t("ctrl_s"), |this, _, cx| this.toggle_shuffle(cx)),
             ],
         },
         Entry::Sub {
-            label: "Ver",
+            label: crate::i18n::t("view"),
             entries: vec![
-                item("Recargar", "", |this, _, cx| {
+                item(crate::i18n::t("reload"), "", |this, _, cx| {
                     this.reset_data();
                     this.load_page_data(cx);
                     cx.notify();
                 }),
                 Entry::Sep,
-                item("Acercar", "Ctrl++", |this, _, cx| this.step_zoom(1, cx)),
-                item("Alejar", "Ctrl+-", |this, _, cx| this.step_zoom(-1, cx)),
-                item("Restablecer zoom", "Ctrl+0", |this, _, cx| this.set_zoom_level(1.0, cx)),
+                item(crate::i18n::t("zoom_in"), crate::i18n::t("shortcut.zoom_in"), |this, _, cx| this.step_zoom(1, cx)),
+                item(crate::i18n::t("zoom_out"), crate::i18n::t("shortcut.zoom_out"), |this, _, cx| this.step_zoom(-1, cx)),
+                item(crate::i18n::t("reset_zoom"), crate::i18n::t("shortcut.zoom_reset"), |this, _, cx| this.set_zoom_level(1.0, cx)),
             ],
         },
         Entry::Sub {
-            label: "Ayuda",
+            label: crate::i18n::t("help"),
             entries: vec![
-                item("Buscar actualizaciones", "", |_, _, _| {
+                item(crate::i18n::t("check_for_updates"), "", |_, _, _| {
                     let _ = open::that("https://github.com/RaunaCO/TIDE/releases");
                 }),
-                item("Acerca de TIDE", "", |this, _, cx| {
-                    this.settings_tab = 2;
+                item(crate::i18n::t("about.title"), "", |this, _, cx| {
+                    this.settings_tab = super::settings::ABOUT_TAB;
+                    this.content_changed_pub();
                     this.navigate(Page::Settings, cx);
                 }),
-                item("Soporte", "", |_, _, _| {
+                item(crate::i18n::t("support"), "", |_, _, _| {
                     let _ = open::that("https://github.com/RaunaCO/TIDE/issues");
                 }),
                 Entry::Sep,
                 Entry::Sub {
-                    label: "Solución de problemas",
+                    label: crate::i18n::t("troubleshooting"),
                     entries: vec![
-                        item("Abrir carpeta de ajustes", "", |_, _, _| {
+                        item(crate::i18n::t("open_settings_folder"), "", |_, _, _| {
                             let _ = open::that(crate::config::config_dir());
                         }),
-                        item("Abrir carpeta de caché", "", |_, _, _| {
+                        item(crate::i18n::t("open_cache_folder"), "", |_, _, _| {
                             let _ = open::that(crate::config::cache_dir());
                         }),
                     ],
@@ -144,18 +157,14 @@ impl AppView {
     }
 }
 
-fn panel(width: f32, rows: Vec<AnyElement>) -> gpui::Div {
-    div()
+fn panel(depth: usize, width: f32, rows: Vec<AnyElement>) -> gpui::Div {
+    super::widgets::floating_panel(12.)
         .w(sc(width))
         .py(sc(PANEL_PAD))
         .px(sc(PANEL_PAD))
-        .rounded(sc(12.))
-        .bg(gpui::rgb(0x1e1e21))
-        .border_1()
-        .border_color(gpui::rgba(0xffffff10))
-        .shadow_lg()
         .flex()
         .flex_col()
+        .child(super::glass::sheen(("app-menu-glass", depth), 12., 0.6))
         .children(rows)
 }
 
@@ -188,7 +197,7 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
             .enumerate()
             .map(|(i, e)| match e {
                 Entry::Sep => {
-                    div().h(sc(SEP_H)).flex().items_center().child(div().h(sc(1.)).w_full().bg(gpui::rgba(0xffffff12))).into_any_element()
+                    div().h(sc(SEP_H)).flex().items_center().child(div().h(sc(1.)).w_full().bg(theme::divider())).into_any_element()
                 }
                 Entry::Sub { label, .. } => {
                     let open = path.get(depth) == Some(&i);
@@ -201,8 +210,8 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         .rounded(sc(6.))
                         .cursor_pointer()
                         .text_size(sc(13.))
-                        .when(open, |d| d.bg(gpui::rgb(0x2c2c31)))
-                        .hover(|s| s.bg(gpui::rgb(0x2c2c31)))
+                        .when(open, |d| d.bg(theme::menu_hover()))
+                        .hover(|s| s.bg(theme::menu_hover()))
                         .child(div().flex_1().child(*label))
                         .child(super::icons::Icon::Forward.el(14., theme::text_secondary()))
                         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
@@ -235,7 +244,7 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         .rounded(sc(6.))
                         .cursor_pointer()
                         .text_size(sc(13.))
-                        .hover(|s| s.bg(gpui::rgb(0x2c2c31)).pl(sc(14.)))
+                        .hover(|s| s.bg(theme::menu_hover()).pl(sc(14.)))
                         .active(|s| s.opacity(0.7))
                         .child(div().flex_1().whitespace_nowrap().child(label.clone()))
                         .when(!shortcut.is_empty(), |d| {
@@ -260,7 +269,7 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                 }
             })
             .collect();
-        columns.push(div().mt(sc(top)).child(panel(widths[depth.min(2)], rows)).into_any_element());
+        columns.push(div().mt(sc(top)).child(panel(depth, widths[depth.min(2)], rows)).into_any_element());
         // The next column lines up with the entry that opened it.
         if let Some(&i) = path.get(depth) {
             top += entries_height_before(list, i);
@@ -281,7 +290,8 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         this.app_menu = None;
                         cx.notify();
                     }))
-                    .children(columns),
+                    .children(columns)
+                    .with_animation("appmenu-entrance", super::motion::animation(super::motion::FAST), super::motion::enter),
             ),
         )
         .with_priority(3)

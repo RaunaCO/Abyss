@@ -14,14 +14,14 @@ use gpui::{div, prelude::*, AnyElement, ClickEvent, Context, ElementId, Rgba, Sh
 use super::icons::Icon;
 use super::{theme, AppView};
 
-const POP: Duration = Duration::from_millis(380);
-const RIPPLE: Duration = Duration::from_millis(520);
-const BURST: Duration = Duration::from_millis(950);
+const POP: Duration = super::motion::CONTROL;
+const RIPPLE: Duration = super::motion::PANEL;
+const BURST: Duration = super::motion::AMBIENT_FADE;
 /// Horizontal distance (px) a swipe needs to navigate.
 const SWIPE_TRIGGER: f32 = 150.0;
 
 fn t_of(at: Instant, len: Duration) -> f32 {
-    (at.elapsed().as_secs_f32() / len.as_secs_f32()).clamp(0.0, 1.0)
+    super::motion::progress(at, len)
 }
 
 /// Damped spring: a quick swell past 1 and a settle back, like a button that
@@ -30,7 +30,7 @@ fn spring(t: f32) -> f32 {
     if t >= 1.0 {
         return 1.0;
     }
-    1.0 + 0.14 * (t * std::f32::consts::PI * 1.6).sin() * (-3.2 * t).exp()
+    1.0 + 0.07 * (t * std::f32::consts::PI * 1.6).sin() * (-3.2 * t).exp()
 }
 
 /// The play button: it sinks under the finger (to 78 %) and springs back past
@@ -42,10 +42,10 @@ fn press_spring(t: f32) -> f32 {
     }
     if t < DOWN {
         let k = t / DOWN;
-        return 1.0 - 0.14 * (1.0 - (1.0 - k).powi(2));
+        return 1.0 - 0.08 * (1.0 - (1.0 - k).powi(2));
     }
     let u = (t - DOWN) / (1.0 - DOWN);
-    1.0 - 0.14 * (u * 9.0).cos() * (-5.0 * u).exp()
+    1.0 - 0.08 * (u * 9.0).cos() * (-5.0 * u).exp()
 }
 
 #[derive(Default)]
@@ -60,6 +60,13 @@ pub struct Haptics {
 impl Haptics {
     /// True while anything is animating (the caller then asks for a frame).
     pub fn active(&mut self) -> bool {
+        if super::motion::reduced_motion() {
+            self.pulses.clear();
+            self.ripple = None;
+            self.burst = None;
+            self.swipe = 0.0;
+            return false;
+        }
         self.pulses.retain(|(_, at)| at.elapsed() < POP);
         if self.ripple.is_some_and(|at| at.elapsed() >= RIPPLE) {
             self.ripple = None;
@@ -95,10 +102,6 @@ impl AppView {
             .find(|(k, _)| k == key)
             .map(|(_, at)| if press { press_spring(t_of(*at, POP)) } else { spring(t_of(*at, POP)) })
             .unwrap_or(1.0)
-    }
-
-    pub fn ripple_play(&mut self) {
-        self.haptics.ripple = Some(Instant::now());
     }
 
     pub fn heart_burst(&mut self) {
@@ -138,7 +141,7 @@ pub fn button(
     on_click: impl Fn(&mut AppView, &ClickEvent, &mut Window, &mut Context<AppView>) + 'static,
     cx: &mut Context<AppView>,
 ) -> AnyElement {
-    let scale = view.pulse_scale(id);
+    let _ = view;
     let key = format!("hb-{id}");
     let (h, p) = (super::interact::hover(&key), super::interact::press(&key));
     let el = div()
@@ -151,34 +154,16 @@ pub fn button(
         .rounded(sc(999.))
         .cursor_pointer()
         // Hover: a soft disc fades in and the glyph grows; press: it sinks.
-        .bg(super::fx::with_alpha(gpui::rgb(0xffffff), 0.055 * h + 0.045 * p))
-        .child(icon.el(size * scale, color).opacity(0.8 + 0.2 * h - 0.2 * p))
+        .bg(theme::ink(0.055 * h + 0.045 * p))
+        .child(super::glass::sheen("transport-button-glass", 999., 0.92))
+        // Hover brightens the glyph; press sinks it 7 % and it eases back on release.
+        .child(icon.el_scaled(size, color, 1.0 - 0.07 * p).opacity(0.8 + 0.2 * h - 0.1 * p))
         .on_click(cx.listener(move |this, ev, window, cx| {
             cx.stop_propagation();
-            this.pulse(id);
             on_click(this, ev, window, cx);
             cx.notify();
         }));
     super::interact::track(el, key, cx).into_any_element()
-}
-
-/// The ring that spreads from the play button when it is pressed.
-pub fn play_ripple(view: &AppView, base: f32) -> Option<AnyElement> {
-    let at = view.haptics.ripple?;
-    let t = t_of(at, RIPPLE);
-    let e = 1.0 - (1.0 - t).powi(3);
-    let d = base * (1.0 + 0.9 * e);
-    Some(
-        div()
-            .absolute()
-            .left(sc((base - d) / 2.0))
-            .top(sc((base - d) / 2.0))
-            .size(sc(d))
-            .rounded(sc(d / 2.0))
-            .border_2()
-            .border_color(super::fx::with_alpha(theme::text(), 0.45 * (1.0 - t)))
-            .into_any_element(),
-    )
 }
 
 /// Big heart over the Now Playing cover after a double-click.
@@ -217,7 +202,7 @@ pub fn swipe_indicator(view: &AppView) -> Option<AnyElement> {
         .top(gpui::relative(0.45))
         .size(sc(d))
         .rounded(sc(d / 2.0))
-        .bg(super::fx::with_alpha(gpui::rgb(0x242429), 0.6 + 0.4 * k))
+        .bg(super::fx::with_alpha(theme::hover(), 0.6 + 0.4 * k))
         .border_1()
         .border_color(super::fx::with_alpha(theme::text(), 0.2 * k))
         .flex()
