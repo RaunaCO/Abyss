@@ -49,7 +49,7 @@ Streaming, very large libraries and long sessions still need separate measuremen
 
 ## Install
 
-Download **Abyss-1.0.2-win-x64-setup.exe** from the [latest release](https://github.com/RaunaCO/TIDE/releases/latest).
+Download **Abyss-1.0.4-win-x64-setup.exe** from the [latest release](https://github.com/RaunaCO/TIDE/releases/latest).
 It installs for your user, with no administrator rights, and keeps your settings on
 uninstall. A portable `.zip` is also available. The binaries are not code-signed, so
 Windows SmartScreen may warn. Check the SHA-256 in the release notes.
@@ -89,11 +89,11 @@ Windows SmartScreen may warn. Check the SHA-256 in the release notes.
   (reduced when Windows asks for it), smooth wheel scrolling, UI zoom, mouse
   back/forward buttons.
 - **Ratings**: 0 to 5 stars in half-star steps for any track (lists, album panel, player bar), sortable. Stored locally in `%APPDATA%\abyss\ratings.json` since TIDAL has no rating API.
-- **Discord**: optional Rich Presence with cover, title, artist, progress and a TIDAL link. Inactive until an Abyss application ID is configured. See [docs/DISCORD.md](docs/DISCORD.md).
+- **Discord**: optional Rich Presence with cover, title, artist, progress and a TIDAL link. Works out of the box with the Abyss application ID. See [docs/DISCORD.md](docs/DISCORD.md).
 - **Languages**: English, Spanish, Portuguese, French, German and Japanese. Follows the system by default; change it in Settings > Appearance.
 - **System**: Windows media controls (SMTC), Inter font bundled.
 
-Current version: **1.0.2** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
+Current version: **1.0.4** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
 source (MIT); it is not sold and must not be bundled with a paid offering.
 
 ## Getting started

@@ -184,7 +184,7 @@ impl Default for Settings {
 /// Public application identifier. No verified Abyss ID is bundled.
 // The owner must register or rename the Discord application for Abyss.
 // An empty ID keeps activity publishing inactive until one is configured.
-pub const DISCORD_APP_ID: &str = "";
+pub const DISCORD_APP_ID: &str = "1569976551288864879";
 
 /// TIDAL device-authorization client (TV flow), retained for compatibility.
 pub const DEVICE_CLIENT_ID: &str = "fX2JxdmntZWK0ixT";

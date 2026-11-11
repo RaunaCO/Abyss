@@ -161,12 +161,12 @@ impl Conn {
             let mut act = json!({
                 // 2 = "Listening to".
                 "type": 2,
-                // The header "Listening to ..." shows the album (status_display_type 2
-                // reads the details line) instead of the app name; without an album
-                // it shows the track title.
-                "status_display_type": 2,
-                "details": if a.album.is_empty() { a.title.clone() } else { a.album.clone() },
-                "state": if a.album.is_empty() { a.artist.clone() } else { format!("{} · {}", a.title, a.artist) },
+                // The header "Listening to ..." shows the artist (status_display_type 1
+                // reads the state line) instead of the app name. The details line is
+                // the track title; the album shows on hover over the cover.
+                "status_display_type": 1,
+                "details": a.title,
+                "state": a.artist,
                 "timestamps": { "start": a.start, "end": a.end },
                 "buttons": [{ "label": crate::i18n::t("discord.listen_on_tidal"), "url": format!("https://tidal.com/browse/track/{}", a.track_id) }],
             });

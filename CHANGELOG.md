@@ -7,6 +7,14 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
+## [1.0.4]
+
+- Discord Rich Presence: the "Listening to" header shows the artist. The details line is the track title and the album shows on hover over the cover.
+
+## [1.0.3]
+
+- Discord Rich Presence works out of the box: Abyss now ships its own Discord application ID (you can still override it in Settings > Privacy).
+
 ## [1.0.2]
 
 - Discord Rich Presence: the "Listening to" header shows the album name instead of the app name (the details line is the album, the state line is "title · artist"; without an album the header shows the track title).
