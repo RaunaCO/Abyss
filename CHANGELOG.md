@@ -7,6 +7,14 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
+## [1.0.1]
+
+- The welcome guide shows only once: it counts as seen when it first appears, so
+  closing the window before the last step no longer brings it back.
+- New Windows setup installer (per user, no administrator rights, keeps your data
+  on uninstall) next to the portable zip.
+- README landing page with performance goals and measurements.
+
 ## [1.0.0]
 
 First stable release. Free and open source (MIT).

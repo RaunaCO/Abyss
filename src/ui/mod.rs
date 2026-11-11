@@ -777,6 +777,13 @@ impl AppView {
         if s.preferred_service == "local" {
             this.page = Page::MyTracks;
         }
+        // The welcome guide shows once: it counts as seen as soon as it appears, so
+        // closing the window before the last step does not bring it back.
+        if this.welcome_step.is_some() {
+            let mut s = this.settings.lock();
+            s.welcome_complete = true;
+            s.save();
+        }
         this.local_changed();
         this.rescan_local_folders(cx);
         this.start_ticker(cx);

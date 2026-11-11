@@ -1,13 +1,58 @@
-<p align="center"><img src="assets/logo.png" width="96" alt="Abyss logo"></p>
+<p align="center"><img src="assets/logo.png" width="120" alt="Abyss logo"></p>
 
-# Abyss
+<h1 align="center">Abyss</h1>
 
-**An unofficial, native TIDAL desktop client written from scratch in Rust with [GPUI](https://www.gpui.rs/).**
+<p align="center"><b>A fast, native desktop player for your TIDAL account and your own music files.</b><br>
+Hi-Res audio, bit-perfect output and a calm interface. One small Windows app. No Electron. No web view.</p>
 
-Abyss aims for the look and the features of the official TIDAL desktop app, but
-runs as a single native binary: no Electron, no web view, fast start-up and low
-memory use. Its audio path is built for quality: Hi-Res FLAC over DASH, a sinc
-resampler and WASAPI exclusive (bit-perfect) output.
+<p align="center">
+  <a href="https://github.com/RaunaCO/TIDE/releases/latest"><img alt="Download" src="https://img.shields.io/badge/Download-Setup%20for%20Windows-111111?style=for-the-badge&logo=windows&logoColor=white"></a>
+</p>
+
+<p align="center">
+  <img alt="Release" src="https://img.shields.io/github/v/release/RaunaCO/TIDE?color=444444">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-444444">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-444444">
+  <img alt="Rust" src="https://img.shields.io/badge/built%20with-Rust-444444">
+  <img alt="Languages" src="https://img.shields.io/badge/languages-6-444444">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/settings.png" width="49%" alt="Abyss settings">
+  <img src="docs/screenshots/welcome.png" width="49%" alt="Abyss welcome guide">
+</p>
+
+## Why Abyss
+
+| | |
+|---|---|
+| **Sound first** | Hi-Res FLAC up to 24-bit / 192 kHz, sinc resampling, gapless queue, ReplayGain and WASAPI exclusive (bit-perfect) output. |
+| **Light and quick** | One native binary. Idle on a cover-heavy page uses about 0.4% of one CPU core and draws 0 frames per second. |
+| **Your music, together** | TIDAL favourites and your local files live in one Library: tracks, albums and artists, with tag and artwork editing. |
+| **Lyrics that follow you** | Synced lyrics from several open providers, with romanization for Japanese, Chinese and Korean. |
+| **Yours to read** | Free and open source (MIT). No telemetry. Tokens are encrypted on your PC. |
+| **Speaks your language** | English, Spanish, Portuguese, French, German and Japanese. |
+
+## Performance goals and measurements
+
+Measured on Windows release builds with isolated profiles (method and raw numbers in
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md)). Goals are what the project aims to keep.
+
+| Measure | Goal | Measured |
+|---|---|---|
+| Idle CPU (Home, covers cached) | under 1% of one core | 0.4% at 0 frames per second |
+| Fullscreen with animated background | under 10% of one core | 4.8% |
+| Peak memory (fullscreen, 24-bit / 192 kHz file) | under 800 MB | 132.5 MB working set |
+| Memory growth | bounded | byte-limited image caches, bounded audio buffer |
+
+Streaming, very large libraries and long sessions still need separate measurements.
+
+## Install
+
+Download **Abyss-1.0.1-win-x64-setup.exe** from the [latest release](https://github.com/RaunaCO/TIDE/releases/latest).
+It installs for your user, with no administrator rights, and keeps your settings on
+uninstall. A portable `.zip` is also available. The binaries are not code-signed, so
+Windows SmartScreen may warn. Check the SHA-256 in the release notes.
 
 > **Read this first.** Abyss is an independent project. It is not affiliated
 > with, endorsed by or sponsored by TIDAL, and "TIDAL" is a trademark of its
@@ -48,7 +93,7 @@ resampler and WASAPI exclusive (bit-perfect) output.
 - **Languages**: English, Spanish, Portuguese, French, German and Japanese. Follows the system by default; change it in Settings > Appearance.
 - **System**: Windows media controls (SMTC), Inter font bundled.
 
-Current version: **1.0.0** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
+Current version: **1.0.1** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
 source (MIT); it is not sold and must not be bundled with a paid offering.
 
 ## Getting started
