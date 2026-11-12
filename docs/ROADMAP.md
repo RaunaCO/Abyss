@@ -6,6 +6,10 @@ playlist editing, lyrics from several providers, Now Playing and a clean
 fullscreen view, Replay, context menus and Song Info, six languages, guided
 introduction, local file tag editing, Windows media controls.
 
+## Done (1.1.0)
+Last.fm scrobbling and history sync, plain-language install and account-risk
+notices (README and welcome guide), automatic draft releases from a tag.
+
 ## Before or after 1.0 (open)
 - Remove the unused Android/PKCE login code (LEGAL.md R1).
 - Remove the remaining dead code that clippy reports in the audio engine.

@@ -9,6 +9,8 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-12
+
 ### Added
 - Last.fm scrobbling (Settings → Integrations): connect with the usual last.fm
   authorisation page, send "now playing" and each listen after half of the track
@@ -25,6 +27,10 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
   provenance attestation). It checks that the commit is on `main`, passed `ci` and
   matches `Cargo.toml`, and takes the Last.fm credentials from repository secrets.
   `scripts/release-notes.ps1` writes the notes from `CHANGELOG.md`.
+- CI on Windows for every push and pull request to `main` (fmt, clippy, tests,
+  `cargo audit`), weekly Dependabot updates for Cargo and GitHub Actions.
+- New tests for settings serialization and token migration, DPAPI edge cases
+  and DASH manifest rejections.
 
 ### Documentation
 - README: step-by-step install for non-technical users (what Abyss and TIDAL are,
@@ -37,12 +43,6 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 - `rusqlite` 0.32.1 → 0.41.1 (bundled SQLite via `libsqlite3-sys` 0.39.1) for
   RUSTSEC-2026-0459. The `fallible_uint` feature keeps the previous handling of
   unsigned integers. No change in behaviour.
-
-### Development
-- CI on Windows for every push and pull request to `main` (fmt, clippy, tests,
-  `cargo audit`), weekly Dependabot updates for Cargo and GitHub Actions.
-- New tests for settings serialization and token migration, DPAPI edge cases
-  and DASH manifest rejections.
 
 ## [1.0.0]
 
