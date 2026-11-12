@@ -107,6 +107,29 @@ without them works, but *Connect* says Last.fm is not available.
 Builds are reproducible in their dependency set (`--locked`, `Cargo.lock`
 committed). Binaries are not code-signed.
 
+### Automatic release (GitHub Actions)
+
+The usual way to release is the `Release` workflow, not the commands above:
+
+1. A pull request bumps the version (`Cargo.toml`, `scripts/abyss.iss`, README,
+   `Cargo.lock`) and renames `## [Unreleased]` in `CHANGELOG.md` to
+   `## [X.Y.Z] - date`. Merge it once `ci` is green.
+2. Wait for `ci` to pass on the merge commit on `main`, then push the tag:
+   `git tag vX.Y.Z <commit>` and `git push origin vX.Y.Z` (`vX.Y.Z-rcN` makes a
+   pre-release).
+3. The workflow refuses to run unless the tagged commit is on `main`, `ci`
+   passed on it and the tag matches the version in `Cargo.toml`. It then builds
+   on a clean runner with the Last.fm credentials from the repository secrets
+   `ABYSS_LASTFM_API_KEY` and `ABYSS_LASTFM_API_SECRET`, and creates a **draft**
+   release with the installer, the zip, `SHA256SUMS.txt`, notes (CHANGELOG
+   section, checksums, SmartScreen and unofficial-client notes) and a build
+   provenance attestation (`gh attestation verify <file> --repo RaunaCO/Abyss`).
+4. Review the draft, install it and publish it by hand.
+
+*Actions > Release > Run workflow* on `main` is a dry run: it builds and keeps the
+files as run artifacts for 7 days and never creates a release. Preview the notes
+locally with `scripts/release-notes.ps1`.
+
 1. Checks above, plus `cargo audit`.
 2. Ship with the binary: `LICENSE`, `assets/fonts/Inter-LICENSE.txt`,
    `assets/licenses/IPADIC-COPYING.txt` (if `kanji-romaji` is on), and the

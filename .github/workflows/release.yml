@@ -1,0 +1,185 @@
+name: Release
+
+# Pushing a tag `vX.Y.Z` (or `vX.Y.Z-rcN`) builds Abyss on a clean runner and
+# leaves a DRAFT GitHub release: installer, portable zip, SHA256SUMS.txt and notes.
+# Review the draft and publish it by hand. Running the workflow by hand
+# (workflow_dispatch, on main) is a dry run: it builds and uploads the files as
+# run artifacts and never creates a release. See docs/DEVELOPMENT.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# No permissions by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    # Abyss is Windows only (GPUI on Windows, WASAPI, DPAPI).
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, to prove the tagged commit is on main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Guards: nothing is built from a commit that did not go through a pull
+      # request, did not pass `ci`, or does not match the version in Cargo.toml.
+      - name: Check the commit, the tag and the version
+        id: meta
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          $prerelease = "false"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tag = $env:GITHUB_REF_NAME
+            $m = [regex]::Match($tag, '^v(\d+\.\d+\.\d+)(-rc\d+)?$')
+            if (-not $m.Success) { throw "Tag '$tag' is not vX.Y.Z or vX.Y.Z-rcN" }
+            if ($m.Groups[1].Value -ne $cargo) { throw "Tag $tag does not match version $cargo in Cargo.toml" }
+            if ($m.Groups[2].Success) { $prerelease = "true" }
+            git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+            if ($LASTEXITCODE -ne 0) { throw "The tagged commit is not on main. Release from a merged pull request." }
+            $passed = gh api "repos/$env:REPO/commits/$env:GITHUB_SHA/check-runs" --jq '[.check_runs[] | select(.name == "ci" and .conclusion == "success")] | length'
+            if ($LASTEXITCODE -ne 0) { throw "Could not read the checks of the tagged commit" }
+            if ([int]$passed -lt 1) { throw "The ci check has not passed on this commit yet. Wait for ci on main, then tag again." }
+          } else {
+            if ($env:GITHUB_REF -ne "refs/heads/main") { throw "Dry runs are only allowed on main" }
+            $tag = "v$cargo"
+          }
+          "version=$cargo" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
+          Write-Host "Building $tag (prerelease: $prerelease)"
+
+      - name: Check the Last.fm credentials are available
+        shell: pwsh
+        env:
+          ABYSS_LASTFM_API_KEY: ${{ secrets.ABYSS_LASTFM_API_KEY }}
+          ABYSS_LASTFM_API_SECRET: ${{ secrets.ABYSS_LASTFM_API_SECRET }}
+        run: |
+          if (-not $env:ABYSS_LASTFM_API_KEY -or -not $env:ABYSS_LASTFM_API_SECRET) {
+            throw "The ABYSS_LASTFM_API_KEY / ABYSS_LASTFM_API_SECRET secrets are missing: the release would ship without Last.fm."
+          }
+
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+        with:
+          toolchain: stable
+          build-warnings: warn
+          rustflags: ""
+
+      # The installer is built with Inno Setup 6. Use the runner's copy when it
+      # has one, otherwise install it (the version is printed in the log).
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Could not install Inno Setup" }
+            $dir = "${env:ProgramFiles(x86)}\Inno Setup 6"
+            if (-not (Test-Path "$dir\ISCC.exe")) { throw "ISCC.exe not found in $dir" }
+            $dir >> $env:GITHUB_PATH
+          }
+
+      # The credentials are compiled in from the environment of this step only.
+      - name: Package (portable zip, installer, SHA-256 checksums)
+        shell: powershell
+        env:
+          ABYSS_LASTFM_API_KEY: ${{ secrets.ABYSS_LASTFM_API_KEY }}
+          ABYSS_LASTFM_API_SECRET: ${{ secrets.ABYSS_LASTFM_API_SECRET }}
+        run: |
+          $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) { $env:PATH = "${env:ProgramFiles(x86)}\Inno Setup 6;$env:PATH" }
+          ./scripts/package.ps1 -Installer
+
+      # Proves the build picked the key up, without printing it.
+      - name: Check Last.fm is compiled in
+        shell: pwsh
+        env:
+          ABYSS_LASTFM_API_KEY: ${{ secrets.ABYSS_LASTFM_API_KEY }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          $exe = "dist/Abyss-$env:VERSION-win-x64/Abyss.exe"
+          $text = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($exe))
+          if (-not $text.Contains($env:ABYSS_LASTFM_API_KEY)) { throw "Abyss.exe does not contain the Last.fm key" }
+          Write-Host "Last.fm credentials are compiled in."
+
+      - name: Release notes
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: ./scripts/release-notes.ps1 -Version $env:VERSION -Tag $env:TAG -Sums dist/SHA256SUMS.txt -Out dist/RELEASE_NOTES.md
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: |
+            dist/Abyss-${{ steps.meta.outputs.version }}-win-x64-setup.exe
+            dist/Abyss-${{ steps.meta.outputs.version }}-win-x64.zip
+            dist/SHA256SUMS.txt
+            dist/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish
+    needs: build
+    # Only a tag creates a release. A manual run stops after `build`.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.build.outputs.tag }}
+      VERSION: ${{ needs.build.outputs.version }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+
+      # What is published is what was built: the checksums must match the files.
+      - name: Verify the checksums
+        working-directory: release
+        run: sha256sum --check --ignore-missing SHA256SUMS.txt
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release/*.exe
+            release/*.zip
+
+      - name: Create the draft release
+        run: |
+          flags=(--draft --verify-tag)
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" release/*.exe release/*.zip release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --title "Abyss $VERSION" \
+            --notes-file release/RELEASE_NOTES.md "${flags[@]}"

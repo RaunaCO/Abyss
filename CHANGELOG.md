@@ -19,6 +19,13 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 - The Last.fm session key is encrypted with DPAPI. Off until you connect.
   New dependency: `md-5` (already in the lockfile; Last.fm signs requests with MD5).
 
+### Development
+- `Release` workflow: pushing a `vX.Y.Z` tag builds on a clean runner and creates a
+  draft GitHub release (installer, zip, `SHA256SUMS.txt`, notes and build
+  provenance attestation). It checks that the commit is on `main`, passed `ci` and
+  matches `Cargo.toml`, and takes the Last.fm credentials from repository secrets.
+  `scripts/release-notes.ps1` writes the notes from `CHANGELOG.md`.
+
 ### Documentation
 - README: step-by-step install for non-technical users (what Abyss and TIDAL are,
   the Windows SmartScreen warning, verifying the SHA-256) and a plain-language
