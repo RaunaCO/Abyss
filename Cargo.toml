@@ -37,7 +37,7 @@ tempfile = "3"
 symphonia = { version = "0.5.4", default-features = false, features = ["flac", "isomp4", "aac", "mp3", "wav", "pcm"] }
 rubato = "0.16"
 cpal = "0.15.3"
-rtrb = "0.3"
+rtrb = "0.4"
 pinyin = "0.11.0"
 # Japanese kanji readings for romaji. The embedded IPADIC dictionary is ~46 MiB
 # of the binary; build with `--no-default-features` to leave it out (kana-only romaji).
