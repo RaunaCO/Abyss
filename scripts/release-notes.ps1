@@ -23,7 +23,7 @@ $next = [regex]::Match($rest, "(?m)^## \[")
 $section = $(if ($next.Success) { $rest.Substring(0, $next.Index) } else { $rest }).Trim()
 if (-not $section) { throw "The CHANGELOG.md section for $Version is empty" }
 
-$checksums = (Get-Content -LiteralPath $Sums -Raw).Trim()
+$checksums = (Get-Content -LiteralPath $Sums -Raw).Replace("`r", "").Trim()
 if (-not $checksums) { throw "$Sums is empty" }
 
 $setup = "Abyss-$Version-win-x64-setup.exe"

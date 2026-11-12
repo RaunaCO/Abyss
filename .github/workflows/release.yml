@@ -166,9 +166,10 @@ jobs:
           path: release
 
       # What is published is what was built: the checksums must match the files.
+      # package.ps1 writes SHA256SUMS.txt with CRLF line endings; sha256sum needs LF.
       - name: Verify the checksums
         working-directory: release
-        run: sha256sum --check --ignore-missing SHA256SUMS.txt
+        run: tr -d '' < SHA256SUMS.txt | sha256sum --check --ignore-missing
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
