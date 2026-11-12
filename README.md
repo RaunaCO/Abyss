@@ -49,21 +49,60 @@ Streaming, very large libraries and long sessions still need separate measuremen
 
 ## Install
 
-Download **Abyss-1.0.0-win-x64-setup.exe** from the [latest release](https://github.com/RaunaCO/Abyss/releases/latest).
-It installs for your user, with no administrator rights, and keeps your settings on
-uninstall. A portable `.zip` is also available. The binaries are not code-signed, so
-Windows SmartScreen may warn. Check the SHA-256 in the release notes.
+**What is Abyss?** A music player for Windows. It plays music from your own
+[TIDAL](https://tidal.com) account (TIDAL is a paid music streaming service) and from
+music files on your PC. You can also use it with files only, with no account at all.
 
-> **Read this first.** Abyss is an independent project. It is not affiliated
-> with, endorsed by or sponsored by TIDAL, and "TIDAL" is a trademark of its
-> owner. You need your own TIDAL subscription. Abyss refuses encrypted (DRM)
-> streams and never saves audio to disk.
->
-> Abyss has **no client credentials of its own**: it signs in with OAuth
-> clients that belong to TIDAL's apps, and it uses undocumented TIDAL
-> endpoints. This may break TIDAL's terms and may get accounts suspended or
-> the app blocked. Use it at your own risk. [docs/LEGAL.md](docs/LEGAL.md)
-> lists the known legal risks and open questions. It is not legal advice.
+1. Download **Abyss-1.0.0-win-x64-setup.exe** from the
+   [latest release](https://github.com/RaunaCO/Abyss/releases/latest). Only download it
+   from that page. A portable `.zip` is also available.
+2. Check the download (see below). It takes a minute.
+3. Run the installer. It installs for your user only, needs no administrator rights,
+   and keeps your settings if you uninstall.
+
+### If Windows says "Windows protected your PC"
+
+This blue screen (Microsoft Defender SmartScreen) appears because Abyss is a small free
+project and its files are **not code-signed**. Windows warns about any program it does
+not recognise. It does not mean that a virus was found.
+
+If you downloaded the file from the release page above and the checksum matches, click
+**More info**, then **Run anyway**. If you are not sure where the file came from, or the
+checksum does not match, do not run it.
+
+### Verify the download
+
+Every release lists a SHA-256 checksum for each file in its notes. It is a fingerprint:
+if even one byte of the file changes, the fingerprint changes.
+
+1. Open **PowerShell** in the folder with the file (in File Explorer, click the address
+   bar, type `powershell` and press Enter).
+2. Run:
+
+   ```powershell
+   Get-FileHash -Algorithm SHA256 .\Abyss-1.0.0-win-x64-setup.exe
+   ```
+
+3. Compare the `Hash` it prints with the one in the release notes. They must be
+   identical. If they differ, delete the file and download it again.
+
+## Is it safe for my TIDAL account?
+
+Read this before you sign in with TIDAL.
+
+- Abyss is an **independent project**. TIDAL did not make it, does not support it and
+  has not approved it. "TIDAL" is a trademark of its owner. You need your own TIDAL
+  subscription.
+- Abyss has no permission of its own to talk to TIDAL. It signs in using the
+  identifiers that belong to TIDAL's official apps and uses parts of TIDAL's service
+  that are not public. This may break TIDAL's terms of use.
+- **TIDAL could suspend your account** or block Abyss at any time. Nobody can promise
+  that this will not happen. Use Abyss with TIDAL at your own risk.
+- If you only play your own files, none of this applies to you: no account is used.
+- Abyss refuses protected (DRM) streams and never saves TIDAL audio to disk.
+
+[docs/LEGAL.md](docs/LEGAL.md) lists the known legal risks (R1 and R2 describe the
+identifiers and the non-public endpoints). It is not legal advice.
 
 ## Features
 

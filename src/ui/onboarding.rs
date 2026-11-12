@@ -137,6 +137,33 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                         cx,
                     )),
             );
+            if !local {
+                // Plain-language account risk, shown only when TIDAL is the chosen service.
+                content = content.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(sc(8.))
+                        .p(sc(16.))
+                        .rounded(sc(12.))
+                        .border_1()
+                        .border_color(theme::divider())
+                        .bg(theme::ink(0.04))
+                        .child(
+                            div()
+                                .text_size(sc(theme::TYPE_BODY))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(crate::i18n::t("welcome.risk_title")),
+                        )
+                        .child(
+                            div()
+                                .text_size(sc(14.))
+                                .line_height(sc(22.))
+                                .text_color(theme::text_secondary())
+                                .child(crate::i18n::t("welcome.risk_body")),
+                        ),
+                );
+            }
         }
         2 => {
             let selected = view.settings.lock().language.clone();
