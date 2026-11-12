@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
-$changelog = Get-Content -LiteralPath (Join-Path $root "CHANGELOG.md") -Raw
+$changelog = Get-Content -LiteralPath (Join-Path $root "CHANGELOG.md") -Raw -Encoding UTF8
 $heading = [regex]::Match($changelog, "(?m)^## \[$([regex]::Escape($Version))\][^\r\n]*\r?\n")
 if (-not $heading.Success) { throw "CHANGELOG.md has no '## [$Version]' section" }
 $rest = $changelog.Substring($heading.Index + $heading.Length)
@@ -23,7 +23,7 @@ $next = [regex]::Match($rest, "(?m)^## \[")
 $section = $(if ($next.Success) { $rest.Substring(0, $next.Index) } else { $rest }).Trim()
 if (-not $section) { throw "The CHANGELOG.md section for $Version is empty" }
 
-$checksums = (Get-Content -LiteralPath $Sums -Raw).Replace("`r", "").Trim()
+$checksums = (Get-Content -LiteralPath $Sums -Raw -Encoding UTF8).Replace("`r", "").Trim()
 if (-not $checksums) { throw "$Sums is empty" }
 
 $setup = "Abyss-$Version-win-x64-setup.exe"
