@@ -340,4 +340,102 @@ mod tests {
         let t: Tokens = serde_json::from_slice(&raw).unwrap();
         assert_eq!(t.refresh_token.as_deref(), Some("RT-secret-2"));
     }
+
+    /// Decrypt the `protected_tokens` blob of a JSON written by `to_disk_json`.
+    fn decrypt(json: &str) -> Tokens {
+        let back: Settings = serde_json::from_str(json).unwrap();
+        let blob = back.protected_tokens.expect("protected_tokens written");
+        let raw = crate::secure::unprotect(&base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob).unwrap()).unwrap();
+        serde_json::from_slice(&raw).unwrap()
+    }
+
+    #[test]
+    fn legacy_plaintext_tokens_are_rewritten_protected() {
+        // A settings.json from a version that stored the tokens in plaintext.
+        let legacy = r#"{"access_token":"AT-legacy-1","refresh_token":"RT-legacy-2","user_id":7,"country_code":"SE"}"#;
+        let s: Settings = serde_json::from_str(legacy).unwrap();
+        assert_eq!(s.access_token.as_deref(), Some("AT-legacy-1"));
+        assert_eq!(s.refresh_token.as_deref(), Some("RT-legacy-2"));
+        assert!(s.protected_tokens.is_none());
+        // What `save()` would write during the migration in `load()`.
+        let json = String::from_utf8(s.to_disk_json().unwrap()).unwrap();
+        assert!(!json.contains("AT-legacy-1") && !json.contains("RT-legacy-2"));
+        assert!(!json.contains("\"access_token\"") && !json.contains("\"refresh_token\""));
+        let t = decrypt(&json);
+        assert_eq!(t.access_token.as_deref(), Some("AT-legacy-1"));
+        assert_eq!(t.refresh_token.as_deref(), Some("RT-legacy-2"));
+        // The rest of the file is kept.
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!((back.user_id, back.country_code.as_str()), (Some(7), "SE"));
+    }
+
+    #[test]
+    fn non_ascii_tokens_survive_the_disk_format() {
+        let (at, rt) = ("AT-ñandú-日本語", "RT-🎵-Ünïcødé");
+        let s = Settings { access_token: Some(at.into()), refresh_token: Some(rt.into()), ..Default::default() };
+        let json = String::from_utf8(s.to_disk_json().unwrap()).unwrap();
+        assert!(!json.contains(at) && !json.contains(rt));
+        let t = decrypt(&json);
+        assert_eq!((t.access_token.as_deref(), t.refresh_token.as_deref()), (Some(at), Some(rt)));
+    }
+}
+
+/// Settings serialization that needs no DPAPI (runs on any platform).
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn no_token_fields_without_a_session() {
+        let json = String::from_utf8(Settings::default().to_disk_json().unwrap()).unwrap();
+        for key in ["access_token", "refresh_token", "protected_tokens", "user_email"] {
+            assert!(!json.contains(&format!("\"{key}\"")), "{key} must be left out");
+        }
+    }
+
+    #[test]
+    fn empty_file_gives_defaults() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        let d = Settings::default();
+        assert_eq!(s.quality, Quality::Max);
+        assert_eq!((s.volume, s.zoom), (d.volume, d.zoom));
+        assert_eq!(s.country_code, "US");
+        assert!(!s.welcome_complete);
+        assert!(s.access_token.is_none() && s.refresh_token.is_none() && s.protected_tokens.is_none());
+        assert!(!s.signed_in());
+    }
+
+    #[test]
+    fn partial_file_keeps_values_and_ignores_unknown_fields() {
+        let json = r#"{"volume":0.25,"quality":"High","repeat":"One","language":"ja","removed_in_a_later_version":true}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.volume, 0.25);
+        assert_eq!(s.quality, Quality::High);
+        assert_eq!(s.repeat, Repeat::One);
+        assert_eq!(s.language.as_deref(), Some("ja"));
+        // Everything not in the file takes its default.
+        assert_eq!(s.country_code, "US");
+        assert!(s.normalize && s.autoplay);
+    }
+
+    #[test]
+    fn optional_fields_round_trip() {
+        let s = Settings {
+            language: Some("pt".into()),
+            side_panel_width: Some(360.0),
+            output_device: Some("Speakers (Héadphones)".into()),
+            user_id: Some(42),
+            username: None,
+            user_email: None,
+            ..Default::default()
+        };
+        let json = String::from_utf8(s.to_disk_json().unwrap()).unwrap();
+        assert!(!json.contains("\"user_email\""));
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.language.as_deref(), Some("pt"));
+        assert_eq!(back.side_panel_width, Some(360.0));
+        assert_eq!(back.output_device.as_deref(), Some("Speakers (Héadphones)"));
+        assert_eq!(back.user_id, Some(42));
+        assert!(back.username.is_none() && back.user_email.is_none());
+    }
 }
