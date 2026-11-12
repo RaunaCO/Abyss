@@ -137,4 +137,59 @@ mod tests {
         assert!(super::parse("not xml").is_err());
         assert!(super::parse("<MPD/>").is_err());
     }
+
+    /// The parse error must be the one for `key`, and `key` must exist in the
+    /// catalog (a missing key would make both sides "[missing translation]").
+    fn assert_rejected(xml: &str, key: &str) {
+        let expected = crate::i18n::t(key);
+        assert_ne!(expected, "[missing translation]", "unknown i18n key {key}");
+        let err = super::parse(xml).err().unwrap_or_else(|| panic!("expected {key}"));
+        assert_eq!(err.to_string(), expected);
+    }
+
+    #[test]
+    fn rejects_missing_representation() {
+        assert_rejected("<MPD><Period><AdaptationSet/></Period></MPD>", "mpd_without_representation");
+    }
+
+    #[test]
+    fn rejects_missing_segment_template() {
+        let xml = r#"<MPD><Period><AdaptationSet><Representation id="FLAC,44100,16" bandwidth="1"/></AdaptationSet></Period></MPD>"#;
+        assert_rejected(xml, "mpd_without_segment_template");
+    }
+
+    #[test]
+    fn rejects_drm_inside_representation() {
+        let xml = mpd("", r#"<S d="1"/>"#, "https://x").replace(
+            r#"bandwidth="1">"#,
+            r#"bandwidth="1"><ContentProtection schemeIdUri="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"/>"#,
+        );
+        assert_rejected(&xml, "protected_drm_stream_is_unsupported");
+    }
+
+    #[test]
+    fn segment_limit_is_inclusive() {
+        // r counts repeats: r="19999" is exactly MAX_SEGMENTS segments.
+        let m = super::parse(&mpd("", r#"<S d="44100" r="19999"/>"#, "https://x")).unwrap();
+        assert_eq!(m.seg_secs.len() as u64, super::MAX_SEGMENTS);
+        assert_eq!(m.urls.len() as u64, super::MAX_SEGMENTS + 1);
+        // One more is refused, also when spread over several entries.
+        let over = mpd("", r#"<S d="44100" r="19999"/><S d="1"/>"#, "https://x");
+        let err = super::parse(&over).err().expect("over the limit");
+        assert_eq!(err.to_string(), crate::i18n::text("mpd_has_too_many_segments", &["20001".to_string()]));
+    }
+
+    #[test]
+    fn rejects_malformed_xml() {
+        // Unclosed elements and a broken attribute: the XML parser refuses them.
+        assert!(super::parse("<MPD><Period><AdaptationSet>").is_err());
+        assert!(super::parse(r#"<MPD><Period bad=></Period></MPD>"#).is_err());
+        let truncated = mpd("", r#"<S d="1"/>"#, "https://x");
+        assert!(super::parse(&truncated[..truncated.len() / 2]).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_timeline() {
+        assert_rejected(&mpd("", "", "https://x"), "mpd_without_segment_timeline");
+    }
 }
