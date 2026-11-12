@@ -9,6 +9,16 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+### Added
+- Last.fm scrobbling (Settings → Integrations): connect with the usual last.fm
+  authorisation page, send "now playing" and each listen after half of the track
+  or 4 minutes, from TIDAL and local files. Listens made offline wait in a queue
+  and are sent later, at most one request per second and 50 per batch.
+- *Sync history* sends the saved Replay history to Last.fm in the background,
+  without duplicates and without changing the history database.
+- The Last.fm session key is encrypted with DPAPI. Off until you connect.
+  New dependency: `md-5` (already in the lockfile; Last.fm signs requests with MD5).
+
 ### Documentation
 - README: step-by-step install for non-technical users (what Abyss and TIDAL are,
   the Windows SmartScreen warning, verifying the SHA-256) and a plain-language

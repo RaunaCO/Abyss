@@ -646,5 +646,21 @@
   "welcome.finish": "Terminer",
   "welcome.repeat": "Guide de bienvenue",
   "welcome.repeat_help": "Relancez la présentation et choisissez un service, une langue ou un dossier local.",
-  "welcome.open": "Ouvrir le guide"
+  "welcome.open": "Ouvrir le guide",
+  "lastfm.title": "Last.fm",
+  "lastfm.description": "Envoyez ce que vous écoutez vers votre profil Last.fm. Last.fm reçoit l’artiste, le titre, l’album, la durée et l’heure de chaque écoute.",
+  "lastfm.status_off": "Non connecté",
+  "lastfm.status_on": "Connecté en tant que {0}",
+  "lastfm.status_connecting": "En attente de votre autorisation d’Abyss dans le navigateur",
+  "lastfm.status_syncing": "Synchronisation de l’historique : {0} sur {1}",
+  "lastfm.status_error": "Erreur Last.fm : {0}",
+  "lastfm.connect": "Connecter",
+  "lastfm.disconnect": "Déconnecter",
+  "lastfm.sync": "Synchroniser l’historique",
+  "lastfm.sync_help": "Envoie votre historique Replay enregistré (écoutes TIDAL) à Last.fm. Cela se fait en arrière-plan et peut prendre du temps.",
+  "lastfm.scrobble": "Scrobbling",
+  "lastfm.scrobble_help": "Envoie chaque titre lu, depuis TIDAL ou des fichiers locaux, après en avoir écouté la moitié ou 4 minutes.",
+  "lastfm.session_expired": "Votre session Last.fm a expiré. Reconnectez-vous.",
+  "lastfm.sync_done": "Historique synchronisé avec Last.fm.",
+  "lastfm.not_available": "Last.fm n’est pas disponible dans cette version."
 }

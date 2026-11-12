@@ -11,6 +11,7 @@ mod local;
 mod ratings;
 mod recents;
 mod romanize;
+mod scrobble;
 mod secure;
 mod storage;
 mod tidal;

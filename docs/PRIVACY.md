@@ -15,6 +15,7 @@ service as a direct consequence of something you use.
 | `lrclib.net` | Lyrics chain, only while external providers are enabled, including local music | Track title, first artist, album, duration |
 | `music.163.com` (NetEase, China) | External lyrics enabled; before LRCLIB for CJK metadata, otherwise after TIDAL | Track title and first artist |
 | `api.lyrics.ovh` | Same condition, last fallback | First artist and track title |
+| `ws.audioscrobbler.com` (Last.fm) | Only after you connect a Last.fm account and while scrobbling is on; the history sync is manual | Your Last.fm session key, and for each listen the artist, title, album, length and start time. "Now playing" is sent when a track starts. Local music is included. |
 | Discord desktop app (local pipe `\\.\pipe\discord-ipc-N`) | While playing, if the Discord setting is on and Discord is running | Title, artist, album, artwork URL, start/end time, a `tidal.com/browse/track/<id>` link |
 
 Every request carries the User-Agent `Abyss/<version>
@@ -30,6 +31,12 @@ account and terms pages) hands the URL to your default browser.
   runs, your friends and servers can see what you are listening to. It is
   switched off in Settings → Discord. Whether it should be off until enabled
   is an open product decision (see the audit report).
+- **Last.fm is off until you connect an account** (`lastfm_enabled: false`). Once
+  connected, every track you play, from TIDAL or local files, is sent to your Last.fm
+  profile after half of it (or 4 minutes) has been heard. Last.fm shows it on your
+  profile according to your Last.fm privacy settings. *Sync history* sends the
+  saved Replay history (TIDAL listens only, Replay does not record local files).
+  Disconnect in Settings → Integrations.
 - **Third-party lyrics lookups are on by default** (`external_lyrics: true`).
   They tell LRCLIB, NetEase and lyrics.ovh which tracks you play, including
   local music, in the order described in [lyrics](LYRICS.md). Switch off in Settings → "Letras de otros proveedores".

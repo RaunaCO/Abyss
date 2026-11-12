@@ -646,5 +646,21 @@
   "welcome.finish": "Finish",
   "welcome.repeat": "Welcome guide",
   "welcome.repeat_help": "Repeat the introduction, choose a listening service, language or local folder.",
-  "welcome.open": "Open guide"
+  "welcome.open": "Open guide",
+  "lastfm.title": "Last.fm",
+  "lastfm.description": "Send what you play to your Last.fm profile. Last.fm receives the artist, title, album, length and time of each listen.",
+  "lastfm.status_off": "Not connected",
+  "lastfm.status_on": "Connected as {0}",
+  "lastfm.status_connecting": "Waiting for you to allow Abyss in your browser",
+  "lastfm.status_syncing": "Syncing history: {0} of {1}",
+  "lastfm.status_error": "Last.fm error: {0}",
+  "lastfm.connect": "Connect",
+  "lastfm.disconnect": "Disconnect",
+  "lastfm.sync": "Sync history",
+  "lastfm.sync_help": "Sends your saved Replay history (TIDAL listens) to Last.fm. It runs in the background and can take a while.",
+  "lastfm.scrobble": "Scrobbling",
+  "lastfm.scrobble_help": "Send each track you play, from TIDAL or local files, once you have heard half of it or 4 minutes.",
+  "lastfm.session_expired": "Your Last.fm session expired. Connect again.",
+  "lastfm.sync_done": "Last.fm history synced.",
+  "lastfm.not_available": "Last.fm is not available in this build."
 }

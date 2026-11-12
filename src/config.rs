@@ -118,6 +118,16 @@ pub struct Settings {
     pub external_lyrics: bool,
     /// Application ID of the Discord application named Abyss.
     pub discord_client_id: String,
+    /// Send listens to Last.fm. Off until the user connects an account.
+    pub lastfm_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lastfm_user: Option<String>,
+    /// Last.fm session key. In memory only in plaintext; on disk it is written
+    /// as `lastfm_protected_session` (DPAPI) when protection is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lastfm_session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lastfm_protected_session: Option<String>,
 
     /// OAuth client used for the device login. Can be replaced in settings.json.
     pub client_id: String,
@@ -174,6 +184,10 @@ impl Default for Settings {
             side_panel_width: None,
             external_lyrics: true,
             discord_client_id: String::new(),
+            lastfm_enabled: false,
+            lastfm_user: None,
+            lastfm_session: None,
+            lastfm_protected_session: None,
             // Replaced by whichever client the user signed in with.
             client_id: DEVICE_CLIENT_ID.into(),
             client_secret: DEVICE_CLIENT_SECRET.into(),
@@ -260,6 +274,16 @@ fn settings_path() -> PathBuf {
     config_dir().join("settings.json")
 }
 
+/// DPAPI-encrypt a short secret as base64 (None when protection is unavailable).
+fn protect_text(plain: &str) -> Option<String> {
+    crate::secure::protect(plain.as_bytes()).map(|blob| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, blob))
+}
+
+fn unprotect_text(blob: &str) -> Option<String> {
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob.as_bytes()).ok()?;
+    String::from_utf8(crate::secure::unprotect(&bytes)?).ok()
+}
+
 #[derive(Serialize, Deserialize)]
 struct Tokens {
     access_token: Option<String>,
@@ -286,6 +310,16 @@ impl Settings {
             // Plaintext tokens from an older version: rewrite them protected.
             s.save();
         }
+        if let Some(blob) = s.lastfm_protected_session.take() {
+            s.lastfm_session = unprotect_text(&blob);
+            if s.lastfm_session.is_none() {
+                // Another user / machine, or a damaged file: connect again.
+                log::warn!("stored Last.fm session could not be decrypted; please connect again");
+            }
+        } else if s.lastfm_session.is_some() {
+            // Plaintext key (no protection was available): rewrite it protected if possible.
+            s.save();
+        }
         crate::i18n::set_language(s.language.as_deref());
         s
     }
@@ -302,6 +336,12 @@ impl Settings {
                     disk.access_token = tokens.access_token;
                     disk.refresh_token = tokens.refresh_token;
                 }
+            }
+        }
+        if let Some(session) = disk.lastfm_session.take() {
+            match protect_text(&session) {
+                Some(blob) => disk.lastfm_protected_session = Some(blob),
+                None => disk.lastfm_session = Some(session),
             }
         }
         serde_json::to_vec_pretty(&disk).ok()
@@ -370,6 +410,26 @@ mod tests {
     }
 
     #[test]
+    fn lastfm_session_never_reaches_disk_in_plaintext_and_comes_back() {
+        let s = Settings {
+            lastfm_session: Some("LFM-session-key-9".into()),
+            lastfm_user: Some("rauna".into()),
+            lastfm_enabled: true,
+            ..Default::default()
+        };
+        let json = String::from_utf8(s.to_disk_json().unwrap()).unwrap();
+        assert!(!json.contains("LFM-session-key-9"));
+        assert!(!json.contains("\"lastfm_session\""));
+        assert!(json.contains("lastfm_protected_session"));
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(unprotect_text(&back.lastfm_protected_session.unwrap()).as_deref(), Some("LFM-session-key-9"));
+        assert_eq!((back.lastfm_user.as_deref(), back.lastfm_enabled), (Some("rauna"), true));
+        // A blob from another user or a damaged one is rejected, not turned into a key.
+        assert_eq!(unprotect_text("not base64 !!"), None);
+        assert_eq!(unprotect_text("AAAA"), None);
+    }
+
+    #[test]
     fn non_ascii_tokens_survive_the_disk_format() {
         let (at, rt) = ("AT-ñandú-日本語", "RT-🎵-Ünïcødé");
         let s = Settings { access_token: Some(at.into()), refresh_token: Some(rt.into()), ..Default::default() };
@@ -388,7 +448,9 @@ mod settings_tests {
     #[test]
     fn no_token_fields_without_a_session() {
         let json = String::from_utf8(Settings::default().to_disk_json().unwrap()).unwrap();
-        for key in ["access_token", "refresh_token", "protected_tokens", "user_email"] {
+        for key in
+            ["access_token", "refresh_token", "protected_tokens", "user_email", "lastfm_session", "lastfm_protected_session", "lastfm_user"]
+        {
             assert!(!json.contains(&format!("\"{key}\"")), "{key} must be left out");
         }
     }
@@ -401,6 +463,7 @@ mod settings_tests {
         assert_eq!((s.volume, s.zoom), (d.volume, d.zoom));
         assert_eq!(s.country_code, "US");
         assert!(!s.welcome_complete);
+        assert!(!s.lastfm_enabled && s.lastfm_session.is_none(), "Last.fm is off until connected");
         assert!(s.access_token.is_none() && s.refresh_token.is_none() && s.protected_tokens.is_none());
         assert!(!s.signed_in());
     }

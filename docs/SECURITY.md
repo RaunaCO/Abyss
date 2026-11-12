@@ -10,12 +10,21 @@ GitHub's security advisories for `RaunaCO/Abyss` rather than public issues.
 | --- | --- | --- |
 | TIDAL refresh / access tokens | Read from disk by another user, a backup, a synced folder or a stolen drive | Mitigated on Windows (DPAPI) |
 | Same tokens | Read by malware running as the same Windows user | **Not mitigated.** DPAPI decrypts for any process of that user. No desktop app can fully prevent this. |
+| Last.fm session key | Same as the TIDAL tokens | Mitigated on Windows (DPAPI, `lastfm_protected_session`); the same residual risk from malware running as your user |
 | Tokens and signed stream URLs | Leaked through logs or crash reports | Mitigated (see Logging) |
 | Network traffic | Interception / tampering | TLS (rustls) for every request; stream URLs must be `https://` |
 | Process | Malformed server data (manifests, JSON, images) causing crashes or memory exhaustion | Partially mitigated (see Input validation) |
 | Listening activity | Disclosure to Discord or lyrics providers | User-controllable, see [PRIVACY.md](PRIVACY.md) |
 
 ## Authentication
+
+- **Last.fm:** the user allows Abyss on last.fm (web authorisation, no password is
+  typed into Abyss) and Last.fm returns a permanent session key. It is stored
+  with DPAPI like the TIDAL tokens. Calls are signed with MD5 as Last.fm requires
+  (`api_sig`, crate `md-5`); this is request signing, not password hashing.
+  The application key and secret identify Abyss, not a user, and are compiled
+  into the binary (`ABYSS_LASTFM_API_KEY`, `ABYSS_LASTFM_API_SECRET`), so they
+  are not confidential. Disconnecting deletes the session from `settings.json`.
 
 - **Flows:** OAuth 2.0 device authorisation (`start_device_login` /
   `poll_device_login`). A PKCE flow (`start_pkce_login` /
