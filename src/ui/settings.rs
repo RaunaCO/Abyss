@@ -672,6 +672,7 @@ impl AppView {
                 .child(self.discord_input.clone())
                 .into_any_element(),
         );
+        let lastfm = self.lastfm_rows(cx);
         let legal = vec![
             self.link_row("terms", crate::i18n::t("terms_and_conditions"), "https://tidal.com/terms", cx),
             self.link_row("privacy", crate::i18n::t("privacy_notice"), "https://tidal.com/privacy", cx),
@@ -682,8 +683,58 @@ impl AppView {
             .flex_col()
             .gap(sc(PANEL_GAP))
             .child(group(Icon::Link, crate::i18n::t("integrations"), "", connect))
+            .child(group(Icon::Link, crate::i18n::t("lastfm.title"), crate::i18n::t("lastfm.description"), lastfm))
             .child(group(Icon::Link, crate::i18n::t("privacy_and_terms"), "", legal))
             .into_any_element()
+    }
+
+    /// Last.fm: account, scrobbling switch and history sync.
+    fn lastfm_rows(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        use crate::scrobble::worker::Phase;
+        let connected = self.lastfm_connected();
+        let phase = self.lastfm_phase();
+        let account_button = match (phase, connected) {
+            (Phase::Connecting, _) => {
+                small_button("lastfm-cancel", crate::i18n::t("cancel"), false).on_click(cx.listener(|v, _, _, cx| v.lastfm_cancel(cx)))
+            }
+            (_, true) => small_button("lastfm-disconnect", crate::i18n::t("lastfm.disconnect"), false)
+                .on_click(cx.listener(|v, _, _, cx| v.lastfm_disconnect(cx))),
+            (_, false) => small_button("lastfm-connect", crate::i18n::t("lastfm.connect"), true)
+                .on_click(cx.listener(|v, _, _, cx| v.lastfm_connect(cx))),
+        };
+        let mut rows = vec![row(
+            "lastfm-account",
+            crate::i18n::t("lastfm.title"),
+            Some(self.lastfm_status_text().into()),
+            Some(account_button.into_any_element()),
+        )
+        .into_any_element()];
+        if connected {
+            let enabled = self.settings.lock().lastfm_enabled;
+            rows.push(self.toggle_row(
+                "lastfm-scrobble",
+                crate::i18n::t("lastfm.scrobble"),
+                crate::i18n::t("lastfm.scrobble_help"),
+                enabled,
+                |this, cx| this.lastfm_toggle(cx),
+                cx,
+            ));
+            let sync_button = if phase == Phase::Syncing {
+                small_button("lastfm-sync-cancel", crate::i18n::t("cancel"), false).on_click(cx.listener(|v, _, _, cx| v.lastfm_cancel(cx)))
+            } else {
+                small_button("lastfm-sync", crate::i18n::t("lastfm.sync"), false).on_click(cx.listener(|v, _, _, cx| v.lastfm_sync(cx)))
+            };
+            rows.push(
+                row(
+                    "lastfm-sync-row",
+                    crate::i18n::t("lastfm.sync"),
+                    Some(crate::i18n::t("lastfm.sync_help").into()),
+                    Some(sync_button.into_any_element()),
+                )
+                .into_any_element(),
+            );
+        }
+        rows
     }
 
     fn settings_account(&mut self, cx: &mut Context<Self>) -> AnyElement {

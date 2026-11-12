@@ -646,5 +646,21 @@
   "welcome.finish": "完了",
   "welcome.repeat": "初めてのガイド",
   "welcome.repeat_help": "ガイドを再表示し、音楽サービス、言語、ローカルフォルダーを選択します。",
-  "welcome.open": "ガイドを開く"
+  "welcome.open": "ガイドを開く",
+  "lastfm.title": "Last.fm",
+  "lastfm.description": "再生した曲をLast.fmのプロフィールに送ります。Last.fmには、各再生のアーティスト、曲名、アルバム、長さ、時刻が送られます。",
+  "lastfm.status_off": "未接続",
+  "lastfm.status_on": "{0}として接続中",
+  "lastfm.status_connecting": "ブラウザーでAbyssを許可するのをお待ちしています",
+  "lastfm.status_syncing": "履歴を同期中：{0} / {1}",
+  "lastfm.status_error": "Last.fmのエラー：{0}",
+  "lastfm.connect": "接続",
+  "lastfm.disconnect": "切断",
+  "lastfm.sync": "履歴を同期",
+  "lastfm.sync_help": "保存済みのReplay履歴（TIDALでの再生）をLast.fmに送ります。バックグラウンドで実行され、時間がかかることがあります。",
+  "lastfm.scrobble": "スクロブル",
+  "lastfm.scrobble_help": "TIDALまたはローカルファイルで再生した曲を、半分または4分聴いた時点で送ります。",
+  "lastfm.session_expired": "Last.fmのセッションの有効期限が切れました。もう一度接続してください。",
+  "lastfm.sync_done": "Last.fmへの履歴の同期が完了しました。",
+  "lastfm.not_available": "このビルドではLast.fmを利用できません。"
 }

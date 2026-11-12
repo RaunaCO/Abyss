@@ -646,5 +646,21 @@
   "welcome.finish": "Fertig",
   "welcome.repeat": "Willkommensführung",
   "welcome.repeat_help": "Wiederhole die Einführung und wähle Dienst, Sprache oder lokalen Ordner.",
-  "welcome.open": "Einführung öffnen"
+  "welcome.open": "Einführung öffnen",
+  "lastfm.title": "Last.fm",
+  "lastfm.description": "Sende, was du hörst, an dein Last.fm-Profil. Last.fm erhält Künstler, Titel, Album, Länge und Zeit jedes Hörvorgangs.",
+  "lastfm.status_off": "Nicht verbunden",
+  "lastfm.status_on": "Verbunden als {0}",
+  "lastfm.status_connecting": "Warte darauf, dass du Abyss im Browser erlaubst",
+  "lastfm.status_syncing": "Verlauf wird synchronisiert: {0} von {1}",
+  "lastfm.status_error": "Last.fm-Fehler: {0}",
+  "lastfm.connect": "Verbinden",
+  "lastfm.disconnect": "Trennen",
+  "lastfm.sync": "Verlauf synchronisieren",
+  "lastfm.sync_help": "Sendet deinen gespeicherten Replay-Verlauf (TIDAL-Wiedergaben) an Last.fm. Läuft im Hintergrund und kann dauern.",
+  "lastfm.scrobble": "Scrobbling",
+  "lastfm.scrobble_help": "Sendet jeden gespielten Titel, von TIDAL oder lokalen Dateien, sobald du die Hälfte oder 4 Minuten gehört hast.",
+  "lastfm.session_expired": "Deine Last.fm-Sitzung ist abgelaufen. Verbinde dich erneut.",
+  "lastfm.sync_done": "Verlauf mit Last.fm synchronisiert.",
+  "lastfm.not_available": "Last.fm ist in dieser Version nicht verfügbar."
 }

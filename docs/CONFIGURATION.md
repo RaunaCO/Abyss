@@ -56,6 +56,9 @@ before the import.
 | `recent_searches` | `[]` | Last 12 searches |
 | `discord` | `true` | Discord Rich Presence |
 | `discord_client_id` | `""` | Application ID supplied by the owner, empty means no activity is published |
+| `lastfm_enabled` | `false` | Send listens to Last.fm (turns on when you connect; Settings → Integrations) |
+| `lastfm_user` | - | Connected Last.fm user name, shown in Settings |
+| `lastfm_protected_session` | - | Last.fm session key, DPAPI-encrypted, base64. Never stored in plaintext (`lastfm_session` is only read from older plaintext files). |
 | `external_lyrics` | `true` | Ask LRCLIB / NetEase / lyrics.ovh when TIDAL has no lyrics |
 | `lyrics_romanize` | `true` | Romaji / pinyin / Korean romanization under lyrics |
 | `np_blur`, `audio_metadata`, `show_ratings`, `hide_uploads` | `true`, `true`, `true`, `false` | Display options |
@@ -70,6 +73,7 @@ before the import.
 
 | Variable | Effect |
 | --- | --- |
+| `ABYSS_LASTFM_API_KEY`, `ABYSS_LASTFM_API_SECRET` | **Build time**: Last.fm application credentials compiled into the binary. Without them, Connect says Last.fm is not available in this build. |
 | `RUST_LOG` | Log filter, default `Abyss=info,tide=info` (e.g. `Abyss=debug,tide=debug`) |
 | `ABYSS_DISCORD_ID` | Use the owner’s Abyss Discord application ID; `TIDE_DISCORD_ID` remains a fallback |
 | `TIDE_ZOOM` | Override UI zoom (e.g. `1.25`) |

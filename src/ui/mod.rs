@@ -48,6 +48,7 @@ pub mod images;
 mod info;
 pub mod input;
 mod interact;
+mod lastfm;
 mod library;
 mod local;
 mod media;
@@ -396,6 +397,11 @@ pub struct AppView {
     pub lib_artists: Vec<Artist>,
     pub recorder: crate::history::Recorder,
     pub history_tick: std::time::Instant,
+    /// Last.fm: background worker, listen tracker and the last status seen.
+    pub scrobbler: crate::scrobble::Scrobbler,
+    pub scrobble_tracker: crate::scrobble::tracker::Tracker,
+    pub lastfm_tick: std::time::Instant,
+    pub lastfm_seen: u64,
     /// Replay: chosen period and the statistics computed for it.
     pub replay_period: replay::Period,
     pub replay_all_tracks: bool,
@@ -703,6 +709,10 @@ impl AppView {
             lib_albums: Vec::new(),
             recorder: Default::default(),
             history_tick: std::time::Instant::now(),
+            scrobbler: crate::scrobble::Scrobbler::spawn(crate::config::config_dir()),
+            scrobble_tracker: Default::default(),
+            lastfm_tick: std::time::Instant::now(),
+            lastfm_seen: 0,
             replay_period: Default::default(),
             replay_all_tracks: false,
             replay_cache: None,
@@ -785,6 +795,7 @@ impl AppView {
             s.save();
         }
         this.local_changed();
+        this.lastfm_apply();
         this.rescan_local_folders(cx);
         this.start_ticker(cx);
         this.demo_from_env(cx);
@@ -2000,6 +2011,7 @@ impl AppView {
             self.play_index(i, pos, paused, cx);
             if let Some(now) = &self.now {
                 self.recorder.rekey(key, now.key);
+                self.scrobble_tracker.rekey(key, now.key);
             }
         }
         cx.notify();
@@ -2179,6 +2191,7 @@ impl AppView {
                 .detach();
             }
         }
+        changed |= self.lastfm_tick(cx);
         if self.volume_hint_until.is_some_and(|t| std::time::Instant::now() >= t) {
             self.volume_hint_until = None;
             changed = true;

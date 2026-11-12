@@ -6655,6 +6655,7 @@ dependencies = [
  "lindera",
  "lofty",
  "log",
+ "md-5",
  "open",
  "parking_lot",
  "pinyin",
