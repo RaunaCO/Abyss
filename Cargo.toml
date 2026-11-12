@@ -29,7 +29,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
 raw-window-handle = "0.6"
 rand = "0.8"
-rusqlite = { version = "0.32.1", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "fallible_uint"] }
 lofty = { version = "0.25.5", path = "vendor/lofty-rs/lofty" }
 tempfile = "3"
 
