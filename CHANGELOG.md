@@ -9,6 +9,13 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+### Documentation
+- README: step-by-step install for non-technical users (what Abyss and TIDAL are,
+  the Windows SmartScreen warning, verifying the SHA-256) and a plain-language
+  section on the risk of using an unofficial client with a TIDAL account.
+- Welcome guide: clearer introduction and service step, with the same account
+  risk notice when TIDAL is chosen (all six languages).
+
 ### Security
 - `rusqlite` 0.32.1 → 0.41.1 (bundled SQLite via `libsqlite3-sys` 0.39.1) for
   RUSTSEC-2026-0459. The `fallible_uint` feature keeps the previous handling of

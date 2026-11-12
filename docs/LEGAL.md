@@ -198,5 +198,6 @@ therefore needs network access and trusts that host. Use
   R2 (private endpoints), R4 (trade dress, trademark clearance for "Abyss")
   and R5 (third-party lyrics, which can be switched off in Settings).
 - Users take these risks with their own TIDAL accounts. The README and the
-  first-run guide say so.
+  first-run guide say so in plain language (README "Is it safe for my TIDAL
+  account?", and the welcome guide when TIDAL is chosen).
 - Binaries are not code-signed (Windows SmartScreen may warn).
