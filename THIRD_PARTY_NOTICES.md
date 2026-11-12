@@ -261,7 +261,7 @@ Abyss is an unofficial client and is not affiliated with TIDAL.
 | hashbrown | 0.14.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.15.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
-| hashlink | 0.9.1 | MIT OR Apache-2.0 | https://github.com/kyren/hashlink |
+| hashlink | 0.12.2 | MIT OR Apache-2.0 | https://github.com/kyren/hashlink |
 | heck | 0.5.0 | MIT OR Apache-2.0 | https://github.com/withoutboats/heck |
 | hermit-abi | 0.3.9 | MIT OR Apache-2.0 | https://github.com/hermit-os/hermit-rs |
 | hermit-abi | 0.5.3 | MIT OR Apache-2.0 | https://github.com/hermit-os/hermit-rs |
@@ -325,7 +325,7 @@ Abyss is an unofficial client and is not affiliated with TIDAL.
 | libloading | 0.8.9 | ISC | https://github.com/nagisa/rust_libloading/ |
 | libm | 0.2.16 | MIT | https://github.com/rust-lang/compiler-builtins |
 | libredox | 0.1.25 | MIT | https://gitlab.redox-os.org/redox-os/libredox.git |
-| libsqlite3-sys | 0.30.1 | MIT | https://github.com/rusqlite/rusqlite |
+| libsqlite3-sys | 0.39.1 | MIT | https://github.com/rusqlite/rusqlite |
 | lindera | 6.2.0 | MIT | https://github.com/lindera/lindera |
 | lindera-dictionary | 6.2.0 | MIT | https://github.com/lindera/lindera |
 | lindera-ipadic | 6.2.0 | MIT | https://github.com/lindera/lindera |
@@ -501,7 +501,7 @@ Abyss is an unofficial client and is not affiliated with TIDAL.
 | roxmltree | 0.20.0 | MIT OR Apache-2.0 | https://github.com/RazrFalcon/roxmltree |
 | rtrb | 0.3.6 | MIT OR Apache-2.0 | https://github.com/mgeier/rtrb |
 | rubato | 0.16.2 | MIT | https://github.com/HEnquist/rubato |
-| rusqlite | 0.32.1 | MIT | https://github.com/rusqlite/rusqlite |
+| rusqlite | 0.41.1 | MIT | https://github.com/rusqlite/rusqlite |
 | rust-embed | 8.13.0 | MIT | https://pyrossh.dev/repos/rust-embed |
 | rust-embed-impl | 8.13.0 | MIT | https://pyrossh.dev/repos/rust-embed |
 | rust-embed-utils | 8.13.0 | MIT | https://pyrossh.dev/repos/rust-embed |
