@@ -77,4 +77,33 @@ mod tests {
     fn rejects_garbage() {
         assert!(super::unprotect(b"not a dpapi blob").is_none());
     }
+
+    #[test]
+    fn rejects_empty_blob() {
+        assert!(super::unprotect(&[]).is_none());
+    }
+
+    #[test]
+    fn rejects_tampered_blob() {
+        let mut blob = super::protect(b"refresh-token-abc").expect("DPAPI available");
+        // DPAPI blobs carry an integrity check: one flipped bit near the end
+        // (inside the encrypted data and its HMAC) must not decrypt.
+        let at = blob.len() - 8;
+        blob[at] ^= 0x01;
+        assert!(super::unprotect(&blob).is_none());
+    }
+
+    #[test]
+    fn rejects_truncated_blob() {
+        let blob = super::protect(b"refresh-token-abc").expect("DPAPI available");
+        assert!(super::unprotect(&blob[..blob.len() / 2]).is_none());
+        assert!(super::unprotect(&blob[..blob.len() - 1]).is_none());
+    }
+
+    #[test]
+    fn round_trip_non_ascii() {
+        let token = "tökën-ñ-日本語-🎵".as_bytes();
+        let blob = super::protect(token).expect("DPAPI available");
+        assert_eq!(super::unprotect(&blob).as_deref(), Some(token));
+    }
 }
