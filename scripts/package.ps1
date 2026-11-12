@@ -16,6 +16,12 @@ $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches
 $name = "Abyss-$version-win-x64"
 $targetDir = Join-Path $root "target\package"
 
+# Last.fm application credentials are compiled in from the environment and are
+# never stored in the repository. Without them Connect says Last.fm is unavailable.
+if (-not $env:ABYSS_LASTFM_API_KEY -or -not $env:ABYSS_LASTFM_API_SECRET) {
+    Write-Warning "ABYSS_LASTFM_API_KEY / ABYSS_LASTFM_API_SECRET are not set: this build will not offer Last.fm."
+}
+
 Write-Host "Building Abyss $version (release)..."
 cargo build --release --locked --target-dir $targetDir
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }

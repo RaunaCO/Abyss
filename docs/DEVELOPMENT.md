@@ -99,6 +99,11 @@ no admin; uninstalling keeps `%APPDATA%\abyss`):
 powershell -ExecutionPolicy Bypass -File scripts/package.ps1 -Installer
 ```
 
+Last.fm needs the application key and secret registered for Abyss. They are not
+in the repository: set `ABYSS_LASTFM_API_KEY` and `ABYSS_LASTFM_API_SECRET` in the
+environment before packaging (the script warns if they are missing). A build
+without them works, but *Connect* says Last.fm is not available.
+
 Builds are reproducible in their dependency set (`--locked`, `Cargo.lock`
 committed). Binaries are not code-signed.
 
