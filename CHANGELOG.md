@@ -7,6 +7,19 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
+## [Unreleased]
+
+### Security
+- `rusqlite` 0.32.1 → 0.41.1 (bundled SQLite via `libsqlite3-sys` 0.39.1) for
+  RUSTSEC-2026-0459. The `fallible_uint` feature keeps the previous handling of
+  unsigned integers. No change in behaviour.
+
+### Development
+- CI on Windows for every push and pull request to `main` (fmt, clippy, tests,
+  `cargo audit`), weekly Dependabot updates for Cargo and GitHub Actions.
+- New tests for settings serialization and token migration, DPAPI edge cases
+  and DASH manifest rejections.
+
 ## [1.0.0]
 
 First stable release. Free and open source (MIT).

@@ -23,24 +23,33 @@ another directory with `CARGO_TARGET_DIR=target/other`.
 
 ## Checks before a commit
 
+CI (`.github/workflows/ci.yml`) runs these on `windows-latest` for every push
+and pull request to `main`, in this order. Run the same locally:
+
 ```bash
-cargo fmt --check        # rustfmt.toml: max_width 140
-cargo clippy --all-targets
-cargo test
-cargo audit              # cargo install cargo-audit
+cargo fmt --check                  # rustfmt.toml: max_width 140
+cargo clippy --all-targets --locked
+cargo test --locked
+cargo audit                        # cargo install cargo-audit
 ```
 
-State for 0.8.0: fmt clean, clippy without errors (remaining warnings are
-dead code: unused PKCE login, old visual helpers), 26 tests passing.
+A change passes when: fmt reports nothing; clippy has no errors (warnings
+are allowed, there is known dead code: unused PKCE login, old visual helpers;
+do not add new ones); every test passes; audit reports no vulnerabilities.
+`--locked` fails if `Cargo.lock` is out of date: update it in the same
+change. Dependabot (`.github/dependabot.yml`) opens weekly update PRs for
+Cargo and GitHub Actions; actions are pinned by commit SHA.
+
+State for 1.0.0: 61 tests passing.
 
 ### What the tests cover
 
 | Test | Module |
 | --- | --- |
-| DASH timeline parsing; refusal of DRM, huge repeat counts, plain HTTP, garbage | `tidal::dash` |
-| DPAPI round trip, garbage blob rejected | `secure` |
+| DASH timeline parsing; refusal of DRM (adaptation set or representation), huge repeat counts, more than `MAX_SEGMENTS` (limit inclusive), missing representation, segment template or timeline, plain HTTP, malformed XML | `tidal::dash` |
+| DPAPI round trip (also non-ASCII); empty, garbage, tampered and truncated blobs rejected | `secure` |
 | Segment window: exact bytes and order, bounded memory, eviction, refetch of dropped segments, backpressure (fast and slow links), ≤ 4 parallel downloads, cancellation frees memory, retries, network outage, link renewal, restart | `audio::stream` (offline, with a fake fetcher) |
-| Tokens never serialised in plaintext, decryptable again | `config` |
+| Tokens never serialised in plaintext, decryptable again (also non-ASCII); plaintext tokens from older files rewritten as `protected_tokens`; defaults for an empty file, unknown fields ignored, optional fields round trip | `config` |
 | Image disk cache prunes oldest first | `ui::images` |
 | Kana / Hangul / pinyin / kanji romanization | `romanize` |
 
