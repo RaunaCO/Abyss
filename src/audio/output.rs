@@ -7,6 +7,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use super::dsp::{Dsp, EqShared};
+
 /// State shared between the engine and the real-time output.
 #[derive(Default)]
 pub struct OutShared {
@@ -24,6 +26,9 @@ pub struct OutShared {
     /// background animation.
     pub vis: [AtomicU32; 3],
     lp: [AtomicU32; 2],
+    /// Equaliser configuration written by the UI and read lock-free by the
+    /// output callback (see `dsp`).
+    pub eq: EqShared,
 }
 
 impl OutShared {
@@ -103,10 +108,11 @@ fn ring(rate: u32) -> (rtrb::Producer<f32>, rtrb::Consumer<f32>) {
     rtrb::RingBuffer::new((rate as usize * 2 * 3 / 10).max(8192))
 }
 
-/// Pull up to `out.len()` samples, honouring flush/pause/gain. Returns false
-/// when the output should write silence instead.
-fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], apply_gain: bool) {
+/// Pull up to `out.len()` samples, honouring flush/pause/equaliser/gain. What
+/// the ring does not hold is silence.
+fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], apply_gain: bool, dsp: &mut Dsp) {
     if shared.flush.load(Ordering::Acquire) {
+        dsp.reset();
         let n = cons.slots();
         if let Ok(chunk) = cons.read_chunk(n) {
             chunk.commit_all();
@@ -129,6 +135,8 @@ fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], app
         chunk.commit_all();
     }
     out[n..].fill(0.0);
+    // Equaliser: leaves the samples untouched (bit-perfect) unless the chain does something.
+    dsp.process(&shared.eq, &mut out[..n]);
     // (Band analysis for the backgrounds is no longer used: they drift on their own.)
     if apply_gain {
         let g = shared.gain();
@@ -166,9 +174,10 @@ pub fn open_shared(device: Option<&str>, shared: Arc<OutShared>) -> Result<Outpu
     };
     let mut scratch: Vec<f32> = Vec::new();
     let sh = shared.clone();
+    let mut dsp = Dsp::new(rate);
     let mut render = move |frames: usize, write: &mut dyn FnMut(usize, f32)| {
         scratch.resize(frames * 2, 0.0);
-        fill(&mut cons, &sh, &mut scratch, true);
+        fill(&mut cons, &sh, &mut scratch, true, &mut dsp);
         for f in 0..frames {
             for c in 0..channels {
                 // Stereo to the first two channels, silence on the others.
@@ -318,12 +327,13 @@ pub fn open_exclusive(device: Option<&str>, rate: u32, source_bits: u32, shared:
 
             let mut scratch = Vec::<f32>::new();
             let mut bytes = Vec::<u8>::new();
+            let mut dsp = Dsp::new(rate);
             ac.start_stream().map_err(|e| e.to_string())?;
             while !stop2.load(Ordering::Relaxed) {
                 let frames = ac.get_available_space_in_frames().map_err(|e| e.to_string())? as usize;
                 if frames > 0 {
                     scratch.resize(frames * 2, 0.0);
-                    fill(&mut cons, &shared, &mut scratch, apply_gain);
+                    fill(&mut cons, &shared, &mut scratch, apply_gain, &mut dsp);
                     bytes.clear();
                     bytes.reserve(frames * block);
                     for &s in &scratch {
@@ -380,4 +390,90 @@ fn write_sample(out: &mut Vec<u8>, s: f32, bytes: usize, valid: usize, float: bo
 #[cfg(not(windows))]
 pub fn open_exclusive(device: Option<&str>, _rate: u32, _bits: u32, shared: Arc<OutShared>, _apply_gain: bool) -> Result<Output> {
     open_shared(device, shared)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::dsp::{EqConfig, FilterKind, FilterSpec};
+
+    fn bits(samples: &[f32]) -> Vec<u32> {
+        samples.iter().map(|s| s.to_bits()).collect()
+    }
+
+    fn music(frames: usize) -> Vec<f32> {
+        (0..frames * 2).map(|i| ((i as f32) * 0.37).sin() * 0.6 + ((i as f32) * 0.011).cos() * 0.2).collect()
+    }
+
+    /// Push `input` through a real ring and `fill`, in callback-sized pieces.
+    fn play(shared: &OutShared, dsp: &mut Dsp, input: &[f32], gain: bool) -> Vec<f32> {
+        let (mut producer, mut consumer) = rtrb::RingBuffer::new(input.len().max(8));
+        let mut chunk = producer.write_chunk(input.len()).unwrap();
+        let (a, b) = chunk.as_mut_slices();
+        a.copy_from_slice(&input[..a.len()]);
+        b.copy_from_slice(&input[a.len()..]);
+        chunk.commit_all();
+        let mut out = vec![0.0f32; input.len()];
+        for piece in out.chunks_mut(960) {
+            fill(&mut consumer, shared, piece, gain, dsp);
+        }
+        out
+    }
+
+    #[test]
+    fn the_exact_path_through_the_ring_is_bit_identical_without_an_equaliser() {
+        let input = music(9600);
+        let shared = OutShared::default();
+        shared.set_gain(1.0);
+        // Never configured, and configured to do nothing: identical bits.
+        for cfg in [
+            None,
+            Some(EqConfig::default()),
+            Some(EqConfig {
+                enabled: true,
+                preamp_db: 0.0,
+                filters: vec![FilterSpec { gain_db: 0.0, ..FilterSpec::new(FilterKind::Peaking) }],
+            }),
+        ] {
+            if let Some(cfg) = &cfg {
+                shared.eq.write(cfg);
+            }
+            let mut dsp = Dsp::new(48_000);
+            assert_eq!(bits(&play(&shared, &mut dsp, &input, true)), bits(&input));
+        }
+    }
+
+    #[test]
+    fn an_active_chain_changes_the_audio_and_flush_resets_it() {
+        let input = music(9600);
+        let shared = OutShared::default();
+        shared.set_gain(1.0);
+        shared.eq.write(&EqConfig { enabled: true, preamp_db: 0.0, filters: vec![FilterSpec::new(FilterKind::LowPass)] });
+        let mut dsp = Dsp::new(48_000);
+        let out = play(&shared, &mut dsp, &input, true);
+        assert_ne!(bits(&out), bits(&input));
+        // A flush (seek) leaves no memory of the old audio behind.
+        shared.flush.store(true, Ordering::Release);
+        let again = play(&shared, &mut dsp, &input, true);
+        assert!(again.iter().all(|s| s.is_finite()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn integer_pcm_round_trips_exactly_through_f32_and_write_sample() {
+        for (bytes, valid, values) in
+            [(2usize, 16usize, [-32768i32, -12345, -1, 0, 1, 777, 32767]), (4, 24, [-8_388_608, -4_000_001, -1, 0, 1, 123_456, 8_388_607])]
+        {
+            for v in values {
+                let max = (1i64 << (valid - 1)) as f32;
+                let sample = v as f32 / max;
+                let mut out = Vec::new();
+                write_sample(&mut out, sample, bytes, valid, false);
+                let mut raw = [0u8; 8];
+                raw[..bytes].copy_from_slice(&out);
+                let back = i64::from_le_bytes(raw) << (64 - bytes * 8) >> (64 - bytes * 8) >> (bytes * 8 - valid);
+                assert_eq!(back, i64::from(v), "{valid}-bit {v}");
+            }
+        }
+    }
 }

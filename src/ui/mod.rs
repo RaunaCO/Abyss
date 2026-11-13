@@ -41,6 +41,7 @@ mod appmenu;
 mod cover_view;
 mod ctxmenu;
 mod debug;
+mod equalizer;
 pub mod fx;
 mod glass;
 mod haptics;
@@ -208,6 +209,8 @@ pub struct NowPlaying {
 pub enum Drag {
     Progress,
     Volume,
+    /// An equaliser slider: 0 is the pre-amp, `i + 1` the gain of filter `i`.
+    Eq(usize),
 }
 
 /// What a right-click menu acts on.
@@ -402,6 +405,12 @@ pub struct AppView {
     pub scrobble_tracker: crate::scrobble::tracker::Tracker,
     pub lastfm_tick: std::time::Instant,
     pub lastfm_seen: u64,
+    /// Equaliser page: the numeric fields of every filter, the pre-amp field,
+    /// slider geometry and which filter has its type list open.
+    pub eq_rows: Vec<equalizer::EqRow>,
+    pub eq_preamp_input: Option<Entity<TextInput>>,
+    pub eq_bounds: std::collections::HashMap<usize, Bounds<Pixels>>,
+    pub eq_type_open: Option<usize>,
     /// Replay: chosen period and the statistics computed for it.
     pub replay_period: replay::Period,
     pub replay_all_tracks: bool,
@@ -713,6 +722,10 @@ impl AppView {
             scrobble_tracker: Default::default(),
             lastfm_tick: std::time::Instant::now(),
             lastfm_seen: 0,
+            eq_rows: Vec::new(),
+            eq_preamp_input: None,
+            eq_bounds: Default::default(),
+            eq_type_open: None,
             replay_period: Default::default(),
             replay_all_tracks: false,
             replay_cache: None,
@@ -796,6 +809,7 @@ impl AppView {
         }
         this.local_changed();
         this.lastfm_apply();
+        this.eq_start(cx);
         this.rescan_local_folders(cx);
         this.start_ticker(cx);
         this.demo_from_env(cx);
@@ -2221,7 +2235,11 @@ impl AppView {
 
     pub fn drag_to(&mut self, pos: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(drag) = self.drag else { return };
-        let b = if drag == Drag::Progress { self.progress_bounds } else { self.volume_bounds };
+        let b = match drag {
+            Drag::Progress => self.progress_bounds,
+            Drag::Volume => self.volume_bounds,
+            Drag::Eq(key) => self.eq_bounds.get(&key).copied().unwrap_or_default(),
+        };
         let w = f32::from(b.size.width).max(1.0);
         let frac = ((f32::from(pos.x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0);
         self.drag_value = frac;
@@ -2230,6 +2248,7 @@ impl AppView {
                 self.snap.position = frac as f64 * self.duration();
             }
             Drag::Volume => self.set_volume(frac, cx),
+            Drag::Eq(key) => self.eq_drag(key, frac, cx),
         }
         cx.notify();
     }
@@ -2241,6 +2260,7 @@ impl AppView {
                 self.seek(secs, cx);
             }
             Some(Drag::Volume) => self.save_settings(),
+            Some(Drag::Eq(_)) => self.eq_commit(),
             None => {}
         }
     }

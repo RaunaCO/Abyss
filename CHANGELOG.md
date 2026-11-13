@@ -9,6 +9,16 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+### Added
+- Parametric equaliser (Settings > Equalizer): a chain of up to 32 filters (Peaking,
+  Low Shelf, High Shelf, High Pass, Low Pass) with frequency, gain and Q, a global
+  pre-amp with an *Auto* button, and add / remove / reorder / disable per filter.
+  It runs in the output callback, so it works in shared and WASAPI exclusive mode.
+  With the equaliser off, an empty chain or only neutral filters (0 dB) and no
+  pre-amp, the audio is not processed at all (bit-perfect path unchanged).
+  Changes are made without clicks (10 ms blends) and reach the audio thread
+  without locks. No new dependencies.
+
 ## [1.1.0] - 2026-11-12
 
 ### Added

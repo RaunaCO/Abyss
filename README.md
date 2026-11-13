@@ -128,6 +128,7 @@ identifiers and the non-public endpoints). It is not legal advice.
   (reduced when Windows asks for it), smooth wheel scrolling, UI zoom, mouse
   back/forward buttons.
 - **Ratings**: 0 to 5 stars in half-star steps for any track (lists, album panel, player bar), sortable. Stored locally in `%APPDATA%\abyss\ratings.json` since TIDAL has no rating API.
+- **Equalizer**: a parametric filter chain like Equalizer APO (Peaking, shelves, High / Low Pass, pre-amp), applied in the output so it works in WASAPI exclusive too. With no filters, or filters that do nothing, the audio is not processed at all. See [docs/AUDIO.md](docs/AUDIO.md).
 - **Last.fm**: optional scrobbling of what you play (TIDAL and local files) and a one-click sync of your saved Replay history. Off until you connect your account in Settings → Integrations. See [docs/PRIVACY.md](docs/PRIVACY.md).
 - **Discord**: optional Rich Presence with cover, title, artist, progress and a TIDAL link. Works out of the box with the Abyss application ID. See [docs/DISCORD.md](docs/DISCORD.md).
 - **Languages**: English, Spanish, Portuguese, French, German and Japanese. Follows the system by default; change it in Settings > Appearance.

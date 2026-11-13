@@ -10,8 +10,9 @@ use crate::config::Quality;
 
 pub(super) const ABOUT_TAB: usize = 5;
 pub(super) const LOCAL_TAB: usize = 6;
+pub(super) const EQ_TAB: usize = 7;
 
-fn group(icon: Icon, title: &'static str, description: &'static str, rows: Vec<AnyElement>) -> AnyElement {
+pub(super) fn group(icon: Icon, title: &'static str, description: &'static str, rows: Vec<AnyElement>) -> AnyElement {
     div()
         .flex()
         .flex_col()
@@ -43,7 +44,7 @@ fn row_text(title: impl Into<SharedString>, desc: Option<SharedString>) -> AnyEl
 /// Gap between a card's edge and the highlight of the rows inside it.
 const ROW_INSET: f32 = 4.0;
 
-fn row(
+pub(super) fn row(
     id: impl Into<ElementId>,
     title: impl Into<SharedString>,
     desc: Option<SharedString>,
@@ -61,7 +62,7 @@ fn row(
         .children(right)
 }
 
-fn switch(on: bool, key: &str) -> AnyElement {
+pub(super) fn switch(on: bool, key: &str) -> AnyElement {
     // The knob slides and the track fades between colours.
     let v = super::interact::follow(&format!("sw-{key}"), if on { 1.0 } else { 0.0 }, super::motion::seconds(super::motion::CONTROL));
     div()
@@ -80,7 +81,7 @@ fn switch(on: bool, key: &str) -> AnyElement {
         .into_any_element()
 }
 
-fn small_button(id: impl Into<ElementId>, label: impl Into<SharedString>, white: bool) -> gpui::Stateful<gpui::Div> {
+pub(super) fn small_button(id: impl Into<ElementId>, label: impl Into<SharedString>, white: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex_none()
@@ -105,7 +106,7 @@ fn small_button(id: impl Into<ElementId>, label: impl Into<SharedString>, white:
 }
 
 impl AppView {
-    fn toggle_row(
+    pub(super) fn toggle_row(
         &mut self,
         id: &'static str,
         title: &'static str,
@@ -158,6 +159,7 @@ impl AppView {
             (crate::i18n::t("account"), Icon::Artist, crate::i18n::t("your_tidal_profile_and_subscription")),
             (crate::i18n::t("about"), Icon::Track, crate::i18n::t("version_licenses_and_credits")),
             (crate::i18n::t("local_files"), Icon::Upload, crate::i18n::t("local.settings_description")),
+            (crate::i18n::t("eq.title"), Icon::Stats, crate::i18n::t("eq.tab_description")),
         ];
         let tabs = widget_panel("settings-navigation")
             .flex()
@@ -206,6 +208,7 @@ impl AppView {
             4 => self.settings_account(cx),
             ABOUT_TAB => self.settings_about(),
             LOCAL_TAB => self.settings_local(cx),
+            EQ_TAB => self.settings_equalizer(cx),
             _ => self.settings_audio(body_width, cx),
         };
         let (title, _, description) = sections[tab];

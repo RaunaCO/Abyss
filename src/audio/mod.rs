@@ -6,6 +6,7 @@
 //! time and starts on the very next sample: gapless playback.
 
 pub mod decode;
+pub mod dsp;
 pub mod output;
 pub mod stream;
 
@@ -137,6 +138,12 @@ impl Player {
     /// Loudness of the low / mid / high bands being played (for visuals).
     pub fn levels(&self) -> [f32; 3] {
         self.out.levels()
+    }
+
+    /// Publish the equaliser chain. Safe to call from the UI at any time: the
+    /// output callback reads it without locking.
+    pub fn set_eq(&self, config: &dsp::EqConfig) {
+        self.out.eq.write(config);
     }
 
     pub fn send(&self, cmd: Cmd) {

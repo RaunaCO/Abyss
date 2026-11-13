@@ -11,7 +11,9 @@ flowchart LR
     RS -- yes --> G
     RUB --> G[gain: volume × ReplayGain]
     G --> RING[rtrb lock-free ring<br/>~0.3 s]
-    RING --> OUT{output}
+    RING --> EQ{EQ chain<br/>does anything?}
+    EQ -- no --> OUT
+    EQ -- yes --> DSP[biquad chain<br/>dsp.rs, f64] --> OUT{output}
     OUT --> SH[cpal shared mode]
     OUT --> EX[WASAPI exclusive]
 ```
@@ -25,7 +27,44 @@ flowchart LR
 | Resample | `decode::Resampler2` | rubato `SincFixedIn` (sinc length 256, oversampling 256, cubic interpolation, Blackman-Harris² window). Its delay is trimmed so tracks start sample-accurately. Used **only** when the output rate differs from the track rate. |
 | Gain | `OutShared::gain` | Volume curve × ReplayGain (`trackReplayGain`, limited by `trackPeakAmplitude`). Both are forced to 1.0 in "exclusive + fixed volume". |
 | Transport | `output::ring` | `rtrb` single-producer/single-consumer ring, ~0.3 s at the output rate. The real-time callback only pops samples and multiplies by the gain. |
+| Equaliser | `audio/dsp.rs`, `output::fill` | Optional chain of parametric filters, applied in the output callback just after the samples leave the ring and before the volume. See below. |
 | Output | `output.rs` | cpal shared mode (F32 / I16 / I32 device formats) or WASAPI exclusive (`wasapi` crate) at the track's own rate and bit depth when the device accepts it. |
+
+## Parametric equaliser
+
+Settings > Equalizer holds a chain of up to 32 filters, like Equalizer APO:
+Peaking, Low Shelf, High Shelf, High Pass and Low Pass, each with frequency,
+gain and Q, plus a global pre-amp. Filters can be added, removed, reordered,
+switched off one by one and edited by number or (gain) with a slider.
+
+- **Where.** Inside the real-time output callback (`output::fill`), so it works
+  the same in shared mode and in WASAPI exclusive, and a change is heard at once
+  (the 0.3 s ring is not in the way).
+- **Maths.** RBJ Audio EQ Cookbook biquads (High / Low Pass are second order, Q
+  defaults to Butterworth 0.707; stack two for 24 dB per octave). State and
+  coefficients are `f64`; samples in and out are `f32`. Active output is limited to
+  full scale. The pre-amp is the protection against clipping when boosting;
+  *Auto* sets it to the negative of the chain's loudest point.
+- **Bit-perfect when idle.** If the equaliser is off, the chain is empty, every
+  filter is disabled or is a 0 dB peaking / shelf, and the pre-amp is 0 dB,
+  `Dsp::process` returns without touching a sample: the bytes that reach the
+  device are the same as without this feature. High / Low Pass always count as
+  processing. The Settings page says which of the two states applies.
+- **No glitches.** Switching on or off is a 10 ms dry / wet blend; every other
+  change slides the coefficients over 10 ms; a seek or track change clears the
+  filter memory.
+- **UI to audio thread, without locks.** The UI publishes the chain into
+  `EqShared`, a seqlock over atomic words that lives in `OutShared`. The callback
+  reads the newest consistent copy; if a write is in progress it keeps the
+  previous one and tries again on the next callback. It never waits, locks or
+  allocates, and moving a slider cannot stall WASAPI.
+
+What is tested (`cargo test`): filter responses against sine waves generated in
+memory and against the analytic response, bit-for-bit equality when idle (also
+through a real ring and `fill`), absence of jumps while switching and changing the
+chain, the seqlock under a hammering writer, and the integer PCM round trip. What
+is **not** verified is the device: like the rest of the bit-perfect claim, it needs
+a digital loopback capture.
 
 ## Gapless
 
@@ -74,7 +113,7 @@ What TIDAL returns depends on the OAuth client of the session (see
   finished downloading, i.e. ~60 s before its end) and works in testing, but
   has not been verified by ear or with a sample-accurate capture.
 - Output backends other than Windows (cpal on Linux/macOS compiles, untested).
-- No parametric EQ or crossfade.
+- No crossfade (planned).
 
 ## Checking the pipeline
 
