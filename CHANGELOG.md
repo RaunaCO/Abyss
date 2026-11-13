@@ -9,6 +9,8 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-13
+
 ### Fixed
 - Equaliser: it no longer clips at full scale inside the filter chain. Boosted
   material was clipped before the volume was applied, which distorted it even at low

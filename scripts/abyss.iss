@@ -1,6 +1,6 @@
 ﻿; Inno Setup 6 script for Abyss (per-user install, no administrator rights).
 ; Build the portable package first (scripts\package.ps1), then:
-;   iscc /DVersion=1.2.0 scripts\abyss.iss
+;   iscc /DVersion=1.3.0 scripts\abyss.iss
 ; Output: dist\Abyss-<version>-win-x64-setup.exe (unsigned).
 ;
 ; Uninstalling removes the program files and shortcuts only. Settings, the
@@ -10,7 +10,7 @@
 ; UsePreviousAppDir=no selects the new Abyss program folder on upgrade.
 
 #ifndef Version
-  #define Version "1.2.0"
+  #define Version "1.3.0"
 #endif
 #define Package "Abyss-" + Version + "-win-x64"
 
