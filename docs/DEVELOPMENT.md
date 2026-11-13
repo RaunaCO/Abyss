@@ -40,7 +40,7 @@ do not add new ones); every test passes; audit reports no vulnerabilities.
 change. Dependabot (`.github/dependabot.yml`) opens weekly update PRs for
 Cargo and GitHub Actions; actions are pinned by commit SHA.
 
-State for 1.2.0: 114 tests passing.
+State for 1.3.0: 137 tests passing.
 
 ### What the tests cover
 
