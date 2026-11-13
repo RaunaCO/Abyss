@@ -53,7 +53,7 @@ Streaming, very large libraries and long sessions still need separate measuremen
 [TIDAL](https://tidal.com) account (TIDAL is a paid music streaming service) and from
 music files on your PC. You can also use it with files only, with no account at all.
 
-1. Download **Abyss-1.1.0-win-x64-setup.exe** from the
+1. Download **Abyss-1.2.0-win-x64-setup.exe** from the
    [latest release](https://github.com/RaunaCO/Abyss/releases/latest). Only download it
    from that page. A portable `.zip` is also available.
 2. Check the download (see below). It takes a minute.
@@ -72,19 +72,23 @@ checksum does not match, do not run it.
 
 ### Verify the download
 
-Every release lists a SHA-256 checksum for each file in its notes. It is a fingerprint:
-if even one byte of the file changes, the fingerprint changes.
+Every release lists a SHA-256 checksum for each file in its notes (and in the attached
+`SHA256SUMS.txt`). It is a fingerprint: if even one byte of the file changes, the
+fingerprint changes.
 
-1. Open **PowerShell** in the folder with the file (in File Explorer, click the address
-   bar, type `powershell` and press Enter).
+1. Open **PowerShell** in the folder where you saved the file. Browsers usually save to
+   `Downloads`: open that folder in File Explorer, click the address bar, type
+   `powershell` and press Enter. (Or type `cd "$HOME\Downloads"` in any PowerShell
+   window.)
 2. Run:
 
    ```powershell
-   Get-FileHash -Algorithm SHA256 .\Abyss-1.1.0-win-x64-setup.exe
+   Get-FileHash -Algorithm SHA256 .\Abyss-1.2.0-win-x64-setup.exe
    ```
 
 3. Compare the `Hash` it prints with the one in the release notes. They must be
-   identical. If they differ, delete the file and download it again.
+   identical (capital or small letters do not matter). If they differ, delete the file and
+   download it again.
 
 ## Is it safe for my TIDAL account?
 
@@ -134,7 +138,7 @@ identifiers and the non-public endpoints). It is not legal advice.
 - **Languages**: English, Spanish, Portuguese, French, German and Japanese. Follows the system by default; change it in Settings > Appearance.
 - **System**: Windows media controls (SMTC), Inter font bundled.
 
-Current version: **1.1.0** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
+Current version: **1.2.0** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
 source (MIT); it is not sold and must not be bundled with a paid offering.
 
 ## Getting started

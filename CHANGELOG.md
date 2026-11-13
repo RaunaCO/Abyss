@@ -9,6 +9,8 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-13
+
 ### Added
 - Parametric equaliser (Settings > Equalizer): a chain of up to 32 filters (Peaking,
   Low Shelf, High Shelf, High Pass, Low Pass) with frequency, gain and Q, a global
@@ -18,6 +20,10 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
   pre-amp, the audio is not processed at all (bit-perfect path unchanged).
   Changes are made without clicks (10 ms blends) and reach the audio thread
   without locks. No new dependencies.
+
+### Documentation
+- README: the checksum steps now say to open PowerShell in the folder where the browser
+  saved the installer (usually `Downloads`) and mention the attached `SHA256SUMS.txt`.
 
 ## [1.1.0] - 2026-11-12
 
