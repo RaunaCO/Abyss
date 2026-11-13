@@ -1,7 +1,10 @@
 //! Settings > Equalizer: a chain of parametric filters (like Equalizer APO).
 //! The chain lives in `Settings`; every change is published to the output
 //! callback through `Player::set_eq`, which never blocks the audio thread.
-use gpui::{canvas, div, prelude::*, relative, AnyElement, Context, Entity, FontWeight, MouseButton, MouseDownEvent};
+use gpui::{
+    canvas, div, prelude::*, relative, AnyElement, Context, Entity, FontWeight, MouseButton, MouseDownEvent, Pixels, Point,
+    ScrollWheelEvent,
+};
 
 use super::eqgraph;
 use super::icons::Icon;
@@ -9,6 +12,7 @@ use super::input::{InputEvent, TextInput};
 use super::settings::{group, row, small_button, switch};
 use super::{sc, theme, AppView, Drag};
 use crate::audio::dsp::{Channels, FilterKind, FilterSpec, MAX_FILTERS, MAX_FREQ, MAX_GAIN_DB, MAX_PREAMP_DB, MIN_FREQ, MIN_PREAMP_DB};
+use crate::audio::graphic::{iso_bands, Band, EqMode, SLIDER_GAIN_DB as BAR_RANGE_DB};
 
 /// Range of the sliders (the numeric fields accept the full range).
 const GAIN_SLIDER_DB: f32 = 20.0;
@@ -22,6 +26,14 @@ const KEY_FREQ: usize = 100;
 const KEY_Q: usize = 200;
 /// The channel gain faders (left, right).
 const KEY_TRIM: usize = 300;
+/// The faders of the graphic bars, one per bar.
+const KEY_BAND: usize = 400;
+/// The plot area of the response graph (its bounds are stored under this key).
+const KEY_PLOT: usize = 900;
+/// Height of the bars of the graphic equaliser.
+const BAR_HEIGHT: f32 = 200.0;
+/// How close (pixels) a click must be to a node to pick it.
+const NODE_REACH: f32 = 14.0;
 /// Height of the response graph and of the meters beside it.
 const GRAPH_HEIGHT: f32 = 240.0;
 /// Margins around the plot area: dB labels on the left, frequency labels at the bottom.
@@ -148,6 +160,11 @@ impl AppView {
         if self.eq_preamp_input.is_none() {
             self.eq_preamp_input = Some(self.eq_make_input(cx));
         }
+        if self.eq_band_freq.is_none() {
+            self.eq_band_freq = Some(self.eq_make_input(cx));
+            self.eq_band_gain = Some(self.eq_make_input(cx));
+        }
+        self.eq_sync_band_fields(cx);
         for (row, f) in self.eq_rows.iter().zip(&filters) {
             row.freq.update(cx, |i, cx| i.set_text(&fmt_freq(f.freq), cx));
             row.gain.update(cx, |i, cx| i.set_text(&format!("{:.1}", f.gain_db), cx));
@@ -161,6 +178,20 @@ impl AppView {
 
     fn eq_field_submit(&mut self, input: &Entity<TextInput>, text: &str, cx: &mut Context<Self>) {
         let id = input.entity_id();
+        let band_field = if self.eq_band_freq.as_ref().is_some_and(|p| p.entity_id() == id) {
+            Some(true)
+        } else if self.eq_band_gain.as_ref().is_some_and(|p| p.entity_id() == id) {
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(is_freq) = band_field {
+            if let Some(v) = parse(text) {
+                self.eq_band_set(is_freq, v);
+            }
+            self.eq_bands_changed(true, cx);
+            return;
+        }
         if self.eq_preamp_input.as_ref().is_some_and(|p| p.entity_id() == id) {
             if let Some(v) = parse(text) {
                 let mut s = self.settings.lock();
@@ -361,6 +392,22 @@ impl AppView {
             self.eq_set_trim(key - KEY_TRIM, super::eqmeter::trim_of_frac(frac), false, cx);
             return;
         }
+        if (KEY_BAND..KEY_BAND + MAX_FILTERS).contains(&key) {
+            // A bar of the graphic equaliser: the fader is the level wanted at its frequency.
+            let i = key - KEY_BAND;
+            {
+                let mut s = self.settings.lock();
+                if let Some(b) = s.eq_bands.get_mut(i) {
+                    let db = round_tenth((frac * 2.0 - 1.0) * BAR_RANGE_DB);
+                    b.gain_db = if db.abs() < 0.25 { 0.0 } else { db.clamp(-MAX_GAIN_DB, MAX_GAIN_DB) };
+                }
+                s.recompile_bands();
+            }
+            self.eq_band_selected = Some(i);
+            self.eq_apply(false, cx);
+            self.eq_sync_band_fields(cx);
+            return;
+        }
         let target = if key == KEY_PREAMP {
             None
         } else if (KEY_GAIN..KEY_GAIN + MAX_FILTERS).contains(&key) {
@@ -420,6 +467,212 @@ impl AppView {
     /// The drag ended: write the settings once.
     pub fn eq_commit(&mut self, cx: &mut Context<Self>) {
         self.eq_apply(true, cx);
+    }
+
+    /// A double click on a vertical fader puts it back to 0 dB.
+    fn eq_vreset(&mut self, key: usize, cx: &mut Context<Self>) {
+        if (KEY_TRIM..KEY_TRIM + 2).contains(&key) {
+            self.eq_set_trim(key - KEY_TRIM, 0.0, true, cx);
+        } else if (KEY_BAND..KEY_BAND + MAX_FILTERS).contains(&key) {
+            let i = key - KEY_BAND;
+            if let Some(b) = self.settings.lock().eq_bands.get_mut(i) {
+                b.gain_db = 0.0;
+            }
+            self.eq_band_selected = Some(i);
+            self.eq_bands_changed(true, cx);
+        }
+    }
+
+    // ------------------------------------------------------- graphic bars
+
+    /// Show the selected bar's frequency and level in its two fields.
+    fn eq_sync_band_fields(&mut self, cx: &mut Context<Self>) {
+        let band = self.eq_band_selected.and_then(|i| self.settings.lock().eq_bands.get(i).copied());
+        let (freq, gain) = band.map(|b| (fmt_freq(b.freq), format!("{:.1}", b.gain_db))).unwrap_or_default();
+        if let (Some(f), Some(g)) = (&self.eq_band_freq, &self.eq_band_gain) {
+            f.update(cx, |i, cx| i.set_text(&freq, cx));
+            g.update(cx, |i, cx| i.set_text(&gain, cx));
+        }
+    }
+
+    /// Set the frequency or the level of the selected bar. A new frequency may change its
+    /// place in the order, and the selection follows the bar.
+    fn eq_band_set(&mut self, is_freq: bool, v: f32) {
+        let Some(i) = self.eq_band_selected else { return };
+        let mut s = self.settings.lock();
+        let Some(b) = s.eq_bands.get_mut(i) else { return };
+        if is_freq {
+            b.freq = v.clamp(MIN_FREQ, MAX_FREQ);
+        } else {
+            b.gain_db = round_tenth(v).clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
+        }
+        let moved = *b;
+        s.eq_bands.sort_by(|a, b| a.freq.total_cmp(&b.freq));
+        self.eq_band_selected = s.eq_bands.iter().position(|x| *x == moved);
+    }
+
+    /// The bars changed: rebuild the filters that implement them and publish.
+    fn eq_bands_changed(&mut self, save: bool, cx: &mut Context<Self>) {
+        self.settings.lock().recompile_bands();
+        self.eq_apply(save, cx);
+        self.eq_sync_band_fields(cx);
+        cx.notify();
+    }
+
+    fn eq_set_mode(&mut self, mode: EqMode, cx: &mut Context<Self>) {
+        self.settings.lock().eq_mode = mode;
+        self.eq_type_open = None;
+        self.eq_apply(true, cx);
+        cx.notify();
+    }
+
+    fn eq_band_select(&mut self, i: usize, cx: &mut Context<Self>) {
+        self.eq_band_selected = Some(i);
+        self.eq_sync_band_fields(cx);
+        cx.notify();
+    }
+
+    /// Add a bar in the middle (on the log axis) of the widest gap between bars.
+    fn eq_band_add(&mut self, cx: &mut Context<Self>) {
+        {
+            let mut s = self.settings.lock();
+            if s.eq_bands.len() >= MAX_FILTERS {
+                drop(s);
+                self.notify_toast(crate::i18n::t("eq.full"), cx);
+                return;
+            }
+            let mut edges = vec![MIN_FREQ];
+            edges.extend(s.eq_bands.iter().map(|b| b.freq));
+            edges.push(MAX_FREQ);
+            let (lo, hi) =
+                edges.windows(2).map(|w| (w[0], w[1])).max_by(|a, b| (a.1 / a.0).total_cmp(&(b.1 / b.0))).unwrap_or((MIN_FREQ, MAX_FREQ));
+            let freq = (lo * hi).sqrt().round().clamp(MIN_FREQ, MAX_FREQ);
+            s.eq_bands.push(Band::new(freq));
+            s.eq_bands.sort_by(|a, b| a.freq.total_cmp(&b.freq));
+            self.eq_band_selected = s.eq_bands.iter().position(|b| b.freq == freq);
+        }
+        self.eq_bands_changed(true, cx);
+    }
+
+    fn eq_band_remove(&mut self, cx: &mut Context<Self>) {
+        let Some(i) = self.eq_band_selected else { return };
+        {
+            let mut s = self.settings.lock();
+            if s.eq_bands.len() <= 1 || i >= s.eq_bands.len() {
+                return;
+            }
+            s.eq_bands.remove(i);
+            self.eq_band_selected = Some(i.min(s.eq_bands.len() - 1));
+        }
+        self.eq_bands_changed(true, cx);
+    }
+
+    /// Replace the bars with the standard set for `count` bars (all at 0 dB).
+    fn eq_band_preset(&mut self, count: usize, cx: &mut Context<Self>) {
+        self.settings.lock().eq_bands = iso_bands(count);
+        self.eq_band_selected = None;
+        self.eq_bands_changed(true, cx);
+    }
+
+    fn eq_bands_flat(&mut self, cx: &mut Context<Self>) {
+        for b in self.settings.lock().eq_bands.iter_mut() {
+            b.gain_db = 0.0;
+        }
+        self.eq_bands_changed(true, cx);
+    }
+
+    // ---------------------------------------------------- nodes on the graph
+
+    /// The plot area as `(origin, size)` in pixels, if it has been laid out.
+    fn eq_plot_rect(&self) -> Option<gpui::Bounds<Pixels>> {
+        self.eq_bounds.get(&KEY_PLOT).copied().filter(|b| f32::from(b.size.width) > 1.0 && f32::from(b.size.height) > 1.0)
+    }
+
+    /// A click on the plot: pick the node under it, or add a filter there. Right click removes.
+    fn eq_plot_down(&mut self, pos: Point<Pixels>, left: bool, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let Some(b) = self.eq_plot_rect() else { return };
+        let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+        let at = ((f32::from(pos.x) - f32::from(b.origin.x)) / w, (f32::from(pos.y) - f32::from(b.origin.y)) / h);
+        if !(-0.02..=1.02).contains(&at.0) || !(-0.02..=1.02).contains(&at.1) {
+            return;
+        }
+        let scale = self.eq_plot_scale;
+        let filters = self.settings.lock().eq_filters.clone();
+        let points: Vec<(f32, f32)> = filters.iter().map(|f| eqgraph::node_pos(f.freq, f.gain_db, f.kind.has_gain(), scale)).collect();
+        let hit = eqgraph::nearest_node(&points, at, (w, h), NODE_REACH);
+        if !left {
+            if let Some(i) = hit {
+                self.eq_remove(i, cx);
+            }
+            return;
+        }
+        let i = match hit {
+            Some(i) => i,
+            None => {
+                let (freq, gain) = eqgraph::freq_gain_at(at.0, at.1, scale);
+                {
+                    let mut s = self.settings.lock();
+                    if s.eq_filters.len() >= MAX_FILTERS {
+                        drop(s);
+                        self.notify_toast(crate::i18n::t("eq.full"), cx);
+                        return;
+                    }
+                    let mut f = FilterSpec::new(FilterKind::Peaking);
+                    f.freq = freq;
+                    f.gain_db = gain;
+                    s.eq_filters.push(f.clamped());
+                }
+                self.eq_sync_rows(cx);
+                self.settings.lock().eq_filters.len() - 1
+            }
+        };
+        self.eq_selected = Some(i);
+        self.eq_type_open = None;
+        self.drag = Some(Drag::EqNode(i));
+        super::winctl::capture_mouse(window);
+        self.eq_node_drag(i, pos, cx);
+    }
+
+    /// Move filter `i` to the pointer: frequency and, for filters that have gain, level.
+    pub fn eq_node_drag(&mut self, i: usize, pos: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(b) = self.eq_plot_rect() else { return };
+        let fx = ((f32::from(pos.x) - f32::from(b.origin.x)) / f32::from(b.size.width)).clamp(0.0, 1.0);
+        let fy = ((f32::from(pos.y) - f32::from(b.origin.y)) / f32::from(b.size.height)).clamp(0.0, 1.0);
+        let (freq, gain) = eqgraph::freq_gain_at(fx, fy, self.eq_plot_scale);
+        {
+            let mut s = self.settings.lock();
+            let Some(f) = s.eq_filters.get_mut(i) else { return };
+            f.freq = freq;
+            if f.kind.has_gain() {
+                f.gain_db = gain;
+            }
+            *f = f.clamped();
+        }
+        self.eq_apply(false, cx);
+        self.eq_sync_rows(cx);
+    }
+
+    /// The wheel over the plot changes the Q of the selected filter.
+    fn eq_plot_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) -> bool {
+        let Some(b) = self.eq_plot_rect() else { return false };
+        if !b.contains(&ev.position) {
+            return false;
+        }
+        let Some(i) = self.eq_selected else { return false };
+        let dy = f32::from(ev.delta.pixel_delta(gpui::px(20.)).y);
+        if dy == 0.0 {
+            return true;
+        }
+        {
+            let mut s = self.settings.lock();
+            let Some(f) = s.eq_filters.get_mut(i) else { return false };
+            f.q = ((f.q * (dy / 240.0).exp() * 100.0).round() / 100.0).clamp(eqgraph::Q_RANGE.0, eqgraph::Q_RANGE.1);
+            *f = f.clamped();
+        }
+        self.eq_apply(true, cx);
+        self.eq_sync_rows(cx);
+        cx.notify();
+        true
     }
 
     // ------------------------------------------------------------- page
@@ -582,8 +835,15 @@ impl AppView {
         let cfg = s.eq_config();
         let rate = f64::from(if self.snap.output_rate > 0 { self.snap.output_rate } else { DEFAULT_RATE });
         let freqs = eqgraph::freqs();
-        let left = cfg.response_curve(0, rate, &freqs);
-        let right = cfg.response_curve(1, rate, &freqs);
+        // The shape of the filters (and the channel gains), without the pre-amp: that is a
+        // flat offset, and with the automatic one it would pull every boost down to 0 dB and
+        // leave the nodes floating above the curve. The meters show the real level.
+        let without_preamp = |mut curve: Vec<f32>| {
+            curve.iter_mut().for_each(|v| *v -= cfg.preamp_db);
+            curve
+        };
+        let left = without_preamp(cfg.response_curve(0, rate, &freqs));
+        let right = without_preamp(cfg.response_curve(1, rate, &freqs));
         // Two curves only when the channels differ.
         let differ = left.iter().zip(&right).any(|(a, b)| (a - b).abs() > 0.05);
         let scale = self.eq_scale.unwrap_or_else(|| eqgraph::scale_for(&[&left, &right]));
@@ -596,10 +856,39 @@ impl AppView {
         let label = || div().text_size(sc(10.)).text_color(theme::text_dim());
         // The curves and the grid are painted only inside the plot area; the labels have
         // margins of their own, so nothing sits on a border or a corner.
+        self.eq_plot_scale = scale;
+        let parametric = s.eq_mode == EqMode::Parametric;
+        // The filters' nodes, on top of the curves (parametric mode only).
+        let nodes: Vec<eqgraph::Node> = if parametric {
+            s.eq_filters
+                .iter()
+                .enumerate()
+                .map(|(i, f)| eqgraph::Node {
+                    pos: eqgraph::node_pos(f.freq, f.gain_db, f.kind.has_gain(), scale),
+                    selected: self.eq_selected == Some(i),
+                    enabled: f.enabled,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let node_color = gpui::Hsla::from(theme::accent());
+        let entity = cx.entity();
         let plot = div().absolute().left(sc(GUTTER_L)).right(sc(GUTTER_R)).top(sc(GUTTER_T)).bottom(sc(GUTTER_B)).child(
-            canvas(|bounds, _, _| bounds, move |bounds, _, window, _| eqgraph::paint(bounds, &curves, scale, grid, zero, window))
-                .absolute()
-                .size_full(),
+            canvas(
+                move |bounds, _, cx| {
+                    entity.update(cx, |v, _| {
+                        v.eq_bounds.insert(KEY_PLOT, bounds);
+                    });
+                    bounds
+                },
+                move |bounds, _, window, _| {
+                    eqgraph::paint(bounds, &curves, scale, grid, zero, window);
+                    eqgraph::paint_nodes(bounds, &nodes, node_color, window);
+                },
+            )
+            .absolute()
+            .size_full(),
         );
         // Levels down the left margin, level with their grid lines.
         let mut db_labels = div().absolute().left(sc(0.)).w(sc(GUTTER_L)).top(sc(GUTTER_T)).bottom(sc(GUTTER_B));
@@ -643,6 +932,22 @@ impl AppView {
             .child(plot)
             .child(db_labels)
             .child(freq_labels);
+        if parametric {
+            graph = graph
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, ev: &MouseDownEvent, window, cx| this.eq_plot_down(ev.position, true, window, cx)),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, ev: &MouseDownEvent, window, cx| this.eq_plot_down(ev.position, false, window, cx)),
+                )
+                .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| {
+                    if this.eq_plot_wheel(ev, cx) {
+                        cx.stop_propagation();
+                    }
+                }));
+        }
         if differ {
             graph = graph.child(
                 div()
@@ -722,8 +1027,8 @@ impl AppView {
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                     if ev.click_count >= 2 {
-                        // A double click puts the channel back to 0 dB.
-                        this.eq_set_trim(key - KEY_TRIM, 0.0, true, cx);
+                        // A double click puts the fader back to 0 dB.
+                        this.eq_vreset(key, cx);
                         return;
                     }
                     this.drag = Some(Drag::EqV(key));
@@ -807,6 +1112,86 @@ impl AppView {
         panel.into_any_element()
     }
 
+    /// The graphic equaliser: a fader per bar, and the fields of the selected bar.
+    fn eq_bars(&mut self, bands: &[Band], cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let small = || div().text_size(sc(10.)).text_color(theme::text_dim());
+        let count = bands.len();
+        let preset = |id: &'static str, n: usize, on: bool, cx: &mut Context<Self>| {
+            let label = match n {
+                5 => "5",
+                10 => "10",
+                15 => "15",
+                _ => "31",
+            };
+            small_button(id, label, on).on_click(cx.listener(move |this, _, _, cx| this.eq_band_preset(n, cx)))
+        };
+        let controls = div()
+            .px(sc(super::widgets::PANEL_PAD - 4.))
+            .py(sc(8.))
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(sc(8.))
+            .child(preset("eq-bars-5", 5, count == 5, cx))
+            .child(preset("eq-bars-10", 10, count == 10, cx))
+            .child(preset("eq-bars-15", 15, count == 15, cx))
+            .child(preset("eq-bars-31", 31, count == 31, cx))
+            .child(div().flex_1())
+            .child(
+                small_button("eq-bar-add", crate::i18n::t("eq.bar_add"), true)
+                    .child(Icon::Plus.el(12., theme::button_text()))
+                    .on_click(cx.listener(|v, _, _, cx| v.eq_band_add(cx))),
+            )
+            .child(
+                small_button("eq-bar-remove", crate::i18n::t("eq.bar_remove"), false)
+                    .on_click(cx.listener(|v, _, _, cx| v.eq_band_remove(cx))),
+            )
+            .child(
+                small_button("eq-bars-flat", crate::i18n::t("eq.bars_reset"), false)
+                    .on_click(cx.listener(|v, _, _, cx| v.eq_bands_flat(cx))),
+            )
+            .into_any_element();
+        let mut strip = div().id("eq-bars-scroll").px(sc(super::widgets::PANEL_PAD - 4.)).flex().gap(sc(2.)).overflow_x_scroll();
+        for (i, b) in bands.iter().enumerate() {
+            let selected = self.eq_band_selected == Some(i);
+            let slider = self.eq_vslider(KEY_BAND + i, (b.gain_db / BAR_RANGE_DB + 1.0) / 2.0, cx);
+            strip = strip.child(
+                div()
+                    .id(("eq-bar", i))
+                    .flex_none()
+                    .w(sc(44.))
+                    .py(sc(6.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(sc(4.))
+                    .rounded(sc(8.))
+                    .cursor_pointer()
+                    .bg(theme::ink(if selected { 0.09 } else { 0.0 }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.eq_band_select(i, cx)))
+                    .child(small().child(format!("{:+.1}", b.gain_db)))
+                    .child(div().flex_none().w(sc(22.)).h(sc(BAR_HEIGHT)).child(slider))
+                    .child(small().child(eqgraph::freq_label(f64::from(b.freq)))),
+            );
+        }
+        let fields: AnyElement = match (self.eq_band_selected.filter(|i| *i < count), self.eq_band_freq.clone(), self.eq_band_gain.clone())
+        {
+            (Some(_), Some(f), Some(g)) => div()
+                .px(sc(super::widgets::PANEL_PAD - 4.))
+                .py(sc(10.))
+                .flex()
+                .flex_wrap()
+                .gap(sc(16.))
+                .border_t_1()
+                .border_color(theme::divider())
+                .child(self.eq_field(crate::i18n::t("eq.freq"), &f, 90., true))
+                .child(self.eq_field(crate::i18n::t("eq.gain"), &g, 70., true))
+                .into_any_element(),
+            _ => row("eq-bars-hint", crate::i18n::t("eq.bars_hint"), None, None).text_color(theme::text_secondary()).into_any_element(),
+        };
+        vec![controls, strip.into_any_element(), fields]
+    }
+
     fn eq_icon_button(
         &mut self,
         id: (&'static str, usize),
@@ -857,6 +1242,19 @@ impl AppView {
         let preamp_slider = self.eq_slider(0, preamp_frac, cx);
         let preamp_input = self.eq_preamp_input.clone();
         let manual = !s.eq_auto_preamp;
+        let graphic = s.eq_mode == EqMode::Graphic;
+        let mode_pills = div()
+            .flex()
+            .gap(sc(8.))
+            .child(
+                small_button("eq-mode-parametric", crate::i18n::t("eq.mode_parametric"), !graphic)
+                    .on_click(cx.listener(|this, _, _, cx| this.eq_set_mode(EqMode::Parametric, cx))),
+            )
+            .child(
+                small_button("eq-mode-graphic", crate::i18n::t("eq.mode_graphic"), graphic)
+                    .on_click(cx.listener(|this, _, _, cx| this.eq_set_mode(EqMode::Graphic, cx))),
+            )
+            .into_any_element();
         let preamp_right = div()
             .flex()
             .items_center()
@@ -877,6 +1275,7 @@ impl AppView {
                 },
                 cx,
             ),
+            row("eq-mode", crate::i18n::t("eq.mode"), None, Some(mode_pills)).into_any_element(),
             row("eq-status", status, None, None)
                 .text_color(if active { theme::accent() } else { theme::text_secondary() })
                 .into_any_element(),
@@ -897,6 +1296,18 @@ impl AppView {
 
         // ------------------------------------------------ the chain
         let mut chain: Vec<AnyElement> = Vec::new();
+        if graphic {
+            let bands = s.eq_bands.clone();
+            let bars = self.eq_bars(&bands, cx);
+            return div()
+                .flex()
+                .flex_col()
+                .gap(sc(super::widgets::PANEL_GAP))
+                .child(group(Icon::VolumeUp, crate::i18n::t("eq.title"), crate::i18n::t("eq.description"), main))
+                .child(group(Icon::Stats, crate::i18n::t("eq.graph"), crate::i18n::t("eq.graph_help"), vec![scale_row, graph]))
+                .child(group(Icon::Library, crate::i18n::t("eq.bars"), crate::i18n::t("eq.bars_description"), bars))
+                .into_any_element();
+        }
         if count == 0 {
             chain.push(row("eq-empty", crate::i18n::t("eq.empty"), None, None).text_color(theme::text_secondary()).into_any_element());
         } else {

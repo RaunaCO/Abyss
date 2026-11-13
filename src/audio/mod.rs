@@ -7,6 +7,7 @@
 
 pub mod decode;
 pub mod dsp;
+pub mod graphic;
 pub mod output;
 pub mod stream;
 

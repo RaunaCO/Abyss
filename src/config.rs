@@ -138,6 +138,15 @@ pub struct Settings {
     pub eq_auto_preamp: bool,
     /// Extra gain of the left and right channel (dB), on top of the pre-amp.
     pub eq_trim: [f32; 2],
+    /// Which one feeds the audio: the parametric chain or the graphic bars.
+    pub eq_mode: crate::audio::graphic::EqMode,
+    /// The bars of the graphic mode (any number, at any frequency).
+    #[serde(deserialize_with = "lenient_bands")]
+    pub eq_bands: Vec<crate::audio::graphic::Band>,
+    /// The filters the bars compile to. Derived, not saved: call `recompile_bands`
+    /// after changing the bars.
+    #[serde(skip)]
+    pub eq_band_filters: Vec<crate::audio::dsp::FilterSpec>,
     /// The chain, in order. A filter this version does not know is dropped
     /// when loading instead of discarding the whole file.
     #[serde(deserialize_with = "lenient_filters")]
@@ -206,6 +215,12 @@ impl Default for Settings {
             eq_preamp: 0.0,
             eq_auto_preamp: true,
             eq_trim: [0.0; 2],
+            eq_mode: Default::default(),
+            eq_bands: crate::audio::graphic::iso_bands(10),
+            eq_band_filters: crate::audio::graphic::bands_to_filters(
+                &crate::audio::graphic::iso_bands(10),
+                crate::audio::graphic::REFERENCE_RATE,
+            ),
             eq_filters: Vec::new(),
             // Replaced by whichever client the user signed in with.
             client_id: DEVICE_CLIENT_ID.into(),
@@ -303,6 +318,15 @@ fn lenient_filters<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
     })
 }
 
+/// Same for the bars of the graphic equaliser; with none saved, the default ten.
+fn lenient_bands<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<crate::audio::graphic::Band>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::Array(items) => items.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect(),
+        _ => crate::audio::graphic::iso_bands(10),
+    })
+}
+
 /// DPAPI-encrypt a short secret as base64 (None when protection is unavailable).
 fn protect_text(plain: &str) -> Option<String> {
     crate::secure::protect(plain.as_bytes()).map(|blob| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, blob))
@@ -350,7 +374,13 @@ impl Settings {
             s.save();
         }
         crate::i18n::set_language(s.language.as_deref());
+        s.recompile_bands();
         s
+    }
+
+    /// Rebuild the filters of the graphic bars (call after any change to them).
+    pub fn recompile_bands(&mut self) {
+        self.eq_band_filters = crate::audio::graphic::bands_to_filters(&self.eq_bands, crate::audio::graphic::REFERENCE_RATE);
     }
 
     /// The JSON written to disk: tokens protected when possible.
@@ -382,7 +412,10 @@ impl Settings {
             enabled: self.eq_enabled,
             preamp_db: self.eq_preamp,
             trim_db: self.eq_trim,
-            filters: self.eq_filters.clone(),
+            filters: match self.eq_mode {
+                crate::audio::graphic::EqMode::Parametric => self.eq_filters.clone(),
+                crate::audio::graphic::EqMode::Graphic => self.eq_band_filters.clone(),
+            },
         }
         .clamped()
     }
@@ -509,6 +542,41 @@ mod settings_tests {
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.eq_filters, s.eq_filters);
         assert_eq!((back.eq_enabled, back.eq_preamp), (true, -3.5));
+    }
+
+    #[test]
+    fn the_graphic_mode_has_ten_bars_by_default_feeds_the_audio_only_when_chosen_and_loads_leniently() {
+        use crate::audio::graphic::{Band, EqMode};
+        let d = Settings::default();
+        assert_eq!((d.eq_mode, d.eq_bands.len()), (EqMode::Parametric, 10));
+        // Parametric mode: the saved filters; graphic mode: the bars, compiled.
+        let mut s = Settings::default();
+        s.eq_filters.push(crate::audio::dsp::FilterSpec {
+            gain_db: 5.0,
+            ..crate::audio::dsp::FilterSpec::new(crate::audio::dsp::FilterKind::Peaking)
+        });
+        assert_eq!(s.eq_config().filters.len(), 1);
+        s.eq_mode = EqMode::Graphic;
+        s.eq_bands = vec![Band { freq: 500.0, gain_db: 4.0 }, Band { freq: 2000.0, gain_db: -3.0 }];
+        s.recompile_bands();
+        let cfg = s.eq_config();
+        assert_eq!(cfg.filters.len(), 2);
+        assert_eq!(cfg.filters[0].freq, 500.0);
+        // The bars and the mode are saved; the compiled filters are not.
+        let json = String::from_utf8(s.to_disk_json().unwrap()).unwrap();
+        assert!(json.contains("\"eq_mode\": \"graphic\"") && !json.contains("eq_band_filters"));
+        let mut back: Settings = serde_json::from_str(&json).unwrap();
+        back.recompile_bands();
+        assert_eq!(back.eq_bands, s.eq_bands);
+        assert_eq!(back.eq_config().filters.len(), 2);
+        // Bad entries are dropped; something that is not a list means the default bars.
+        let odd: Settings = serde_json::from_str(r#"{"volume":0.4,"eq_bands":[{"freq":100.0,"gain_db":1.0},{"nonsense":true}]}"#).unwrap();
+        assert_eq!((odd.volume, odd.eq_bands.len()), (0.4, 1));
+        let not_a_list: Settings = serde_json::from_str(r#"{"eq_bands":"oops"}"#).unwrap();
+        assert_eq!(not_a_list.eq_bands.len(), 10);
+        // Files from before the graphic mode load as parametric with the default bars.
+        let old: Settings = serde_json::from_str(r#"{"eq_enabled":true}"#).unwrap();
+        assert_eq!((old.eq_mode, old.eq_bands.len()), (EqMode::Parametric, 10));
     }
 
     #[test]

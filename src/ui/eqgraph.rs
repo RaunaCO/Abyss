@@ -88,6 +88,37 @@ pub fn db_ticks(scale: f32) -> Vec<f32> {
     (-n..=n).map(|i| i as f32 * step).collect()
 }
 
+/// Where a filter's node sits on the plot, as fractions of its width and height.
+/// Filters with no gain (High and Low Pass) sit on the 0 dB line.
+pub fn node_pos(freq: f32, gain_db: f32, has_gain: bool, scale: f32) -> (f32, f32) {
+    (frac_of_freq(f64::from(freq)), frac_of_db(if has_gain { gain_db } else { 0.0 }, scale))
+}
+
+/// The frequency (Hz) and level (dB, to a tenth) at a point of the plot given as fractions.
+pub fn freq_gain_at(fx: f32, fy: f32, scale: f32) -> (f32, f32) {
+    let freq = freq_of_frac(f64::from(fx)).round() as f32;
+    let gain = (((0.5 - fy.clamp(0.0, 1.0)) * 2.0 * scale) * 10.0).round() / 10.0;
+    (freq, gain)
+}
+
+/// The node closest to `at` (fractions) if it is within `radius` pixels on a plot of `size` pixels.
+pub fn nearest_node(points: &[(f32, f32)], at: (f32, f32), size: (f32, f32), radius: f32) -> Option<usize> {
+    points
+        .iter()
+        .enumerate()
+        .map(|(i, (x, y))| (i, ((x - at.0) * size.0).hypot((y - at.1) * size.1)))
+        .filter(|(_, d)| *d <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// A filter's node on the plot.
+pub struct Node {
+    pub pos: (f32, f32),
+    pub selected: bool,
+    pub enabled: bool,
+}
+
 /// A curve to draw.
 pub struct Curve {
     /// Level in dB at each of [`freqs`].
@@ -129,6 +160,21 @@ pub fn paint(bounds: Bounds<Pixels>, curves: &[Curve], scale: f32, grid: Hsla, z
     }
 }
 
+/// Draw the filters' nodes on top of the curves: a ring for each, bigger and filled for the selected one.
+pub fn paint_nodes(bounds: Bounds<Pixels>, nodes: &[Node], color: Hsla, window: &mut Window) {
+    let (w, h) = (bounds.size.width, bounds.size.height);
+    for node in nodes {
+        let radius = if node.selected { 7.0 } else { 5.0 };
+        let centre = point(bounds.origin.x + w * node.pos.0, bounds.origin.y + h * node.pos.1);
+        let mut ring = color;
+        ring.a = if node.enabled { 1.0 } else { 0.4 };
+        let mut fill = color;
+        fill.a = if node.selected { 0.9 } else { 0.18 };
+        let square = Bounds::new(point(centre.x - px(radius), centre.y - px(radius)), size(px(radius * 2.0), px(radius * 2.0)));
+        window.paint_quad(gpui::quad(square, px(radius), fill, px(2.), ring, gpui::BorderStyle::default()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +210,38 @@ mod tests {
         let labels: Vec<String> = majors.iter().map(|f| freq_label(*f)).collect();
         assert_eq!(labels, ["20", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k"]);
         assert_eq!((db_label(0.0), db_label(6.0), db_label(-12.0)), ("0".to_string(), "+6".to_string(), "-12".to_string()));
+    }
+
+    #[test]
+    fn nodes_sit_where_their_frequency_and_gain_say_and_map_back() {
+        // 1 kHz is a little past the middle, +6 of a 12 dB scale is a quarter from the top.
+        let (x, y) = node_pos(1000.0, 6.0, true, 12.0);
+        assert!((x - 0.5663).abs() < 1e-3 && (y - 0.25).abs() < 1e-6);
+        // A pass filter has no gain: it sits on the 0 dB line whatever the stored value.
+        assert_eq!(node_pos(1000.0, 9.0, false, 12.0).1, 0.5);
+        for (f, g) in [(55.0, -7.5), (1000.0, 0.0), (4200.0, 10.2)] {
+            let (x, y) = node_pos(f, g, true, 12.0);
+            let (f2, g2) = freq_gain_at(x, y, 12.0);
+            assert!((f2 - f).abs() / f < 0.01, "{f} Hz back as {f2}");
+            assert!((g2 - g).abs() <= 0.1, "{g} dB back as {g2}");
+        }
+        // Outside the plot it is held at the edges.
+        let (f, g) = freq_gain_at(-1.0, 3.0, 12.0);
+        assert_eq!((f, g), (20.0, -12.0));
+    }
+
+    #[test]
+    fn the_nearest_node_within_reach_is_picked() {
+        let points = [(0.2, 0.5), (0.21, 0.5), (0.8, 0.2)];
+        let size = (600.0, 200.0);
+        // 3 px right of the first node: it wins over the second 3 px further.
+        assert_eq!(nearest_node(&points, (0.205, 0.5), size, 14.0), Some(0));
+        assert_eq!(nearest_node(&points, (0.2075, 0.5), size, 14.0), Some(1));
+        // Far from every node there is none; just inside the reach there is.
+        assert_eq!(nearest_node(&points, (0.5, 0.5), size, 14.0), None);
+        assert_eq!(nearest_node(&points, (0.8, 0.2 + 13.0 / 200.0), size, 14.0), Some(2));
+        assert_eq!(nearest_node(&points, (0.8, 0.2 + 15.0 / 200.0), size, 14.0), None);
+        assert_eq!(nearest_node(&[], (0.5, 0.5), size, 14.0), None);
     }
 
     #[test]

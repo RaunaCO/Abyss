@@ -18,6 +18,16 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 - Equaliser: the response graph has margins for its labels (levels `+12`, `0`, `-12`
   on the left, frequencies 20 Hz to 20 kHz below), a finer grid, curves in the accent
   colour and a scale selector (Auto, 6, 12 or 24 dB each way).
+- Equaliser: **nodes on the graph** (parametric mode). Drag a filter's point to change
+  its frequency and gain, click an empty spot to add a Peaking filter there, right click
+  a node to remove it, and use the wheel over the graph to change the Q of the selected
+  filter. The curve now shows the filters without the pre-amp, so a node sits on it.
+- Equaliser: **graphic bars mode**. Choose Parametric or Graphic bars; in graphic mode
+  each bar is the level you want at its frequency (a fader per bar, -12 to +12 dB). Add
+  or remove bars, set each frequency, flatten them, or start from the usual 5, 10, 15
+  or 31 bars. Internally each bar is a Peaking filter whose width follows the space to
+  its neighbours, solved so the curve passes through each fader's value. Each mode keeps
+  its own settings.
 - The channel gains are part of the audio path: with no filters, no pre-amp and 0 dB
   gains the audio is still not processed; a channel with no gain and no filters stays
   bit-exact while the other is changed.

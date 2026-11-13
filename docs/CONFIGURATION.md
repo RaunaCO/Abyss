@@ -58,6 +58,7 @@ before the import.
 | `discord_client_id` | `""` | Application ID supplied by the owner, empty means no activity is published |
 | `eq_enabled`, `eq_preamp` | `false`, `0.0` | Parametric equaliser on / off and pre-amp (dB). Off or flat means the audio is not processed. |
 | `eq_trim` | `[0.0, 0.0]` | Extra gain (dB, -12 to +12) of the left and right channel, added to the pre-amp. |
+| `eq_mode`, `eq_bands` | `"parametric"`, 10 bars | `"parametric"` (the filter chain) or `"graphic"` (the bars). Each bar is `{ "freq": Hz, "gain_db": dB }`; the bars are sorted by frequency, at most 32. The filters that implement them are derived at start-up and not saved. |
 | `eq_auto_preamp` | `true` | Set `eq_preamp` from the chain's loudest point whenever the chain changes (the number is then written by the app). |
 | `eq_filters` | `[]` | The filter chain in order: `{enabled, kind, channels, freq, gain_db, q}`, with `kind` one of `peaking`, `low_shelf`, `high_shelf`, `high_pass`, `low_pass` and `channels` one of `both` (default when missing), `left`, `right`. Values are clamped on load; an unknown entry is dropped without touching the rest of the file. |
 | `lastfm_enabled` | `false` | Send listens to Last.fm (turns on when you connect; Settings → Integrations) |

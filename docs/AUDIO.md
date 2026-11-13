@@ -57,6 +57,12 @@ switched off one by one and edited by number or (gain) with a slider.
   `Channel: L R` in Equalizer APO). There is one chain per channel; a channel
   with no filters and no pre-amp is not touched even while the other is being
   filtered (bit for bit). The pre-amp applies to both.
+- **Graphic bars.** In graphic mode the bars become ordinary Peaking filters before
+  they reach the audio thread (`src/audio/graphic.rs`), so the output callback is the
+  same in both modes. The Q of each bar comes from the distance to its nearest
+  neighbours in octaves; because neighbouring filters add up, the gains are solved on
+  the interface thread (a small dense system with a few Newton corrections, reference
+  rate 48 kHz) so that the level at each bar's frequency equals its fader.
 - **Channel gains and meters.** Each channel has its own gain (-12 to +12 dB) on
   top of the pre-amp (`pre x gain` per channel, same 10 ms slide). The audio is
   only left alone when no filter does anything and the pre-amp and both gains are 0 dB.
