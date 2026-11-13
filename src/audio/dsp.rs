@@ -272,7 +272,7 @@ fn peak_db(coefs: &[Coef], rate: f64) -> f64 {
 
 /// Normalised biquad: `y = b0 x + z1`, `z1' = b1 x - a1 y + z2`, `z2' = b2 x - a2 y`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Coef {
+pub(super) struct Coef {
     b0: f64,
     b1: f64,
     b2: f64,
@@ -301,7 +301,7 @@ impl Coef {
         self.a2 += d.a2;
     }
 
-    fn magnitude_db(&self, freq: f64, rate: f64) -> f64 {
+    pub(super) fn magnitude_db(&self, freq: f64, rate: f64) -> f64 {
         let w = 2.0 * std::f64::consts::PI * freq / rate;
         let (c1, s1, c2, s2) = (w.cos(), w.sin(), (2.0 * w).cos(), (2.0 * w).sin());
         let nr = self.b0 + self.b1 * c1 + self.b2 * c2;
@@ -313,7 +313,7 @@ impl Coef {
 }
 
 /// RBJ Audio EQ Cookbook coefficients for `spec` at sample rate `rate`.
-fn design(spec: &FilterSpec, rate: f64) -> Coef {
+pub(super) fn design(spec: &FilterSpec, rate: f64) -> Coef {
     let spec = spec.clamped();
     // Keep the centre below Nyquist whatever the output rate is.
     let freq = f64::from(spec.freq).min(rate * 0.45);

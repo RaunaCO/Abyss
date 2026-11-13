@@ -213,8 +213,10 @@ pub enum Drag {
     Volume,
     /// A horizontal equaliser slider (see `equalizer.rs` for the keys).
     Eq(usize),
-    /// A vertical equaliser slider (the channel gain faders): top is 1.0.
+    /// A vertical equaliser slider (channel gain and graphic bar faders): top is 1.0.
     EqV(usize),
+    /// A filter's node on the response graph: moves in both directions.
+    EqNode(usize),
 }
 
 /// What a right-click menu acts on.
@@ -422,6 +424,12 @@ pub struct AppView {
     pub eq_meter_running: bool,
     /// Vertical half-range of the response graph in dB; `None` picks it from the curves.
     pub eq_scale: Option<f32>,
+    /// The half-range actually drawn last time (nodes are placed and dragged with it).
+    pub eq_plot_scale: f32,
+    /// Graphic mode: the selected bar and its frequency and level fields.
+    pub eq_band_selected: Option<usize>,
+    pub eq_band_freq: Option<Entity<TextInput>>,
+    pub eq_band_gain: Option<Entity<TextInput>>,
     /// Replay: chosen period and the statistics computed for it.
     pub replay_period: replay::Period,
     pub replay_all_tracks: bool,
@@ -741,6 +749,10 @@ impl AppView {
             eq_meter: Default::default(),
             eq_meter_running: false,
             eq_scale: None,
+            eq_plot_scale: 6.0,
+            eq_band_selected: None,
+            eq_band_freq: None,
+            eq_band_gain: None,
             replay_period: Default::default(),
             replay_all_tracks: false,
             replay_cache: None,
@@ -2250,10 +2262,16 @@ impl AppView {
 
     pub fn drag_to(&mut self, pos: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(drag) = self.drag else { return };
+        if let Drag::EqNode(i) = drag {
+            self.eq_node_drag(i, pos, cx);
+            cx.notify();
+            return;
+        }
         let b = match drag {
             Drag::Progress => self.progress_bounds,
             Drag::Volume => self.volume_bounds,
             Drag::Eq(key) | Drag::EqV(key) => self.eq_bounds.get(&key).copied().unwrap_or_default(),
+            Drag::EqNode(_) => Default::default(),
         };
         let w = f32::from(b.size.width).max(1.0);
         let h = f32::from(b.size.height).max(1.0);
@@ -2269,6 +2287,7 @@ impl AppView {
             }
             Drag::Volume => self.set_volume(frac, cx),
             Drag::Eq(key) | Drag::EqV(key) => self.eq_drag(key, frac, cx),
+            Drag::EqNode(_) => {}
         }
         cx.notify();
     }
@@ -2280,7 +2299,7 @@ impl AppView {
                 self.seek(secs, cx);
             }
             Some(Drag::Volume) => self.save_settings(),
-            Some(Drag::Eq(_) | Drag::EqV(_)) => self.eq_commit(cx),
+            Some(Drag::Eq(_) | Drag::EqV(_) | Drag::EqNode(_)) => self.eq_commit(cx),
             None => {}
         }
     }
