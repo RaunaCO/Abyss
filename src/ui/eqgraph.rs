@@ -12,19 +12,38 @@ pub const F_MAX: f64 = 20_000.0;
 pub const POINTS: usize = 256;
 /// Vertical half-ranges to choose from, in dB.
 const SCALES: [f32; 5] = [6.0, 12.0, 18.0, 24.0, 36.0];
-/// Vertical grid lines: frequency and whether it is labelled.
-pub const FREQ_TICKS: [(f64, bool); 10] = [
-    (30.0, false),
-    (50.0, false),
-    (100.0, true),
-    (200.0, false),
-    (500.0, false),
-    (1000.0, true),
-    (2000.0, false),
-    (5000.0, false),
-    (10_000.0, true),
-    (20_000.0, false),
-];
+/// Vertical grid lines: every 1 to 9 times a power of ten inside the range. The
+/// labelled ones (20, 50, 100, 200, 500, 1k, 2k, 5k, 10k and 20k) are the major lines.
+pub fn grid_freqs() -> Vec<(f64, bool)> {
+    let mut lines = Vec::new();
+    for decade in [10.0, 100.0, 1000.0, 10_000.0] {
+        for k in 1..=9 {
+            let f = decade * f64::from(k);
+            if (F_MIN..=F_MAX).contains(&f) {
+                lines.push((f, matches!(k, 1 | 2 | 5)));
+            }
+        }
+    }
+    lines
+}
+
+/// The text of a frequency label: `100`, `1k`, `20k`.
+pub fn freq_label(freq: f64) -> String {
+    if freq >= 1000.0 {
+        format!("{}k", freq / 1000.0)
+    } else {
+        format!("{freq}")
+    }
+}
+
+/// The text of a level label: `0`, `+6`, `-12`.
+pub fn db_label(db: f32) -> String {
+    if db == 0.0 {
+        "0".to_string()
+    } else {
+        format!("{db:+.0}")
+    }
+}
 /// Q range of the slider (logarithmic).
 pub const Q_RANGE: (f32, f32) = (0.1, 10.0);
 
@@ -80,10 +99,14 @@ pub struct Curve {
 pub fn paint(bounds: Bounds<Pixels>, curves: &[Curve], scale: f32, grid: Hsla, zero: Hsla, window: &mut Window) {
     let (w, h) = (bounds.size.width, bounds.size.height);
     let at = |fx: f32, fy: f32| point(bounds.origin.x + w * fx, bounds.origin.y + h * fy);
-    // Grid: vertical lines at the frequency ticks, horizontal at the dB ticks (0 dB brighter).
-    for (freq, _) in FREQ_TICKS {
+    // Grid: vertical lines at the frequency ticks (the labelled ones twice as bright),
+    // horizontal at the dB ticks (0 dB brightest).
+    let faint = Hsla { a: grid.a * 0.5, ..grid };
+    for (freq, major) in grid_freqs() {
         let x = frac_of_freq(freq);
-        window.paint_quad(gpui::fill(Bounds::new(at(x, 0.0), size(px(1.), h)), grid));
+        // A line exactly on the right edge would be cut off.
+        let x = if x >= 1.0 { 1.0 - 1.0 / f32::from(w).max(1.0) } else { x };
+        window.paint_quad(gpui::fill(Bounds::new(at(x, 0.0), size(px(1.), h)), if major { grid } else { faint }));
     }
     for db in db_ticks(scale) {
         let y = frac_of_db(db, scale);
@@ -131,6 +154,19 @@ mod tests {
     }
 
     #[test]
+    fn the_grid_has_a_line_per_1_to_9_times_a_power_of_ten_and_labels_the_usual_ones() {
+        let grid = grid_freqs();
+        let majors: Vec<f64> = grid.iter().filter(|(_, m)| *m).map(|(f, _)| *f).collect();
+        assert_eq!(majors, [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0, 20_000.0]);
+        assert!(grid.iter().any(|(f, m)| *f == 30.0 && !m) && grid.iter().any(|(f, m)| *f == 700.0 && !m));
+        assert!(grid.iter().all(|(f, _)| (F_MIN..=F_MAX).contains(f)));
+        assert!(grid.windows(2).all(|w| w[1].0 >= w[0].0), "in order");
+        let labels: Vec<String> = majors.iter().map(|f| freq_label(*f)).collect();
+        assert_eq!(labels, ["20", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k"]);
+        assert_eq!((db_label(0.0), db_label(6.0), db_label(-12.0)), ("0".to_string(), "+6".to_string(), "-12".to_string()));
+    }
+
+    #[test]
     fn the_scale_is_the_smallest_that_holds_the_curves() {
         assert_eq!(scale_for(&[&[0.0, 0.0]]), 6.0);
         assert_eq!(scale_for(&[&[1.0, -5.9]]), 6.0);
@@ -163,7 +199,7 @@ mod tests {
     }
 
     fn config(filters: Vec<FilterSpec>) -> EqConfig {
-        EqConfig { enabled: true, preamp_db: 0.0, filters }
+        EqConfig { enabled: true, preamp_db: 0.0, trim_db: [0.0; 2], filters }
     }
 
     #[test]

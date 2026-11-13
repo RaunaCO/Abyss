@@ -42,6 +42,7 @@ mod cover_view;
 mod ctxmenu;
 mod debug;
 mod eqgraph;
+mod eqmeter;
 mod equalizer;
 pub mod fx;
 mod glass;
@@ -210,8 +211,10 @@ pub struct NowPlaying {
 pub enum Drag {
     Progress,
     Volume,
-    /// An equaliser slider: 0 is the pre-amp, `i + 1` the gain of filter `i`.
+    /// A horizontal equaliser slider (see `equalizer.rs` for the keys).
     Eq(usize),
+    /// A vertical equaliser slider (the channel gain faders): top is 1.0.
+    EqV(usize),
 }
 
 /// What a right-click menu acts on.
@@ -414,8 +417,11 @@ pub struct AppView {
     pub eq_type_open: Option<usize>,
     /// The filter whose sliders are shown under the list.
     pub eq_selected: Option<usize>,
-    /// Loudest output sample lately (linear, decays), for the equaliser page.
-    pub eq_peak: f32,
+    /// Level meters of the equaliser page, refreshed ~30 times a second while it is open.
+    pub eq_meter: eqmeter::Meter,
+    pub eq_meter_running: bool,
+    /// Vertical half-range of the response graph in dB; `None` picks it from the curves.
+    pub eq_scale: Option<f32>,
     /// Replay: chosen period and the statistics computed for it.
     pub replay_period: replay::Period,
     pub replay_all_tracks: bool,
@@ -732,7 +738,9 @@ impl AppView {
             eq_bounds: Default::default(),
             eq_type_open: None,
             eq_selected: None,
-            eq_peak: 0.0,
+            eq_meter: Default::default(),
+            eq_meter_running: false,
+            eq_scale: None,
             replay_period: Default::default(),
             replay_all_tracks: false,
             replay_cache: None,
@@ -2213,7 +2221,6 @@ impl AppView {
             }
         }
         changed |= self.lastfm_tick(cx);
-        changed |= self.eq_poll_peak();
         if self.volume_hint_until.is_some_and(|t| std::time::Instant::now() >= t) {
             self.volume_hint_until = None;
             changed = true;
@@ -2246,17 +2253,22 @@ impl AppView {
         let b = match drag {
             Drag::Progress => self.progress_bounds,
             Drag::Volume => self.volume_bounds,
-            Drag::Eq(key) => self.eq_bounds.get(&key).copied().unwrap_or_default(),
+            Drag::Eq(key) | Drag::EqV(key) => self.eq_bounds.get(&key).copied().unwrap_or_default(),
         };
         let w = f32::from(b.size.width).max(1.0);
-        let frac = ((f32::from(pos.x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0);
+        let h = f32::from(b.size.height).max(1.0);
+        let frac = match drag {
+            // A vertical slider: the top is 1.0.
+            Drag::EqV(_) => 1.0 - ((f32::from(pos.y) - f32::from(b.origin.y)) / h).clamp(0.0, 1.0),
+            _ => ((f32::from(pos.x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0),
+        };
         self.drag_value = frac;
         match drag {
             Drag::Progress => {
                 self.snap.position = frac as f64 * self.duration();
             }
             Drag::Volume => self.set_volume(frac, cx),
-            Drag::Eq(key) => self.eq_drag(key, frac, cx),
+            Drag::Eq(key) | Drag::EqV(key) => self.eq_drag(key, frac, cx),
         }
         cx.notify();
     }
@@ -2268,7 +2280,7 @@ impl AppView {
                 self.seek(secs, cx);
             }
             Some(Drag::Volume) => self.save_settings(),
-            Some(Drag::Eq(_)) => self.eq_commit(cx),
+            Some(Drag::Eq(_) | Drag::EqV(_)) => self.eq_commit(cx),
             None => {}
         }
     }

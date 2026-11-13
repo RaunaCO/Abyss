@@ -703,5 +703,9 @@
   "eq.col_freq": "Hz",
   "eq.col_gain": "dB",
   "eq.col_q": "Q",
-  "eq.select_hint": "Selecione um filtro para ajustá-lo com controles deslizantes."
+  "eq.select_hint": "Selecione um filtro para ajustá-lo com controles deslizantes.",
+  "eq.scale_auto": "Auto",
+  "eq.clip_tip": "Acima do máximo. Clique para limpar.",
+  "eq.trim_tip": "Nível deste canal e seu ganho próprio, somado ao pré-amp. Clique duas vezes no fader para 0 dB.",
+  "eq.graph_help": "Medidores de nível (pico real na saída) e um fader de ganho por canal à direita."
 }

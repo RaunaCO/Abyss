@@ -57,6 +57,11 @@ switched off one by one and edited by number or (gain) with a slider.
   `Channel: L R` in Equalizer APO). There is one chain per channel; a channel
   with no filters and no pre-amp is not touched even while the other is being
   filtered (bit for bit). The pre-amp applies to both.
+- **Channel gains and meters.** Each channel has its own gain (-12 to +12 dB) on
+  top of the pre-amp (`pre x gain` per channel, same 10 ms slide). The audio is
+  only left alone when no filter does anything and the pre-amp and both gains are 0 dB.
+  The output callback also keeps the loudest sample of each channel (atomic maxima,
+  read-only) for the level meters of the equaliser page.
 - **Dither.** Only for a 16-bit target (WASAPI exclusive or a 16-bit shared
   device) and only when the signal was changed on the way (equaliser active or
   volume below full): triangular dither of one LSB, so quiet detail is not

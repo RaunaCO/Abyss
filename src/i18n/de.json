@@ -703,5 +703,9 @@
   "eq.col_freq": "Hz",
   "eq.col_gain": "dB",
   "eq.col_q": "Q",
-  "eq.select_hint": "Wähle einen Filter, um ihn mit Reglern einzustellen."
+  "eq.select_hint": "Wähle einen Filter, um ihn mit Reglern einzustellen.",
+  "eq.scale_auto": "Auto",
+  "eq.clip_tip": "Über Vollaussteuerung. Klicken zum Zurücksetzen.",
+  "eq.trim_tip": "Pegel dieses Kanals und seine eigene Verstärkung, zusätzlich zum Pre-Amp. Doppelklick auf den Fader für 0 dB.",
+  "eq.graph_help": "Pegelanzeigen (echte Spitze am Ausgang) und ein Verstärkungsfader pro Kanal rechts."
 }

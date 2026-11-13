@@ -20,8 +20,17 @@ const KEY_PREAMP: usize = 0;
 const KEY_GAIN: usize = 1;
 const KEY_FREQ: usize = 100;
 const KEY_Q: usize = 200;
-/// Height of the response graph.
-const GRAPH_HEIGHT: f32 = 230.0;
+/// The channel gain faders (left, right).
+const KEY_TRIM: usize = 300;
+/// Height of the response graph and of the meters beside it.
+const GRAPH_HEIGHT: f32 = 240.0;
+/// Margins around the plot area: dB labels on the left, frequency labels at the bottom.
+const GUTTER_L: f32 = 40.0;
+const GUTTER_R: f32 = 10.0;
+const GUTTER_T: f32 = 18.0;
+const GUTTER_B: f32 = 22.0;
+/// Width of the meter panel: the scale and one column per channel.
+const METER_PANEL_W: f32 = 26.0 + 2.0 * 54.0 + 8.0;
 /// Widths of the columns of the filter list (the header uses the same).
 const COL_ON: f32 = 42.0;
 const COL_NUM: f32 = 20.0;
@@ -301,23 +310,57 @@ impl AppView {
         cx.notify();
     }
 
-    /// Read the loudest output sample since the last tick, with a slow fall so
-    /// the number is readable. Returns true when the equaliser page shows a
-    /// different value and needs redrawing.
-    pub fn eq_poll_peak(&mut self) -> bool {
-        let new = self.player.take_peak();
-        let before = self.eq_peak;
-        self.eq_peak = if new > self.eq_peak { new } else { self.eq_peak * 0.8 };
-        if self.eq_peak < 1e-4 {
-            self.eq_peak = 0.0;
+    /// Start the meter refresh (about 30 times a second) if it is not running.
+    /// It only runs while the equaliser page is open, so the idle cost of the app
+    /// does not change; it stops itself when the page is left.
+    fn eq_start_meter(&mut self, cx: &mut Context<Self>) {
+        if self.eq_meter_running {
+            return;
         }
-        let db = |v: f32| if v > 0.0 { (20.0 * v.log10() * 10.0).round() / 10.0 } else { f32::NEG_INFINITY };
-        self.settings_tab == super::settings::EQ_TAB && db(before) != db(self.eq_peak)
+        self.eq_meter_running = true;
+        // What piled up while the page was closed is not news.
+        let _ = self.player.take_peaks();
+        self.eq_meter = Default::default();
+        cx.spawn(async move |this, cx| {
+            let step = std::time::Duration::from_millis(33);
+            loop {
+                cx.background_executor().timer(step).await;
+                let keep = this.update(cx, |this, cx| this.eq_meter_tick(step.as_secs_f32(), cx));
+                if !keep.unwrap_or(false) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// One refresh of the meters. Returns false when the page was left.
+    fn eq_meter_tick(&mut self, dt: f32, cx: &mut Context<Self>) -> bool {
+        if self.settings_tab != super::settings::EQ_TAB {
+            self.eq_meter_running = false;
+            return false;
+        }
+        let peaks = self.player.take_peaks();
+        self.eq_meter.update(peaks, dt);
+        cx.notify();
+        true
+    }
+
+    /// Set the extra gain of a channel (0 left, 1 right) and publish it.
+    fn eq_set_trim(&mut self, ch: usize, db: f32, save: bool, cx: &mut Context<Self>) {
+        self.settings.lock().eq_trim[ch] = db.clamp(-super::eqmeter::TRIM_RANGE_DB, super::eqmeter::TRIM_RANGE_DB);
+        self.eq_apply(save, cx);
+        cx.notify();
     }
 
     /// A slider moved. Keys: `KEY_PREAMP`, `KEY_GAIN + i`, `KEY_FREQ + i` and `KEY_Q + i`
     /// for filter `i`.
     pub fn eq_drag(&mut self, key: usize, frac: f32, cx: &mut Context<Self>) {
+        if (KEY_TRIM..KEY_TRIM + 2).contains(&key) {
+            // A channel gain fader: it does not touch the pre-amp or the filters.
+            self.eq_set_trim(key - KEY_TRIM, super::eqmeter::trim_of_frac(frac), false, cx);
+            return;
+        }
         let target = if key == KEY_PREAMP {
             None
         } else if (KEY_GAIN..KEY_GAIN + MAX_FILTERS).contains(&key) {
@@ -534,7 +577,7 @@ impl AppView {
     }
 
     /// The frequency response of the chain (see `eqgraph`).
-    fn eq_graph(&mut self) -> AnyElement {
+    fn eq_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let s = self.settings.lock().clone();
         let cfg = s.eq_config();
         let rate = f64::from(if self.snap.output_rate > 0 { self.snap.output_rate } else { DEFAULT_RATE });
@@ -543,43 +586,69 @@ impl AppView {
         let right = cfg.response_curve(1, rate, &freqs);
         // Two curves only when the channels differ.
         let differ = left.iter().zip(&right).any(|(a, b)| (a - b).abs() > 0.05);
-        let scale = eqgraph::scale_for(&[&left, &right]);
+        let scale = self.eq_scale.unwrap_or_else(|| eqgraph::scale_for(&[&left, &right]));
         let (c_left, c_right) = (gpui::Hsla::from(theme::accent()), gpui::Hsla::from(theme::gold()));
         let mut curves = vec![eqgraph::Curve { db: left, color: c_left }];
         if differ {
             curves.push(eqgraph::Curve { db: right, color: c_right });
         }
         let (grid, zero) = (gpui::Hsla::from(theme::ink(0.07)), gpui::Hsla::from(theme::ink(0.22)));
-        let label = |text: String| div().text_size(sc(10.)).text_color(theme::text_dim()).child(text);
+        let label = || div().text_size(sc(10.)).text_color(theme::text_dim());
+        // The curves and the grid are painted only inside the plot area; the labels have
+        // margins of their own, so nothing sits on a border or a corner.
+        let plot = div().absolute().left(sc(GUTTER_L)).right(sc(GUTTER_R)).top(sc(GUTTER_T)).bottom(sc(GUTTER_B)).child(
+            canvas(|bounds, _, _| bounds, move |bounds, _, window, _| eqgraph::paint(bounds, &curves, scale, grid, zero, window))
+                .absolute()
+                .size_full(),
+        );
+        // Levels down the left margin, level with their grid lines.
+        let mut db_labels = div().absolute().left(sc(0.)).w(sc(GUTTER_L)).top(sc(GUTTER_T)).bottom(sc(GUTTER_B));
+        for db in eqgraph::db_ticks(scale) {
+            db_labels = db_labels.child(
+                div()
+                    .absolute()
+                    .right(sc(6.))
+                    .top(relative(eqgraph::frac_of_db(db, scale)))
+                    .mt(sc(-6.))
+                    .h(sc(12.))
+                    .child(label().child(eqgraph::db_label(db))),
+            );
+        }
+        // Frequencies along the bottom margin, centred under their grid lines.
+        let mut freq_labels = div().absolute().left(sc(GUTTER_L)).right(sc(GUTTER_R)).bottom(sc(0.)).h(sc(GUTTER_B));
+        for (freq, major) in eqgraph::grid_freqs() {
+            if major {
+                freq_labels = freq_labels.child(
+                    div()
+                        .absolute()
+                        .top(sc(5.))
+                        .left(relative(eqgraph::frac_of_freq(freq)))
+                        .ml(sc(-18.))
+                        .w(sc(36.))
+                        .flex()
+                        .justify_center()
+                        .child(label().child(eqgraph::freq_label(freq))),
+                );
+            }
+        }
         let mut graph = div()
             .id("eq-graph")
             .relative()
-            .w_full()
+            .flex_1()
+            .min_w(sc(0.))
             .h(sc(GRAPH_HEIGHT))
             .rounded(sc(8.))
             .bg(theme::ink(0.03))
             .opacity(if s.eq_enabled { 1.0 } else { 0.5 })
-            .child(
-                canvas(|bounds, _, _| bounds, move |bounds, _, window, _| eqgraph::paint(bounds, &curves, scale, grid, zero, window))
-                    .absolute()
-                    .size_full(),
-            );
-        for (freq, labelled) in eqgraph::FREQ_TICKS {
-            if labelled {
-                let text = if freq >= 1000.0 { format!("{}k", freq / 1000.0) } else { format!("{freq}") };
-                graph = graph.child(label(text).absolute().bottom(sc(3.)).left(relative(eqgraph::frac_of_freq(freq))).ml(sc(3.)));
-            }
-        }
-        for db in eqgraph::db_ticks(scale) {
-            graph =
-                graph.child(label(format!("{db:+.0}")).absolute().left(sc(5.)).top(relative(eqgraph::frac_of_db(db, scale))).mt(sc(-12.)));
-        }
+            .child(plot)
+            .child(db_labels)
+            .child(freq_labels);
         if differ {
             graph = graph.child(
                 div()
                     .absolute()
-                    .top(sc(6.))
-                    .right(sc(10.))
+                    .top(sc(3.))
+                    .right(sc(GUTTER_R + 4.))
                     .flex()
                     .gap(sc(10.))
                     .text_size(sc(11.))
@@ -587,7 +656,155 @@ impl AppView {
                     .child(div().text_color(theme::gold()).child(crate::i18n::t("eq.channel_right"))),
             );
         }
-        graph.into_any_element()
+        let meters = self.eq_meters(cx);
+        div().flex().gap(sc(10.)).items_start().child(graph).child(meters).into_any_element()
+    }
+
+    /// The vertical scale choice of the response graph.
+    fn eq_scale_row(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let current = self.eq_scale;
+        let pill = |id: &'static str, text: &'static str, value: Option<f32>, on: bool, cx: &mut Context<Self>| {
+            small_button(id, text, on).on_click(cx.listener(move |this, _, _, cx| {
+                this.eq_scale = value;
+                cx.notify();
+            }))
+        };
+        div()
+            .px(sc(super::widgets::PANEL_PAD - 4.))
+            .py(sc(6.))
+            .flex()
+            .items_center()
+            .gap(sc(8.))
+            .child(pill("eq-scale-auto", crate::i18n::t("eq.scale_auto"), None, current.is_none(), cx))
+            .child(pill("eq-scale-6", "±6", Some(6.0), current == Some(6.0), cx))
+            .child(pill("eq-scale-12", "±12", Some(12.0), current == Some(12.0), cx))
+            .child(pill("eq-scale-24", "±24", Some(24.0), current == Some(24.0), cx))
+            .into_any_element()
+    }
+
+    /// A vertical slider (top is 1.0), like the horizontal one but dragged by height.
+    fn eq_vslider(&mut self, key: usize, frac: f32, cx: &mut Context<Self>) -> AnyElement {
+        let entity = cx.entity();
+        div()
+            .id(("eq-vslider", key))
+            .flex_none()
+            .w(sc(22.))
+            .h_full()
+            .relative()
+            .cursor_pointer()
+            .child(
+                canvas(
+                    move |b, _, cx| {
+                        entity.update(cx, |v, _| {
+                            v.eq_bounds.insert(key, b);
+                        })
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(div().absolute().left(sc(9.)).w(sc(4.)).top(sc(0.)).bottom(sc(0.)).rounded(sc(2.)).bg(theme::ink(0.18)))
+            // 0 dB, in the middle.
+            .child(div().absolute().left(sc(4.)).w(sc(14.)).top(relative(0.5)).h(sc(1.)).bg(theme::ink(0.4)))
+            .child(
+                div()
+                    .absolute()
+                    .left(sc(3.))
+                    .w(sc(16.))
+                    .h(sc(10.))
+                    .top(relative(1.0 - frac.clamp(0.0, 1.0)))
+                    .mt(sc(-5.))
+                    .rounded(sc(3.))
+                    .bg(theme::text()),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                    if ev.click_count >= 2 {
+                        // A double click puts the channel back to 0 dB.
+                        this.eq_set_trim(key - KEY_TRIM, 0.0, true, cx);
+                        return;
+                    }
+                    this.drag = Some(Drag::EqV(key));
+                    super::winctl::capture_mouse(window);
+                    this.drag_to(ev.position, cx);
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// The level meters and the channel gain faders, to the right of the graph.
+    fn eq_meters(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        use super::eqmeter;
+        let trims = self.settings.lock().eq_trim;
+        let colors = [gpui::Hsla::from(theme::accent()), gpui::Hsla::from(theme::gold()), gpui::Hsla::from(theme::danger())];
+        let (track, mark) = (gpui::Hsla::from(theme::ink(0.07)), gpui::Hsla::from(theme::ink(0.2)));
+        let small = || div().text_size(sc(10.)).text_color(theme::text_dim());
+        // Scale marks, level with the bars.
+        let mut scale = div().flex_none().w(sc(26.)).h_full().flex().flex_col().child(div().h(sc(GUTTER_T))).child({
+            let mut marks = div().flex_1().relative();
+            for tick in eqmeter::TICKS {
+                marks = marks.child(
+                    div()
+                        .absolute()
+                        .right(sc(3.))
+                        .top(relative(1.0 - eqmeter::frac(tick)))
+                        .mt(sc(-6.))
+                        .h(sc(12.))
+                        .child(small().child(format!("{tick:.0}"))),
+                );
+            }
+            marks
+        });
+        scale = scale.child(div().h(sc(GUTTER_B)));
+        let mut panel = div()
+            .flex_none()
+            .w(sc(METER_PANEL_W))
+            .h(sc(GRAPH_HEIGHT))
+            .rounded(sc(8.))
+            .bg(theme::ink(0.03))
+            .flex()
+            .items_start()
+            .child(scale);
+        for (ch, name) in [(0usize, crate::i18n::t("eq.channel_left")), (1, crate::i18n::t("eq.channel_right"))] {
+            let (level, hold) = (self.eq_meter.level_db(ch), self.eq_meter.hold_db(ch));
+            let clip = self.eq_meter.clip(ch);
+            let bar = div().flex_none().w(sc(14.)).h_full().child(
+                canvas(|bounds, _, _| bounds, move |bounds, _, window, _| eqmeter::paint(bounds, level, hold, colors, track, mark, window))
+                    .size_full(),
+            );
+            let fader = self.eq_vslider(KEY_TRIM + ch, eqmeter::frac_of_trim(trims[ch]), cx);
+            // Name and the over-full-scale light (click to clear).
+            let head = div().h(sc(GUTTER_T)).flex().items_center().gap(sc(4.)).child(small().child(name)).child(
+                div()
+                    .id(("eq-clip", ch))
+                    .size(sc(8.))
+                    .rounded(sc(4.))
+                    .bg(if clip { theme::danger() } else { theme::ink(0.12) })
+                    .cursor_pointer()
+                    .tooltip(super::sidebar::tip(crate::i18n::t("eq.clip_tip")))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.eq_meter.clear_clip(ch);
+                        cx.notify();
+                    })),
+            );
+            let readout = div().h(sc(GUTTER_B)).flex().items_center().child(small().child(format!("{:+.1}", trims[ch])));
+            panel = panel.child(
+                div()
+                    .id(("eq-trim-column", ch))
+                    .flex_none()
+                    .w(sc(54.))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .tooltip(super::sidebar::tip(crate::i18n::t("eq.trim_tip")))
+                    .child(head)
+                    .child(div().flex_1().flex().gap(sc(4.)).child(bar).child(fader))
+                    .child(readout),
+            );
+        }
+        panel.into_any_element()
     }
 
     fn eq_icon_button(
@@ -625,15 +842,16 @@ impl AppView {
         let active = !cfg.is_bypass();
         let count = s.eq_filters.len();
         self.eq_sync_rows_if_needed(cx);
-        let graph = self.eq_graph();
+        self.eq_start_meter(cx);
+        let graph = self.eq_graph(cx);
+        let scale_row = self.eq_scale_row(cx);
 
         // ------------------------------------------------ switch, status, pre-amp
         let mut status = if active { crate::i18n::t("eq.status_active").to_string() } else { crate::i18n::t("eq.status_idle").to_string() };
-        if self.eq_peak > 0.0 {
+        if let Some(db) = self.eq_meter.loudest_db() {
             // What really reaches the device: over 0 dBFS the output is clipping.
-            let db = format!("{:.1}", 20.0 * self.eq_peak.log10());
-            let key = if self.eq_peak > 1.0 { "eq.clip" } else { "eq.peak" };
-            status = format!("{status}  |  {}", crate::i18n::text(key, &[db]));
+            let key = if db > 0.0 { "eq.clip" } else { "eq.peak" };
+            status = format!("{status}  |  {}", crate::i18n::text(key, &[format!("{db:.1}")]));
         }
         let preamp_frac = (s.eq_preamp - PREAMP_SLIDER.0) / (PREAMP_SLIDER.1 - PREAMP_SLIDER.0);
         let preamp_slider = self.eq_slider(0, preamp_frac, cx);
@@ -796,7 +1014,7 @@ impl AppView {
             .flex_col()
             .gap(sc(super::widgets::PANEL_GAP))
             .child(group(Icon::VolumeUp, crate::i18n::t("eq.title"), crate::i18n::t("eq.description"), main))
-            .child(group(Icon::Stats, crate::i18n::t("eq.graph"), "", vec![graph]))
+            .child(group(Icon::Stats, crate::i18n::t("eq.graph"), crate::i18n::t("eq.graph_help"), vec![scale_row, graph]))
             .child(group(Icon::Library, crate::i18n::t("eq.filters"), crate::i18n::t("eq.filters_description"), chain))
             .into_any_element()
     }

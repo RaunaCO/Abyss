@@ -29,6 +29,8 @@ pub const MAX_Q: f32 = 20.0;
 pub const MAX_GAIN_DB: f32 = 30.0;
 pub const MIN_PREAMP_DB: f32 = -40.0;
 pub const MAX_PREAMP_DB: f32 = 20.0;
+/// Range of the extra gain of each channel (dB).
+pub const MAX_TRIM_DB: f32 = 12.0;
 /// Butterworth Q for a second order filter.
 pub const BUTTERWORTH_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
 /// A gain or pre-amp below this (dB) does nothing audible and counts as zero.
@@ -163,6 +165,10 @@ impl Default for FilterSpec {
 pub struct EqConfig {
     pub enabled: bool,
     pub preamp_db: f32,
+    /// Extra gain of the left and right channel in dB, on top of the pre-amp
+    /// (which stays one number for both). Files from before this mean 0.
+    #[serde(default)]
+    pub trim_db: [f32; 2],
     pub filters: Vec<FilterSpec>,
 }
 
@@ -172,12 +178,23 @@ impl EqConfig {
         self.filters.truncate(MAX_FILTERS);
         self.filters = self.filters.into_iter().map(FilterSpec::clamped).collect();
         self.preamp_db = if self.preamp_db.is_finite() { self.preamp_db.clamp(MIN_PREAMP_DB, MAX_PREAMP_DB) } else { 0.0 };
+        for trim in &mut self.trim_db {
+            *trim = if trim.is_finite() { trim.clamp(-MAX_TRIM_DB, MAX_TRIM_DB) } else { 0.0 };
+        }
         self
     }
 
     /// The audio passes through untouched.
     pub fn is_bypass(&self) -> bool {
-        !self.enabled || (self.preamp_db.abs() < NEUTRAL_DB && self.filters.iter().all(FilterSpec::is_neutral))
+        !self.enabled
+            || (self.preamp_db.abs() < NEUTRAL_DB
+                && self.trim_db.iter().all(|t| t.abs() < NEUTRAL_DB)
+                && self.filters.iter().all(FilterSpec::is_neutral))
+    }
+
+    /// The gain (dB) in front of the filters of `channel`: the pre-amp plus that channel's own gain.
+    fn gain_db(&self, channel: usize) -> f64 {
+        f64::from(self.preamp_db) + f64::from(self.trim_db[channel])
     }
 
     /// The filters that work on `channel` (0 left, 1 right), as coefficients.
@@ -188,14 +205,14 @@ impl EqConfig {
     /// Response of the chain of `channel` (0 left, 1 right), pre-amp included, in dB at `freq` Hz.
     #[cfg(test)]
     pub fn response_db(&self, channel: usize, freq: f64, rate: f64) -> f64 {
-        f64::from(self.preamp_db) + chain_db(&self.designs(channel, rate), freq, rate)
+        self.gain_db(channel) + chain_db(&self.designs(channel, rate), freq, rate)
     }
 
     /// The response (dB, pre-amp included) of `channel` at each of `freqs`: the
     /// filters are designed once, not once per point. For the response graph.
     pub fn response_curve(&self, channel: usize, rate: f64, freqs: &[f64]) -> Vec<f32> {
         let coefs = self.designs(channel, rate);
-        let pre = f64::from(self.preamp_db);
+        let pre = self.gain_db(channel);
         freqs.iter().map(|f| (pre + chain_db(&coefs, *f, rate)) as f32).collect()
     }
 
@@ -342,11 +359,12 @@ fn design(spec: &FilterSpec, rate: f64) -> Coef {
 struct Raw {
     enabled: bool,
     preamp_db: f32,
+    trim_db: [f32; 2],
     count: usize,
     filters: [FilterSpec; MAX_FILTERS],
 }
 
-const HEADER_WORDS: usize = 3;
+const HEADER_WORDS: usize = 5;
 const FILTER_WORDS: usize = 4;
 const WORDS: usize = HEADER_WORDS + MAX_FILTERS * FILTER_WORDS;
 
@@ -381,6 +399,8 @@ impl EqShared {
         word(0, u32::from(config.enabled));
         word(1, config.preamp_db.to_bits());
         word(2, config.filters.len() as u32);
+        word(3, config.trim_db[0].to_bits());
+        word(4, config.trim_db[1].to_bits());
         for (i, f) in config.filters.iter().enumerate() {
             let base = HEADER_WORDS + i * FILTER_WORDS;
             word(base, u32::from(f.enabled) | (f.kind.code() << 1) | (f.channels.code() << 4));
@@ -398,6 +418,7 @@ impl EqShared {
         let mut raw = Raw {
             enabled: word(0) != 0,
             preamp_db: f32::from_bits(word(1)),
+            trim_db: [f32::from_bits(word(3)), f32::from_bits(word(4))],
             count: (word(2) as usize).min(MAX_FILTERS),
             filters: [FilterSpec::default(); MAX_FILTERS],
         };
@@ -506,9 +527,10 @@ pub struct Dsp {
     seen: u32,
     chains: [Chain; 2],
     coef_left: u32,
-    pre: f64,
-    pre_goal: f64,
-    pre_step: f64,
+    /// Linear gain in front of each channel's filters (pre-amp times that channel's own gain).
+    pre: [f64; 2],
+    pre_goal: [f64; 2],
+    pre_step: [f64; 2],
     /// 0 = untouched audio, 1 = fully processed.
     wet: f64,
     wet_goal: f64,
@@ -525,9 +547,9 @@ impl Dsp {
             seen: 0,
             chains: [Chain::new(), Chain::new()],
             coef_left: 0,
-            pre: 1.0,
-            pre_goal: 1.0,
-            pre_step: 0.0,
+            pre: [1.0; 2],
+            pre_goal: [1.0; 2],
+            pre_step: [0.0; 2],
             wet: 0.0,
             wet_goal: 0.0,
             wet_step: 0.0,
@@ -582,7 +604,9 @@ impl Dsp {
                     for chain in &mut self.chains {
                         chain.advance();
                     }
-                    self.pre += self.pre_step;
+                    for ch in 0..2 {
+                        self.pre[ch] += self.pre_step[ch];
+                    }
                 }
             }
             for (ch, sample) in frame.iter_mut().enumerate() {
@@ -590,7 +614,7 @@ impl Dsp {
                 // Pre-amp first, then the filters, all in f64; the only step down
                 // to f32 is this one, at the very end. No clipping here: the
                 // volume still comes after, and the device stage limits last.
-                let x = self.chains[ch].run(dry * self.pre);
+                let x = self.chains[ch].run(dry * self.pre[ch]);
                 let out = if self.wet >= 1.0 { x } else { dry + (x - dry) * self.wet };
                 let out = out as f32;
                 *sample = if out.is_finite() { out } else { 0.0 };
@@ -617,17 +641,20 @@ impl Dsp {
                 }
             }
         }
+        // The gain in front of each channel: the pre-amp plus that channel's own gain.
         let preamp = if raw.enabled { raw.preamp_db } else { 0.0 };
-        let pre_neutral = preamp.abs() < NEUTRAL_DB;
-        if counts == [0, 0] && pre_neutral {
+        let trims = if raw.enabled { raw.trim_db } else { [0.0; 2] };
+        let gains = [preamp + trims[0], preamp + trims[1]];
+        let neutral = [gains[0].abs() < NEUTRAL_DB, gains[1].abs() < NEUTRAL_DB];
+        if counts == [0, 0] && neutral == [true, true] {
             // Nothing to do: blend out to the untouched audio, keeping the old
             // filters running meanwhile.
             self.wet_goal = 0.0;
             self.wet_step = if self.wet > 0.0 { -1.0 / self.ramp_frames } else { 0.0 };
             return;
         }
-        // Exactly 1.0 without a pre-amp, so a channel with no filters is untouched bit for bit.
-        let pre = if pre_neutral { 1.0 } else { 10f64.powf(f64::from(preamp) / 20.0) };
+        // Exactly 1.0 without any gain, so a channel with no filters and no gain is untouched bit for bit.
+        let pre = [0, 1].map(|ch| if neutral[ch] { 1.0 } else { 10f64.powf(f64::from(gains[ch]) / 20.0) });
         if !self.is_active() {
             // From untouched audio: start fresh and blend in.
             for ch in 0..2 {
@@ -643,7 +670,7 @@ impl Dsp {
                 self.chains[ch].slide(&goals[ch], counts[ch], self.ramp_frames);
             }
             self.pre_goal = pre;
-            self.pre_step = (pre - self.pre) / self.ramp_frames;
+            self.pre_step = [0, 1].map(|ch| (pre[ch] - self.pre[ch]) / self.ramp_frames);
             self.coef_left = self.ramp_frames as u32;
             if self.wet != 1.0 {
                 self.wet_step = (1.0 - self.wet) / self.ramp_frames;
@@ -660,7 +687,7 @@ mod tests {
     const RATE: u32 = 48_000;
 
     fn config(filters: Vec<FilterSpec>) -> EqConfig {
-        EqConfig { enabled: true, preamp_db: 0.0, filters }
+        EqConfig { enabled: true, preamp_db: 0.0, trim_db: [0.0; 2], filters }
     }
 
     fn spec(kind: FilterKind, freq: f32, gain_db: f32, q: f32) -> FilterSpec {
@@ -765,6 +792,7 @@ mod tests {
         let cfg = EqConfig {
             enabled: true,
             preamp_db: -2.0,
+            trim_db: [0.0; 2],
             filters: vec![
                 spec(FilterKind::LowShelf, 120.0, 4.0, 0.8),
                 spec(FilterKind::Peaking, 800.0, -5.0, 1.4),
@@ -783,7 +811,8 @@ mod tests {
     #[test]
     fn nothing_to_do_leaves_every_bit_untouched() {
         let input = noise(4800);
-        let off = EqConfig { enabled: false, preamp_db: -6.0, filters: vec![spec(FilterKind::LowPass, 500.0, 0.0, 1.0)] };
+        let off =
+            EqConfig { enabled: false, preamp_db: -6.0, trim_db: [0.0; 2], filters: vec![spec(FilterKind::LowPass, 500.0, 0.0, 1.0)] };
         let empty = config(Vec::new());
         let neutral = config(vec![spec(FilterKind::Peaking, 1000.0, 0.0, 1.0), spec(FilterKind::HighShelf, 8000.0, 0.001, 1.0)]);
         let disabled = config(vec![FilterSpec { enabled: false, ..spec(FilterKind::LowPass, 500.0, 0.0, 1.0) }]);
@@ -804,7 +833,7 @@ mod tests {
     fn pre_amp_or_a_pass_filter_does_process() {
         let input = sine(1000.0, 0.1, 0.5);
         for cfg in [
-            EqConfig { enabled: true, preamp_db: -6.0, filters: Vec::new() },
+            EqConfig { enabled: true, preamp_db: -6.0, trim_db: [0.0; 2], filters: Vec::new() },
             config(vec![spec(FilterKind::HighPass, 20.0, 0.0, BUTTERWORTH_Q)]),
         ] {
             assert!(!cfg.is_bypass());
@@ -813,7 +842,7 @@ mod tests {
             let mut dsp = Dsp::new(RATE);
             assert_ne!(bits(&run(&mut dsp, &shared, &input)), bits(&input));
         }
-        let cfg = EqConfig { enabled: true, preamp_db: -6.0, filters: Vec::new() };
+        let cfg = EqConfig { enabled: true, preamp_db: -6.0, trim_db: [0.0; 2], filters: Vec::new() };
         assert!((measured_db(&cfg, 1000.0) + 6.0).abs() < 0.01);
     }
 
@@ -945,6 +974,7 @@ mod tests {
         let cfg = EqConfig {
             enabled: true,
             preamp_db: f32::NAN,
+            trim_db: [0.0; 2],
             filters: (0..40)
                 .map(|_| FilterSpec {
                     enabled: true,
@@ -971,6 +1001,7 @@ mod tests {
         let cfg = EqConfig {
             enabled: true,
             preamp_db: -4.5,
+            trim_db: [0.0; 2],
             filters: vec![
                 spec(FilterKind::LowShelf, 90.0, 3.5, 0.7),
                 FilterSpec { enabled: false, ..spec(FilterKind::HighPass, 25.0, 0.0, 0.9) },
@@ -999,7 +1030,7 @@ mod tests {
                     let filters = (0..MAX_FILTERS)
                         .map(|i| spec(FilterKind::Peaking, 100.0 + (n % 1000) as f32 + i as f32 * 0.001, (n % 20) as f32, 1.0))
                         .collect();
-                    shared.write(&EqConfig { enabled: true, preamp_db: -((n % 20) as f32), filters });
+                    shared.write(&EqConfig { enabled: true, preamp_db: -((n % 20) as f32), trim_db: [0.0; 2], filters });
                 }
             });
             let mut seen = 0;
@@ -1276,8 +1307,12 @@ mod tests {
     #[test]
     fn the_pre_amp_applies_to_both_channels_even_when_filters_do_not() {
         let input = two_tones(0.3);
-        let cfg =
-            EqConfig { enabled: true, preamp_db: -6.0, filters: vec![on(spec(FilterKind::Peaking, 1000.0, 6.0, 1.0), Channels::Left)] };
+        let cfg = EqConfig {
+            enabled: true,
+            preamp_db: -6.0,
+            trim_db: [0.0; 2],
+            filters: vec![on(spec(FilterKind::Peaking, 1000.0, 6.0, 1.0), Channels::Left)],
+        };
         let shared = EqShared::default();
         shared.write(&cfg);
         let mut dsp = Dsp::new(RATE);
@@ -1285,6 +1320,81 @@ mod tests {
         let half = out.len() / 4;
         let ratio = rms_of(&channel(&out, 1)[half..]) / rms_of(&channel(&input, 1)[half..]);
         assert!((20.0 * ratio.log10() + 6.0).abs() < 0.01, "the right channel should only get the pre-amp");
+    }
+
+    #[test]
+    fn a_channel_gain_changes_only_its_channel_and_adds_to_the_pre_amp() {
+        let input = two_tones(0.3);
+        let shared = EqShared::default();
+        // No filters, no pre-amp: just 3 dB on the left and -2 dB on the right.
+        shared.write(&EqConfig { enabled: true, preamp_db: 0.0, trim_db: [3.0, -2.0], filters: Vec::new() });
+        let mut dsp = Dsp::new(RATE);
+        let out = run(&mut dsp, &shared, &input);
+        let half = out.len() / 4;
+        let db = |ch: usize| 20.0 * (rms_of(&channel(&out, ch)[half..]) / rms_of(&channel(&input, ch)[half..])).log10();
+        assert!((db(0) - 3.0).abs() < 0.01 && (db(1) + 2.0).abs() < 0.01, "{} {}", db(0), db(1));
+        // With a pre-amp of -6 dB the two add: -3 dB left and -8 dB right.
+        shared.write(&EqConfig { enabled: true, preamp_db: -6.0, trim_db: [3.0, -2.0], filters: Vec::new() });
+        let mut dsp = Dsp::new(RATE);
+        let out = run(&mut dsp, &shared, &input);
+        let db = |ch: usize| 20.0 * (rms_of(&channel(&out, ch)[half..]) / rms_of(&channel(&input, ch)[half..])).log10();
+        assert!((db(0) + 3.0).abs() < 0.01 && (db(1) + 8.0).abs() < 0.01, "{} {}", db(0), db(1));
+    }
+
+    #[test]
+    fn a_gain_on_one_channel_leaves_the_other_bit_exact_and_zero_gains_are_a_bypass() {
+        let input = two_tones(0.3);
+        let shared = EqShared::default();
+        shared.write(&EqConfig { enabled: true, preamp_db: 0.0, trim_db: [4.0, 0.0], filters: Vec::new() });
+        let mut dsp = Dsp::new(RATE);
+        let out = run(&mut dsp, &shared, &input);
+        assert!(dsp.is_active());
+        assert_eq!(bits(&channel(&out, 1)), bits(&channel(&input, 1)), "the right channel has no gain: untouched");
+        assert_ne!(bits(&channel(&out, 0)), bits(&channel(&input, 0)));
+        // Back to 0 and 0: the exact path takes over.
+        shared.write(&EqConfig { enabled: true, preamp_db: 0.0, trim_db: [0.0, 0.0], filters: Vec::new() });
+        assert!(EqConfig { enabled: true, preamp_db: 0.0, trim_db: [0.001, -0.002], filters: Vec::new() }.is_bypass());
+        assert!(!EqConfig { enabled: true, preamp_db: 0.0, trim_db: [0.0, 0.5], filters: Vec::new() }.is_bypass());
+        let more = two_tones(0.3);
+        let out = run(&mut dsp, &shared, &more);
+        let settled = (f64::from(RATE) * 0.02) as usize * 2;
+        assert_eq!(bits(&out[settled..]), bits(&more[settled..]));
+    }
+
+    #[test]
+    fn moving_a_channel_gain_makes_no_clicks() {
+        let input = sine(500.0, 0.3, 0.8);
+        let shared = EqShared::default();
+        let mut dsp = Dsp::new(RATE);
+        let mut out = Vec::new();
+        for (i, trim) in [0.0f32, 6.0, -6.0, 0.0].into_iter().enumerate() {
+            shared.write(&EqConfig { enabled: true, preamp_db: 0.0, trim_db: [trim, 0.0], filters: Vec::new() });
+            out.extend(run(&mut dsp, &shared, &input[i * 19_200..(i + 1) * 19_200]));
+        }
+        let bound = 0.6 * 2.0 * std::f64::consts::PI * 500.0 / f64::from(RATE) * 1.15;
+        let left: Vec<f32> = channel(&out, 0).into_iter().flat_map(|v| [v, v]).collect();
+        assert!(max_step(&left, 0) <= bound, "left jumps {:.4} vs {bound:.4}", max_step(&left, 0));
+    }
+
+    #[test]
+    fn the_seqlock_carries_the_channel_gains_and_the_curves_show_them() {
+        let cfg = EqConfig { enabled: true, preamp_db: -2.0, trim_db: [3.5, -1.5], filters: Vec::new() };
+        let shared = EqShared::default();
+        shared.write(&cfg);
+        let raw = shared.read(shared.version()).unwrap();
+        assert_eq!((raw.preamp_db, raw.trim_db), (-2.0, [3.5, -1.5]));
+        let f = [100.0, 1000.0];
+        assert_eq!(cfg.response_curve(0, 48_000.0, &f), [1.5, 1.5]);
+        assert_eq!(cfg.response_curve(1, 48_000.0, &f), [-3.5, -3.5]);
+        // Out of range is clamped, and a NaN is nothing.
+        let wild = EqConfig { trim_db: [100.0, f32::NAN], ..cfg }.clamped();
+        assert_eq!(wild.trim_db, [MAX_TRIM_DB, 0.0]);
+    }
+
+    #[test]
+    fn settings_written_before_channel_gains_existed_have_none() {
+        let old: EqConfig = serde_json::from_str(r#"{"enabled":true,"preamp_db":-1.0,"filters":[]}"#).unwrap();
+        assert_eq!(old.trim_db, [0.0, 0.0]);
     }
 
     #[test]

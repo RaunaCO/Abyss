@@ -703,5 +703,9 @@
   "eq.col_freq": "Hz",
   "eq.col_gain": "dB",
   "eq.col_q": "Q",
-  "eq.select_hint": "Sélectionnez un filtre pour l’ajuster avec des curseurs."
+  "eq.select_hint": "Sélectionnez un filtre pour l’ajuster avec des curseurs.",
+  "eq.scale_auto": "Auto",
+  "eq.clip_tip": "Au-dessus du maximum. Cliquez pour effacer.",
+  "eq.trim_tip": "Niveau de ce canal et son gain propre, ajouté au pré-ampli. Double-cliquez sur le fader pour 0 dB.",
+  "eq.graph_help": "Indicateurs de niveau (crête réelle en sortie) et un fader de gain par canal à droite."
 }

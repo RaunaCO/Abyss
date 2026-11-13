@@ -146,10 +146,11 @@ impl Player {
         self.out.eq.write(config);
     }
 
-    /// Loudest sample sent to the device since the last call (linear, 0 when
-    /// nothing played). Above 1.0 means the output is over full scale.
-    pub fn take_peak(&self) -> f32 {
-        f32::from_bits(self.out.peak.swap(0, Ordering::Relaxed))
+    /// Loudest sample of the left and the right channel sent to the device since
+    /// the last call (linear, 0 when nothing played). Above 1.0 means that
+    /// channel is over full scale.
+    pub fn take_peaks(&self) -> [f32; 2] {
+        self.out.peak.each_ref().map(|p| f32::from_bits(p.swap(0, Ordering::Relaxed)))
     }
 
     pub fn send(&self, cmd: Cmd) {
