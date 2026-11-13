@@ -41,6 +41,7 @@ mod appmenu;
 mod cover_view;
 mod ctxmenu;
 mod debug;
+mod eqgraph;
 mod equalizer;
 pub mod fx;
 mod glass;
@@ -411,6 +412,8 @@ pub struct AppView {
     pub eq_preamp_input: Option<Entity<TextInput>>,
     pub eq_bounds: std::collections::HashMap<usize, Bounds<Pixels>>,
     pub eq_type_open: Option<usize>,
+    /// The filter whose sliders are shown under the list.
+    pub eq_selected: Option<usize>,
     /// Loudest output sample lately (linear, decays), for the equaliser page.
     pub eq_peak: f32,
     /// Replay: chosen period and the statistics computed for it.
@@ -728,6 +731,7 @@ impl AppView {
             eq_preamp_input: None,
             eq_bounds: Default::default(),
             eq_type_open: None,
+            eq_selected: None,
             eq_peak: 0.0,
             replay_period: Default::default(),
             replay_all_tracks: false,

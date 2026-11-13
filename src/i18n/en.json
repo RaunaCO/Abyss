@@ -696,5 +696,12 @@
   "eq.auto_preamp": "Automatic pre-amp",
   "eq.auto_preamp_help": "Sets the pre-amp from the loudest point of the filters every time they change, so boosts do not clip.",
   "eq.peak": "Peak {0} dBFS",
-  "eq.clip": "Over full scale: {0} dBFS (lower the pre-amp)"
+  "eq.clip": "Over full scale: {0} dBFS (lower the pre-amp)",
+  "eq.graph": "Frequency response",
+  "eq.col_type": "Type",
+  "eq.col_channel": "Channel",
+  "eq.col_freq": "Hz",
+  "eq.col_gain": "dB",
+  "eq.col_q": "Q",
+  "eq.select_hint": "Select a filter to adjust it with sliders."
 }

@@ -3,16 +3,33 @@
 //! callback through `Player::set_eq`, which never blocks the audio thread.
 use gpui::{canvas, div, prelude::*, relative, AnyElement, Context, Entity, FontWeight, MouseButton, MouseDownEvent};
 
+use super::eqgraph;
 use super::icons::Icon;
 use super::input::{InputEvent, TextInput};
 use super::settings::{group, row, small_button, switch};
 use super::{sc, theme, AppView, Drag};
-use crate::audio::dsp::{Channels, FilterKind, FilterSpec, MAX_FILTERS, MAX_GAIN_DB, MAX_PREAMP_DB, MIN_PREAMP_DB};
+use crate::audio::dsp::{Channels, FilterKind, FilterSpec, MAX_FILTERS, MAX_FREQ, MAX_GAIN_DB, MAX_PREAMP_DB, MIN_FREQ, MIN_PREAMP_DB};
 
 /// Range of the sliders (the numeric fields accept the full range).
 const GAIN_SLIDER_DB: f32 = 20.0;
 const PREAMP_SLIDER: (f32, f32) = (-30.0, 10.0);
 const DEFAULT_RATE: u32 = 48_000;
+
+/// Slider keys (see `eq_drag`): one block of `MAX_FILTERS` per parameter.
+const KEY_PREAMP: usize = 0;
+const KEY_GAIN: usize = 1;
+const KEY_FREQ: usize = 100;
+const KEY_Q: usize = 200;
+/// Height of the response graph.
+const GRAPH_HEIGHT: f32 = 230.0;
+/// Widths of the columns of the filter list (the header uses the same).
+const COL_ON: f32 = 42.0;
+const COL_NUM: f32 = 20.0;
+const COL_TYPE: f32 = 128.0;
+const COL_CHANNEL: f32 = 92.0;
+const COL_FREQ: f32 = 82.0;
+const COL_GAIN: f32 = 70.0;
+const COL_Q: f32 = 62.0;
 
 /// The numeric fields of one filter, kept in step with `Settings::eq_filters`.
 pub struct EqRow {
@@ -184,6 +201,8 @@ impl AppView {
                 return;
             }
             s.eq_filters.push(FilterSpec::new(FilterKind::Peaking));
+            // The new filter is the one to adjust next.
+            self.eq_selected = Some(s.eq_filters.len() - 1);
         }
         self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
@@ -197,6 +216,12 @@ impl AppView {
                 s.eq_filters.remove(i);
             }
         }
+        // Keep pointing at the same filter, or at none if it was the one removed.
+        self.eq_selected = match self.eq_selected {
+            Some(sel) if sel == i => None,
+            Some(sel) if sel > i => Some(sel - 1),
+            other => other,
+        };
         self.eq_type_open = None;
         self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
@@ -211,6 +236,13 @@ impl AppView {
                 return;
             }
             s.eq_filters.swap(i, j);
+        }
+        // The selection follows the filter that moved.
+        let j = if down { i + 1 } else { i.wrapping_sub(1) };
+        if self.eq_selected == Some(i) {
+            self.eq_selected = Some(j);
+        } else if self.eq_selected == Some(j) {
+            self.eq_selected = Some(i);
         }
         self.eq_type_open = None;
         self.eq_apply(true, cx);
@@ -246,6 +278,7 @@ impl AppView {
             s.eq_filters.clear();
             s.eq_preamp = 0.0;
         }
+        self.eq_selected = None;
         self.eq_type_open = None;
         self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
@@ -282,30 +315,62 @@ impl AppView {
         self.settings_tab == super::settings::EQ_TAB && db(before) != db(self.eq_peak)
     }
 
-    /// A slider moved: key 0 is the pre-amp, key `i + 1` the gain of filter `i`.
+    /// A slider moved. Keys: `KEY_PREAMP`, `KEY_GAIN + i`, `KEY_FREQ + i` and `KEY_Q + i`
+    /// for filter `i`.
     pub fn eq_drag(&mut self, key: usize, frac: f32, cx: &mut Context<Self>) {
+        let target = if key == KEY_PREAMP {
+            None
+        } else if (KEY_GAIN..KEY_GAIN + MAX_FILTERS).contains(&key) {
+            Some((key - KEY_GAIN, Field::Gain))
+        } else if (KEY_FREQ..KEY_FREQ + MAX_FILTERS).contains(&key) {
+            Some((key - KEY_FREQ, Field::Freq))
+        } else if (KEY_Q..KEY_Q + MAX_FILTERS).contains(&key) {
+            Some((key - KEY_Q, Field::Q))
+        } else {
+            return;
+        };
         {
             let mut s = self.settings.lock();
-            if key == 0 {
-                if !s.eq_auto_preamp {
-                    s.eq_preamp =
-                        round_tenth(PREAMP_SLIDER.0 + frac * (PREAMP_SLIDER.1 - PREAMP_SLIDER.0)).clamp(MIN_PREAMP_DB, MAX_PREAMP_DB);
+            match target {
+                None => {
+                    if !s.eq_auto_preamp {
+                        s.eq_preamp =
+                            round_tenth(PREAMP_SLIDER.0 + frac * (PREAMP_SLIDER.1 - PREAMP_SLIDER.0)).clamp(MIN_PREAMP_DB, MAX_PREAMP_DB);
+                    }
                 }
-            } else if let Some(f) = s.eq_filters.get_mut(key - 1) {
-                if f.kind.has_gain() {
-                    f.gain_db = round_tenth((frac * 2.0 - 1.0) * GAIN_SLIDER_DB).clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
+                Some((i, field)) => {
+                    if let Some(f) = s.eq_filters.get_mut(i) {
+                        match field {
+                            Field::Gain if f.kind.has_gain() => {
+                                f.gain_db = round_tenth((frac * 2.0 - 1.0) * GAIN_SLIDER_DB).clamp(-MAX_GAIN_DB, MAX_GAIN_DB)
+                            }
+                            Field::Freq => f.freq = (eqgraph::freq_of_frac(f64::from(frac)) as f32).round().clamp(MIN_FREQ, MAX_FREQ),
+                            Field::Q => f.q = (eqgraph::q_of_frac(frac) * 100.0).round() / 100.0,
+                            Field::Gain => {}
+                        }
+                        *f = f.clamped();
+                    }
                 }
             }
         }
         self.eq_apply(false, cx);
-        // Keep the fields in step without moving the caret of a field being typed in.
+        // Keep the fields in step.
         let s = self.settings.lock().clone();
-        if key == 0 {
-            if let Some(input) = &self.eq_preamp_input {
-                input.update(cx, |i, cx| i.set_text(&format!("{:.1}", s.eq_preamp), cx));
+        match target {
+            None => {
+                if let Some(input) = &self.eq_preamp_input {
+                    input.update(cx, |i, cx| i.set_text(&format!("{:.1}", s.eq_preamp), cx));
+                }
             }
-        } else if let (Some(row), Some(f)) = (self.eq_rows.get(key - 1), s.eq_filters.get(key - 1)) {
-            row.gain.update(cx, |i, cx| i.set_text(&format!("{:.1}", f.gain_db), cx));
+            Some((i, field)) => {
+                if let (Some(row), Some(f)) = (self.eq_rows.get(i), s.eq_filters.get(i)) {
+                    match field {
+                        Field::Gain => row.gain.update(cx, |t, cx| t.set_text(&format!("{:.1}", f.gain_db), cx)),
+                        Field::Freq => row.freq.update(cx, |t, cx| t.set_text(&fmt_freq(f.freq), cx)),
+                        Field::Q => row.q.update(cx, |t, cx| t.set_text(&format!("{:.2}", f.q), cx)),
+                    }
+                }
+            }
         }
     }
 
@@ -394,6 +459,137 @@ impl AppView {
             .into_any_element()
     }
 
+    /// A numeric field of the filter list (the column header says what it is).
+    fn eq_cell(&self, input: &Entity<TextInput>, width: f32, enabled: bool) -> AnyElement {
+        div()
+            .w(sc(width))
+            .h(sc(30.))
+            .px(sc(8.))
+            .flex()
+            .items_center()
+            .rounded(sc(8.))
+            .bg(theme::field())
+            .border_1()
+            .border_color(theme::divider())
+            .opacity(if enabled { 1.0 } else { 0.4 })
+            .when(!enabled, |d| d.occlude())
+            .child(input.clone())
+            .into_any_element()
+    }
+
+    /// Column titles over the filter list.
+    fn eq_header(&self) -> AnyElement {
+        let title = |text: &'static str, width: f32| div().w(sc(width)).child(text);
+        div()
+            .px(sc(super::widgets::PANEL_PAD - 4.))
+            .pt(sc(8.))
+            .pb(sc(2.))
+            .flex()
+            .flex_wrap()
+            .gap_x(sc(8.))
+            .text_size(sc(11.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme::text_secondary())
+            .child(title("", COL_ON))
+            .child(title("#", COL_NUM))
+            .child(title(crate::i18n::t("eq.col_type"), COL_TYPE))
+            .child(title(crate::i18n::t("eq.col_channel"), COL_CHANNEL))
+            .child(title(crate::i18n::t("eq.col_freq"), COL_FREQ))
+            .child(title(crate::i18n::t("eq.col_gain"), COL_GAIN))
+            .child(title(crate::i18n::t("eq.col_q"), COL_Q))
+            .into_any_element()
+    }
+
+    /// Sliders for the selected filter, below the list.
+    fn eq_detail(&mut self, i: usize, f: &FilterSpec, cx: &mut Context<Self>) -> AnyElement {
+        let gain_frac = (f.gain_db / GAIN_SLIDER_DB + 1.0) / 2.0;
+        let freq_frac = eqgraph::frac_of_freq(f64::from(f.freq));
+        let q_frac = eqgraph::frac_of_q(f.q);
+        let has_gain = f.kind.has_gain();
+        let freq = self.eq_slider(KEY_FREQ + i, freq_frac, cx);
+        let gain = self.eq_slider(KEY_GAIN + i, gain_frac, cx);
+        let q = self.eq_slider(KEY_Q + i, q_frac, cx);
+        let labelled = |label: &'static str, value: String, slider: AnyElement, dim: bool| {
+            div()
+                .flex()
+                .items_center()
+                .gap(sc(10.))
+                .opacity(if dim { 0.4 } else { 1.0 })
+                .child(div().w(sc(110.)).text_size(sc(12.)).text_color(theme::text_secondary()).child(label))
+                .child(slider)
+                .child(div().w(sc(64.)).text_size(sc(12.)).child(value))
+        };
+        div()
+            .px(sc(super::widgets::PANEL_PAD - 4.))
+            .py(sc(10.))
+            .flex()
+            .flex_col()
+            .gap(sc(8.))
+            .border_t_1()
+            .border_color(theme::divider())
+            .child(labelled(crate::i18n::t("eq.freq"), format!("{} Hz", fmt_freq(f.freq)), freq, false))
+            .child(labelled(crate::i18n::t("eq.gain"), format!("{:+.1} dB", f.gain_db), gain, !has_gain))
+            .child(labelled(crate::i18n::t("eq.q"), format!("{:.2}", f.q), q, false))
+            .into_any_element()
+    }
+
+    /// The frequency response of the chain (see `eqgraph`).
+    fn eq_graph(&mut self) -> AnyElement {
+        let s = self.settings.lock().clone();
+        let cfg = s.eq_config();
+        let rate = f64::from(if self.snap.output_rate > 0 { self.snap.output_rate } else { DEFAULT_RATE });
+        let freqs = eqgraph::freqs();
+        let left = cfg.response_curve(0, rate, &freqs);
+        let right = cfg.response_curve(1, rate, &freqs);
+        // Two curves only when the channels differ.
+        let differ = left.iter().zip(&right).any(|(a, b)| (a - b).abs() > 0.05);
+        let scale = eqgraph::scale_for(&[&left, &right]);
+        let (c_left, c_right) = (gpui::Hsla::from(theme::accent()), gpui::Hsla::from(theme::gold()));
+        let mut curves = vec![eqgraph::Curve { db: left, color: c_left }];
+        if differ {
+            curves.push(eqgraph::Curve { db: right, color: c_right });
+        }
+        let (grid, zero) = (gpui::Hsla::from(theme::ink(0.07)), gpui::Hsla::from(theme::ink(0.22)));
+        let label = |text: String| div().text_size(sc(10.)).text_color(theme::text_dim()).child(text);
+        let mut graph = div()
+            .id("eq-graph")
+            .relative()
+            .w_full()
+            .h(sc(GRAPH_HEIGHT))
+            .rounded(sc(8.))
+            .bg(theme::ink(0.03))
+            .opacity(if s.eq_enabled { 1.0 } else { 0.5 })
+            .child(
+                canvas(|bounds, _, _| bounds, move |bounds, _, window, _| eqgraph::paint(bounds, &curves, scale, grid, zero, window))
+                    .absolute()
+                    .size_full(),
+            );
+        for (freq, labelled) in eqgraph::FREQ_TICKS {
+            if labelled {
+                let text = if freq >= 1000.0 { format!("{}k", freq / 1000.0) } else { format!("{freq}") };
+                graph = graph.child(label(text).absolute().bottom(sc(3.)).left(relative(eqgraph::frac_of_freq(freq))).ml(sc(3.)));
+            }
+        }
+        for db in eqgraph::db_ticks(scale) {
+            graph =
+                graph.child(label(format!("{db:+.0}")).absolute().left(sc(5.)).top(relative(eqgraph::frac_of_db(db, scale))).mt(sc(-12.)));
+        }
+        if differ {
+            graph = graph.child(
+                div()
+                    .absolute()
+                    .top(sc(6.))
+                    .right(sc(10.))
+                    .flex()
+                    .gap(sc(10.))
+                    .text_size(sc(11.))
+                    .child(div().text_color(theme::accent()).child(crate::i18n::t("eq.channel_left")))
+                    .child(div().text_color(theme::gold()).child(crate::i18n::t("eq.channel_right"))),
+            );
+        }
+        graph.into_any_element()
+    }
+
     fn eq_icon_button(
         &mut self,
         id: (&'static str, usize),
@@ -429,6 +625,7 @@ impl AppView {
         let active = !cfg.is_bypass();
         let count = s.eq_filters.len();
         self.eq_sync_rows_if_needed(cx);
+        let graph = self.eq_graph();
 
         // ------------------------------------------------ switch, status, pre-amp
         let mut status = if active { crate::i18n::t("eq.status_active").to_string() } else { crate::i18n::t("eq.status_idle").to_string() };
@@ -484,6 +681,8 @@ impl AppView {
         let mut chain: Vec<AnyElement> = Vec::new();
         if count == 0 {
             chain.push(row("eq-empty", crate::i18n::t("eq.empty"), None, None).text_color(theme::text_secondary()).into_any_element());
+        } else {
+            chain.push(self.eq_header());
         }
         for (i, f) in s.eq_filters.iter().enumerate() {
             let Some(r) = self.eq_rows.get(i) else { continue };
@@ -492,8 +691,7 @@ impl AppView {
             let kind = f.kind;
             let has_gain = kind.has_gain();
             let open = self.eq_type_open == Some(i);
-            let gain_frac = (f.gain_db / GAIN_SLIDER_DB + 1.0) / 2.0;
-            let slider = self.eq_slider(i + 1, gain_frac, cx);
+            let selected = self.eq_selected == Some(i);
             let toggle = div()
                 .id(("eq-on", i))
                 .cursor_pointer()
@@ -520,38 +718,41 @@ impl AppView {
             let remove = self.eq_icon_button(("eq-remove", i), Icon::Close, crate::i18n::t("eq.remove"), true, cx, move |this, cx| {
                 this.eq_remove(i, cx)
             });
+            // One line per filter, like the list of Equalizer APO: on, number, type,
+            // channel, frequency, gain, Q and the row's actions. Every value is visible.
             let mut item = div()
                 .id(("eq-filter", i))
                 .px(sc(super::widgets::PANEL_PAD - 4.))
-                .py(sc(10.))
+                .py(sc(6.))
                 .flex()
                 .flex_col()
-                .gap(sc(10.))
-                .opacity(if on { 1.0 } else { 0.55 })
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sc(10.))
-                        .child(toggle)
-                        .child(kind_button)
-                        .child(channel_button)
-                        .child(div().flex_1())
-                        .child(up)
-                        .child(down)
-                        .child(remove),
-                )
+                .gap(sc(6.))
+                .cursor_pointer()
+                .rounded(sc(8.))
+                .bg(theme::ink(if selected { 0.09 } else { 0.0 }))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.eq_selected = Some(i);
+                    cx.notify();
+                }))
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap_x(sc(14.))
-                        .gap_y(sc(8.))
-                        .child(self.eq_field(crate::i18n::t("eq.freq"), &freq, 74., true))
-                        .child(self.eq_field(crate::i18n::t("eq.gain"), &gain, 64., has_gain))
-                        .child(div().when(!has_gain, |d| d.opacity(0.3)).child(slider))
-                        .child(self.eq_field(crate::i18n::t("eq.q"), &q, 56., true)),
+                        .gap_x(sc(8.))
+                        .gap_y(sc(6.))
+                        .opacity(if on { 1.0 } else { 0.55 })
+                        .child(div().w(sc(COL_ON)).flex().child(toggle))
+                        .child(div().w(sc(COL_NUM)).text_size(sc(12.)).text_color(theme::text_secondary()).child(format!("{}", i + 1)))
+                        .child(div().w(sc(COL_TYPE)).child(kind_button))
+                        .child(div().w(sc(COL_CHANNEL)).child(channel_button))
+                        .child(self.eq_cell(&freq, COL_FREQ, true))
+                        .child(self.eq_cell(&gain, COL_GAIN, has_gain))
+                        .child(self.eq_cell(&q, COL_Q, true))
+                        .child(div().flex_1())
+                        .child(up)
+                        .child(down)
+                        .child(remove),
                 );
             if open {
                 item = item.child(div().flex().flex_col().children(FilterKind::ALL.into_iter().enumerate().map(|(k, option)| {
@@ -570,6 +771,11 @@ impl AppView {
                 })));
             }
             chain.push(item.into_any_element());
+        }
+        if let Some((i, f)) = self.eq_selected.and_then(|i| s.eq_filters.get(i).map(|f| (i, *f))) {
+            chain.push(self.eq_detail(i, &f, cx));
+        } else if count > 0 {
+            chain.push(row("eq-hint", crate::i18n::t("eq.select_hint"), None, None).text_color(theme::text_secondary()).into_any_element());
         }
         let buttons = div()
             .px(sc(super::widgets::PANEL_PAD - 4.))
@@ -590,6 +796,7 @@ impl AppView {
             .flex_col()
             .gap(sc(super::widgets::PANEL_GAP))
             .child(group(Icon::VolumeUp, crate::i18n::t("eq.title"), crate::i18n::t("eq.description"), main))
+            .child(group(Icon::Stats, crate::i18n::t("eq.graph"), "", vec![graph]))
             .child(group(Icon::Library, crate::i18n::t("eq.filters"), crate::i18n::t("eq.filters_description"), chain))
             .into_any_element()
     }

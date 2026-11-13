@@ -696,5 +696,12 @@
   "eq.auto_preamp": "プリアンプ自動調整",
   "eq.auto_preamp_help": "フィルターが変わるたびに、最も高い点に合わせてプリアンプを設定し、ブーストで音割れしないようにします。",
   "eq.peak": "ピーク {0} dBFS",
-  "eq.clip": "フルスケール超過：{0} dBFS（プリアンプを下げてください）"
+  "eq.clip": "フルスケール超過：{0} dBFS（プリアンプを下げてください）",
+  "eq.graph": "周波数応答",
+  "eq.col_type": "タイプ",
+  "eq.col_channel": "チャンネル",
+  "eq.col_freq": "Hz",
+  "eq.col_gain": "dB",
+  "eq.col_q": "Q",
+  "eq.select_hint": "フィルターを選ぶと、スライダーで調整できます。"
 }

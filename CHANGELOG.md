@@ -27,6 +27,12 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
   reaches the device and flags overs.
 - Tests: coefficients and impulse responses against an independent implementation,
   noise and distortion below -120 dB, and the quantiser, dither and channel routing.
+- Equaliser page: a **frequency response graph** (log axis 20 Hz to 20 kHz, dB scale
+  picked from the curves, 0 dB marked, one curve per channel when they differ) that
+  redraws live as filters change or sliders move.
+- Equaliser page: the filters are now a one-line-per-filter list like Equalizer APO
+  (on, number, type, channel, frequency, gain, Q, move and remove), all values visible
+  at once. Select a filter to adjust frequency (logarithmic), gain and Q with sliders.
 
 ## [1.2.0] - 2026-11-13
 

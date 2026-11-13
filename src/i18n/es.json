@@ -696,5 +696,12 @@
   "eq.auto_preamp": "Pre-amp automático",
   "eq.auto_preamp_help": "Ajusta el pre-amp según el punto más alto de los filtros cada vez que cambian, para que las subidas no saturen.",
   "eq.peak": "Pico {0} dBFS",
-  "eq.clip": "Por encima del máximo: {0} dBFS (baja el pre-amp)"
+  "eq.clip": "Por encima del máximo: {0} dBFS (baja el pre-amp)",
+  "eq.graph": "Respuesta en frecuencia",
+  "eq.col_type": "Tipo",
+  "eq.col_channel": "Canal",
+  "eq.col_freq": "Hz",
+  "eq.col_gain": "dB",
+  "eq.col_q": "Q",
+  "eq.select_hint": "Selecciona un filtro para ajustarlo con deslizadores."
 }

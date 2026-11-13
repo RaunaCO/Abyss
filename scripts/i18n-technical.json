@@ -83,6 +83,8 @@
     "Welcome"
   ],
   "src/ui/equalizer.rs": [
-    "dB"
+    "dB",
+    "{} Hz",
+    "{:+.1} dB"
   ]
 }
