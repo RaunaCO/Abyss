@@ -30,7 +30,7 @@ pub struct OutShared {
     /// output callback (see `dsp`).
     pub eq: EqShared,
     /// Loudest sample (f32 bits, 0 = none) since the UI last took it.
-    pub peak: AtomicU32,
+    pub peak: [AtomicU32; 2],
 }
 
 impl OutShared {
@@ -190,9 +190,15 @@ fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], app
     }
     // Loudest sample on its way to the device, for the equaliser page. Only
     // reads: it never changes the audio. Positive floats order like their bits.
-    let peak = out[..n].iter().fold(0.0f32, |m, s| m.max(s.abs()));
-    if peak > 0.0 {
-        shared.peak.fetch_max(peak.to_bits(), Ordering::Relaxed);
+    let (mut left, mut right) = (0.0f32, 0.0f32);
+    for frame in out[..n].as_chunks::<2>().0 {
+        left = left.max(frame[0].abs());
+        right = right.max(frame[1].abs());
+    }
+    for (peak, level) in shared.peak.iter().zip([left, right]) {
+        if level > 0.0 {
+            peak.fetch_max(level.to_bits(), Ordering::Relaxed);
+        }
     }
     shared.played.fetch_add((n / 2) as u64, Ordering::Release);
     scaled || dsp.is_active()
@@ -488,6 +494,7 @@ mod tests {
             Some(EqConfig {
                 enabled: true,
                 preamp_db: 0.0,
+                trim_db: [0.0; 2],
                 filters: vec![FilterSpec { gain_db: 0.0, ..FilterSpec::new(FilterKind::Peaking) }],
             }),
         ] {
@@ -504,7 +511,12 @@ mod tests {
         let input = music(9600);
         let shared = OutShared::default();
         shared.set_gain(1.0);
-        shared.eq.write(&EqConfig { enabled: true, preamp_db: 0.0, filters: vec![FilterSpec::new(FilterKind::LowPass)] });
+        shared.eq.write(&EqConfig {
+            enabled: true,
+            preamp_db: 0.0,
+            trim_db: [0.0; 2],
+            filters: vec![FilterSpec::new(FilterKind::LowPass)],
+        });
         let mut dsp = Dsp::new(48_000);
         let out = play(&shared, &mut dsp, &input, true);
         assert_ne!(bits(&out), bits(&input));
@@ -610,8 +622,12 @@ mod tests {
         let mut dsp = Dsp::new(48_000);
         let out = play(&shared, &mut dsp, &input, true);
         assert_eq!(bits(&out), bits(&input), "measuring changes nothing");
-        let peak = f32::from_bits(shared.peak.swap(0, Ordering::Relaxed));
-        assert_eq!(peak, 1.7);
-        assert_eq!(shared.peak.load(Ordering::Relaxed), 0);
+        // The over is in sample 1234 of the interleaved data: frame 617, the left channel.
+        let peaks = shared.peak.each_ref().map(|p| f32::from_bits(p.swap(0, Ordering::Relaxed)));
+        assert_eq!(peaks[0], 1.7);
+        assert!(peaks[1] < 1.0, "the right channel did not go over: {}", peaks[1]);
+        let right_max = input.as_chunks::<2>().0.iter().map(|f| f[1].abs()).fold(0.0f32, f32::max);
+        assert_eq!(peaks[1], right_max, "each channel reports its own loudest sample");
+        assert!(shared.peak.iter().all(|p| p.load(Ordering::Relaxed) == 0), "taking the peaks resets them");
     }
 }

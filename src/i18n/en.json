@@ -703,5 +703,9 @@
   "eq.col_freq": "Hz",
   "eq.col_gain": "dB",
   "eq.col_q": "Q",
-  "eq.select_hint": "Select a filter to adjust it with sliders."
+  "eq.select_hint": "Select a filter to adjust it with sliders.",
+  "eq.scale_auto": "Auto",
+  "eq.clip_tip": "Over full scale. Click to clear.",
+  "eq.trim_tip": "Level of this channel and its own gain, added to the pre-amp. Double-click the fader for 0 dB.",
+  "eq.graph_help": "Level meters (real output peak) and a gain fader per channel on the right."
 }

@@ -9,6 +9,19 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+### Added
+- Equaliser: **level meters per channel** to the right of the frequency response (real
+  peak at the output, -60 to +6 dBFS, held peak and an over-full-scale light you click
+  to clear) and a **gain fader per channel** (-12 to +12 dB, double-click for 0 dB) that
+  adds to the pre-amp without changing it. The meters refresh about 30 times a second
+  only while the page is open.
+- Equaliser: the response graph has margins for its labels (levels `+12`, `0`, `-12`
+  on the left, frequencies 20 Hz to 20 kHz below), a finer grid, curves in the accent
+  colour and a scale selector (Auto, 6, 12 or 24 dB each way).
+- The channel gains are part of the audio path: with no filters, no pre-amp and 0 dB
+  gains the audio is still not processed; a channel with no gain and no filters stays
+  bit-exact while the other is changed.
+
 ## [1.3.0] - 2026-11-13
 
 ### Fixed

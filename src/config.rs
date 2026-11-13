@@ -136,6 +136,8 @@ pub struct Settings {
     /// Set the pre-amp from the chain's loudest point every time it changes
     /// (on by default: it is what keeps boosts from clipping).
     pub eq_auto_preamp: bool,
+    /// Extra gain of the left and right channel (dB), on top of the pre-amp.
+    pub eq_trim: [f32; 2],
     /// The chain, in order. A filter this version does not know is dropped
     /// when loading instead of discarding the whole file.
     #[serde(deserialize_with = "lenient_filters")]
@@ -203,6 +205,7 @@ impl Default for Settings {
             eq_enabled: false,
             eq_preamp: 0.0,
             eq_auto_preamp: true,
+            eq_trim: [0.0; 2],
             eq_filters: Vec::new(),
             // Replaced by whichever client the user signed in with.
             client_id: DEVICE_CLIENT_ID.into(),
@@ -375,7 +378,13 @@ impl Settings {
 
     /// The equaliser chain as the audio engine wants it (values in range).
     pub fn eq_config(&self) -> crate::audio::dsp::EqConfig {
-        crate::audio::dsp::EqConfig { enabled: self.eq_enabled, preamp_db: self.eq_preamp, filters: self.eq_filters.clone() }.clamped()
+        crate::audio::dsp::EqConfig {
+            enabled: self.eq_enabled,
+            preamp_db: self.eq_preamp,
+            trim_db: self.eq_trim,
+            filters: self.eq_filters.clone(),
+        }
+        .clamped()
     }
 
     pub fn save(&self) {
