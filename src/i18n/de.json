@@ -696,5 +696,12 @@
   "eq.auto_preamp": "Automatischer Pre-Amp",
   "eq.auto_preamp_help": "Stellt den Pre-Amp bei jeder Änderung nach dem höchsten Punkt der Filter ein, damit Anhebungen nicht übersteuern.",
   "eq.peak": "Spitze {0} dBFS",
-  "eq.clip": "Über Vollaussteuerung: {0} dBFS (Pre-Amp senken)"
+  "eq.clip": "Über Vollaussteuerung: {0} dBFS (Pre-Amp senken)",
+  "eq.graph": "Frequenzgang",
+  "eq.col_type": "Typ",
+  "eq.col_channel": "Kanal",
+  "eq.col_freq": "Hz",
+  "eq.col_gain": "dB",
+  "eq.col_q": "Q",
+  "eq.select_hint": "Wähle einen Filter, um ihn mit Reglern einzustellen."
 }

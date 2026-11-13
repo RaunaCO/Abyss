@@ -186,9 +186,17 @@ impl EqConfig {
     }
 
     /// Response of the chain of `channel` (0 left, 1 right), pre-amp included, in dB at `freq` Hz.
-    #[allow(dead_code)] // the response graph (next change) draws with it
+    #[cfg(test)]
     pub fn response_db(&self, channel: usize, freq: f64, rate: f64) -> f64 {
         f64::from(self.preamp_db) + chain_db(&self.designs(channel, rate), freq, rate)
+    }
+
+    /// The response (dB, pre-amp included) of `channel` at each of `freqs`: the
+    /// filters are designed once, not once per point. For the response graph.
+    pub fn response_curve(&self, channel: usize, rate: f64, freqs: &[f64]) -> Vec<f32> {
+        let coefs = self.designs(channel, rate);
+        let pre = f64::from(self.preamp_db);
+        freqs.iter().map(|f| (pre + chain_db(&coefs, *f, rate)) as f32).collect()
     }
 
     /// The pre-amp (dB) that keeps the loudest point of either channel's
