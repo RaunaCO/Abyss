@@ -133,6 +133,9 @@ pub struct Settings {
     pub eq_enabled: bool,
     /// Global pre-amp in dB (negative leaves room for boosted filters).
     pub eq_preamp: f32,
+    /// Set the pre-amp from the chain's loudest point every time it changes
+    /// (on by default: it is what keeps boosts from clipping).
+    pub eq_auto_preamp: bool,
     /// The chain, in order. A filter this version does not know is dropped
     /// when loading instead of discarding the whole file.
     #[serde(deserialize_with = "lenient_filters")]
@@ -199,6 +202,7 @@ impl Default for Settings {
             lastfm_protected_session: None,
             eq_enabled: false,
             eq_preamp: 0.0,
+            eq_auto_preamp: true,
             eq_filters: Vec::new(),
             // Replaced by whichever client the user signed in with.
             client_id: DEVICE_CLIENT_ID.into(),

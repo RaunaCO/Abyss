@@ -689,5 +689,12 @@
   "eq.kind_high_pass": "High pass",
   "eq.kind_low_pass": "Low pass",
   "eq.empty": "No filters yet. Add one to start.",
-  "eq.full": "The chain is full (32 filters)."
+  "eq.full": "The chain is full (32 filters).",
+  "eq.channel_both": "Stereo",
+  "eq.channel_left": "Left",
+  "eq.channel_right": "Right",
+  "eq.auto_preamp": "Automatic pre-amp",
+  "eq.auto_preamp_help": "Sets the pre-amp from the loudest point of the filters every time they change, so boosts do not clip.",
+  "eq.peak": "Peak {0} dBFS",
+  "eq.clip": "Over full scale: {0} dBFS (lower the pre-amp)"
 }

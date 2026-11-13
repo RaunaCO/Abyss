@@ -689,5 +689,12 @@
   "eq.kind_high_pass": "ハイパス",
   "eq.kind_low_pass": "ローパス",
   "eq.empty": "フィルターはまだありません。追加して始めましょう。",
-  "eq.full": "チェーンがいっぱいです（フィルター32個）。"
+  "eq.full": "チェーンがいっぱいです（フィルター32個）。",
+  "eq.channel_both": "ステレオ",
+  "eq.channel_left": "左",
+  "eq.channel_right": "右",
+  "eq.auto_preamp": "プリアンプ自動調整",
+  "eq.auto_preamp_help": "フィルターが変わるたびに、最も高い点に合わせてプリアンプを設定し、ブーストで音割れしないようにします。",
+  "eq.peak": "ピーク {0} dBFS",
+  "eq.clip": "フルスケール超過：{0} dBFS（プリアンプを下げてください）"
 }

@@ -411,6 +411,8 @@ pub struct AppView {
     pub eq_preamp_input: Option<Entity<TextInput>>,
     pub eq_bounds: std::collections::HashMap<usize, Bounds<Pixels>>,
     pub eq_type_open: Option<usize>,
+    /// Loudest output sample lately (linear, decays), for the equaliser page.
+    pub eq_peak: f32,
     /// Replay: chosen period and the statistics computed for it.
     pub replay_period: replay::Period,
     pub replay_all_tracks: bool,
@@ -726,6 +728,7 @@ impl AppView {
             eq_preamp_input: None,
             eq_bounds: Default::default(),
             eq_type_open: None,
+            eq_peak: 0.0,
             replay_period: Default::default(),
             replay_all_tracks: false,
             replay_cache: None,
@@ -2206,6 +2209,7 @@ impl AppView {
             }
         }
         changed |= self.lastfm_tick(cx);
+        changed |= self.eq_poll_peak();
         if self.volume_hint_until.is_some_and(|t| std::time::Instant::now() >= t) {
             self.volume_hint_until = None;
             changed = true;
@@ -2260,7 +2264,7 @@ impl AppView {
                 self.seek(secs, cx);
             }
             Some(Drag::Volume) => self.save_settings(),
-            Some(Drag::Eq(_)) => self.eq_commit(),
+            Some(Drag::Eq(_)) => self.eq_commit(cx),
             None => {}
         }
     }

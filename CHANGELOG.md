@@ -9,6 +9,25 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+### Fixed
+- Equaliser: it no longer clips at full scale inside the filter chain. Boosted
+  material was clipped before the volume was applied, which distorted it even at low
+  volume; now the signal reaches the volume and the device stage intact.
+- 16-bit output: integer conversion now rounds to nearest with the right scale
+  (it truncated, with scale 32767, on 16-bit shared devices) and the exclusive 16-bit
+  path adds triangular dither when the signal was processed (equaliser or volume).
+  The untouched path stays bit-exact.
+
+### Added
+- Equaliser: each filter can work on Stereo, Left or Right. A channel with no
+  filters is left untouched bit for bit.
+- Equaliser: *Automatic pre-amp* (on by default) recomputes the pre-amp from the
+  loudest point of either channel whenever the chain changes, looking from 1 Hz to
+  Nyquist and refining the maxima. A peak meter shows the loudest sample that
+  reaches the device and flags overs.
+- Tests: coefficients and impulse responses against an independent implementation,
+  noise and distortion below -120 dB, and the quantiser, dither and channel routing.
+
 ## [1.2.0] - 2026-11-13
 
 ### Added
