@@ -56,6 +56,8 @@ before the import.
 | `recent_searches` | `[]` | Last 12 searches |
 | `discord` | `true` | Discord Rich Presence |
 | `discord_client_id` | `""` | Application ID supplied by the owner, empty means no activity is published |
+| `eq_enabled`, `eq_preamp` | `false`, `0.0` | Parametric equaliser on / off and pre-amp (dB). Off or flat means the audio is not processed. |
+| `eq_filters` | `[]` | The filter chain in order: `{enabled, kind, freq, gain_db, q}`, with `kind` one of `peaking`, `low_shelf`, `high_shelf`, `high_pass`, `low_pass`. Values are clamped on load; an unknown entry is dropped without touching the rest of the file. |
 | `lastfm_enabled` | `false` | Send listens to Last.fm (turns on when you connect; Settings → Integrations) |
 | `lastfm_user` | - | Connected Last.fm user name, shown in Settings |
 | `lastfm_protected_session` | - | Last.fm session key, DPAPI-encrypted, base64. Never stored in plaintext (`lastfm_session` is only read from older plaintext files). |

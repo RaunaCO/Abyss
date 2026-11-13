@@ -81,5 +81,8 @@
   ],
   "src/ui/onboarding.rs": [
     "Welcome"
+  ],
+  "src/ui/equalizer.rs": [
+    "dB"
   ]
 }

@@ -128,6 +128,15 @@ pub struct Settings {
     pub lastfm_session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lastfm_protected_session: Option<String>,
+    /// Parametric equaliser (Settings > Equalizer). An empty chain, or one
+    /// that does nothing, leaves the audio untouched.
+    pub eq_enabled: bool,
+    /// Global pre-amp in dB (negative leaves room for boosted filters).
+    pub eq_preamp: f32,
+    /// The chain, in order. A filter this version does not know is dropped
+    /// when loading instead of discarding the whole file.
+    #[serde(deserialize_with = "lenient_filters")]
+    pub eq_filters: Vec<crate::audio::dsp::FilterSpec>,
 
     /// OAuth client used for the device login. Can be replaced in settings.json.
     pub client_id: String,
@@ -188,6 +197,9 @@ impl Default for Settings {
             lastfm_user: None,
             lastfm_session: None,
             lastfm_protected_session: None,
+            eq_enabled: false,
+            eq_preamp: 0.0,
+            eq_filters: Vec::new(),
             // Replaced by whichever client the user signed in with.
             client_id: DEVICE_CLIENT_ID.into(),
             client_secret: DEVICE_CLIENT_SECRET.into(),
@@ -274,6 +286,16 @@ fn settings_path() -> PathBuf {
     config_dir().join("settings.json")
 }
 
+/// Read the equaliser chain, skipping entries that do not parse and treating
+/// anything that is not a list as empty, so one bad entry cannot reset every setting.
+fn lenient_filters<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<crate::audio::dsp::FilterSpec>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::Array(items) => items.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect(),
+        _ => Vec::new(),
+    })
+}
+
 /// DPAPI-encrypt a short secret as base64 (None when protection is unavailable).
 fn protect_text(plain: &str) -> Option<String> {
     crate::secure::protect(plain.as_bytes()).map(|blob| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, blob))
@@ -345,6 +367,11 @@ impl Settings {
             }
         }
         serde_json::to_vec_pretty(&disk).ok()
+    }
+
+    /// The equaliser chain as the audio engine wants it (values in range).
+    pub fn eq_config(&self) -> crate::audio::dsp::EqConfig {
+        crate::audio::dsp::EqConfig { enabled: self.eq_enabled, preamp_db: self.eq_preamp, filters: self.eq_filters.clone() }.clamped()
     }
 
     pub fn save(&self) {
@@ -453,6 +480,36 @@ mod settings_tests {
         {
             assert!(!json.contains(&format!("\"{key}\"")), "{key} must be left out");
         }
+    }
+
+    #[test]
+    fn equaliser_is_off_and_empty_by_default_and_round_trips() {
+        let d = Settings::default();
+        assert!(!d.eq_enabled && d.eq_filters.is_empty() && d.eq_preamp == 0.0);
+        assert!(d.eq_config().is_bypass());
+        let mut s = Settings { eq_enabled: true, eq_preamp: -3.5, ..Default::default() };
+        s.eq_filters.push(crate::audio::dsp::FilterSpec {
+            gain_db: 4.0,
+            ..crate::audio::dsp::FilterSpec::new(crate::audio::dsp::FilterKind::LowShelf)
+        });
+        let json = String::from_utf8(s.to_disk_json().unwrap()).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.eq_filters, s.eq_filters);
+        assert_eq!((back.eq_enabled, back.eq_preamp), (true, -3.5));
+    }
+
+    #[test]
+    fn a_filter_this_version_does_not_know_is_dropped_not_the_whole_file() {
+        let json = r#"{"volume":0.3,"eq_enabled":true,"eq_filters":[
+            {"enabled":true,"kind":"peaking","freq":500.0,"gain_db":3.0,"q":1.0},
+            {"enabled":true,"kind":"notch_from_the_future","freq":1.0,"gain_db":0.0,"q":1.0},
+            {"nonsense":1},
+            {"enabled":true,"kind":"low_pass","freq":9000.0,"gain_db":0.0,"q":0.7}]}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.volume, 0.3);
+        assert_eq!(s.eq_filters.len(), 2);
+        let not_a_list: Settings = serde_json::from_str(r#"{"volume":0.2,"eq_filters":"oops"}"#).unwrap();
+        assert!(not_a_list.eq_filters.is_empty() && not_a_list.volume == 0.2);
     }
 
     #[test]
