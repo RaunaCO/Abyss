@@ -6,6 +6,10 @@ playlist editing, lyrics from several providers, Now Playing and a clean
 fullscreen view, Replay, context menus and Song Info, six languages, guided
 introduction, local file tag editing, Windows media controls.
 
+## Done (1.4.0)
+Equaliser v3: level meters and gain faders per channel, aligned response graph,
+draggable nodes on the graph and a customisable graphic bars mode.
+
 ## Done (1.3.0)
 Equaliser v2: no clipping inside the chain, filters per channel, automatic
 pre-amp with a peak meter, dither for processed 16-bit output, frequency

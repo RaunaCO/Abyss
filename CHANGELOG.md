@@ -9,6 +9,8 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-13
+
 ### Added
 - Equaliser: **level meters per channel** to the right of the frequency response (real
   peak at the output, -60 to +6 dBFS, held peak and an over-full-scale light you click
