@@ -42,9 +42,26 @@ switched off one by one and edited by number or (gain) with a slider.
   (the 0.3 s ring is not in the way).
 - **Maths.** RBJ Audio EQ Cookbook biquads (High / Low Pass are second order, Q
   defaults to Butterworth 0.707; stack two for 24 dB per octave). State and
-  coefficients are `f64`; samples in and out are `f32`. Active output is limited to
-  full scale. The pre-amp is the protection against clipping when boosting;
-  *Auto* sets it to the negative of the chain's loudest point.
+  coefficients are `f64`, the pre-amp comes first and the value stays `f64`
+  through every section; the only step down to `f32` is the last one. Nothing is
+  clipped inside the equaliser: the volume comes after it, and a float device
+  takes the samples as they are (above 1.0 too, like Equalizer APO), while
+  integer outputs limit last. Versions up to 1.2.0 clipped at full scale
+  *before* the volume, which distorted boosted material even at low volume.
+- **Pre-amp.** *Automatic pre-amp* (on by default) sets it to the negative of
+  the loudest point of either channel's response, from 1 Hz to Nyquist with the
+  maxima refined, every time the chain changes. The equaliser page shows the
+  loudest sample that really reaches the device (`Peak -x dBFS`) and flags
+  anything over full scale.
+- **Channels.** Each filter works on Stereo, Left or Right (like
+  `Channel: L R` in Equalizer APO). There is one chain per channel; a channel
+  with no filters and no pre-amp is not touched even while the other is being
+  filtered (bit for bit). The pre-amp applies to both.
+- **Dither.** Only for a 16-bit target (WASAPI exclusive or a 16-bit shared
+  device) and only when the signal was changed on the way (equaliser active or
+  volume below full): triangular dither of one LSB, so quiet detail is not
+  lost to rounding. 24- and 32-bit outputs and the untouched path are not
+  dithered. Integer conversion rounds to nearest with scale `2^(bits-1)`.
 - **Bit-perfect when idle.** If the equaliser is off, the chain is empty, every
   filter is disabled or is a 0 dB peaking / shelf, and the pre-amp is 0 dB,
   `Dsp::process` returns without touching a sample: the bytes that reach the
@@ -60,11 +77,17 @@ switched off one by one and edited by number or (gain) with a slider.
   allocates, and moving a slider cannot stall WASAPI.
 
 What is tested (`cargo test`): filter responses against sine waves generated in
-memory and against the analytic response, bit-for-bit equality when idle (also
-through a real ring and `fill`), absence of jumps while switching and changing the
-chain, the seqlock under a hammering writer, and the integer PCM round trip. What
-is **not** verified is the device: like the rest of the bit-perfect claim, it needs
-a digital loopback capture.
+memory and against the analytic response; coefficients and impulse responses
+against values from a separate implementation (plain Python, doubles); the
+definitions' properties (shelf corner at half the gain, Butterworth -3 dB);
+noise and distortion more than 120 dB below a tone through boosts and cuts;
+that a boost is not clipped inside the equaliser and that the automatic pre-amp
+leaves no overs for a full-scale tone; bit-for-bit equality when idle (also
+through a real ring and `fill`) and for a channel with no filters; absence of
+jumps while switching, changing or moving filters between channels; the seqlock
+under a hammering writer; the integer quantiser, the dither statistics and the
+peak meter. What is **not** verified is the device: like the rest of the
+bit-perfect claim, it needs a digital loopback capture.
 
 ## Gapless
 

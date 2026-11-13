@@ -689,5 +689,12 @@
   "eq.kind_high_pass": "Passe-haut",
   "eq.kind_low_pass": "Passe-bas",
   "eq.empty": "Aucun filtre pour l’instant. Ajoutez-en un pour commencer.",
-  "eq.full": "La chaîne est pleine (32 filtres)."
+  "eq.full": "La chaîne est pleine (32 filtres).",
+  "eq.channel_both": "Stéréo",
+  "eq.channel_left": "Gauche",
+  "eq.channel_right": "Droite",
+  "eq.auto_preamp": "Pré-ampli automatique",
+  "eq.auto_preamp_help": "Règle le pré-ampli selon le point le plus haut des filtres à chaque changement, pour que les augmentations ne saturent pas.",
+  "eq.peak": "Crête {0} dBFS",
+  "eq.clip": "Au-dessus du maximum : {0} dBFS (baissez le pré-ampli)"
 }

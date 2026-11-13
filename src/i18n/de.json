@@ -689,5 +689,12 @@
   "eq.kind_high_pass": "Hochpass",
   "eq.kind_low_pass": "Tiefpass",
   "eq.empty": "Noch keine Filter. Füge einen hinzu, um zu beginnen.",
-  "eq.full": "Die Kette ist voll (32 Filter)."
+  "eq.full": "Die Kette ist voll (32 Filter).",
+  "eq.channel_both": "Stereo",
+  "eq.channel_left": "Links",
+  "eq.channel_right": "Rechts",
+  "eq.auto_preamp": "Automatischer Pre-Amp",
+  "eq.auto_preamp_help": "Stellt den Pre-Amp bei jeder Änderung nach dem höchsten Punkt der Filter ein, damit Anhebungen nicht übersteuern.",
+  "eq.peak": "Spitze {0} dBFS",
+  "eq.clip": "Über Vollaussteuerung: {0} dBFS (Pre-Amp senken)"
 }

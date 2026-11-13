@@ -29,6 +29,8 @@ pub struct OutShared {
     /// Equaliser configuration written by the UI and read lock-free by the
     /// output callback (see `dsp`).
     pub eq: EqShared,
+    /// Loudest sample (f32 bits, 0 = none) since the UI last took it.
+    pub peak: AtomicU32,
 }
 
 impl OutShared {
@@ -108,9 +110,47 @@ fn ring(rate: u32) -> (rtrb::Producer<f32>, rtrb::Consumer<f32>) {
     rtrb::RingBuffer::new((rate as usize * 2 * 3 / 10).max(8192))
 }
 
+/// Triangular-PDF dither: noise of up to one least significant bit (two
+/// uniform numbers added), with its own tiny generator so the real-time
+/// callback needs nothing else.
+pub struct Dither(u32);
+
+impl Dither {
+    pub fn new() -> Self {
+        Self(0x2545_F491)
+    }
+
+    fn unit(&mut self) -> f64 {
+        // xorshift32 never reaches 0 from a non-zero seed.
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 17;
+        self.0 ^= self.0 << 5;
+        f64::from(self.0) / 4_294_967_296.0
+    }
+
+    /// In least significant bits, between -1 and 1, mean 0.
+    pub fn tpdf(&mut self) -> f64 {
+        self.unit() + self.unit() - 1.0
+    }
+}
+
+/// A sample (-1.0 to 1.0) as a signed integer of `bits` bits: scaled by
+/// `2^(bits-1)` and rounded, so integer PCM that came through as `f32`
+/// returns exactly. `dither` is only for a signal that was processed on the way
+/// (an unprocessed one must stay exact).
+pub fn quantize(sample: f32, bits: u32, dither: Option<&mut Dither>) -> i64 {
+    let max = (1i64 << (bits - 1)) as f64;
+    let mut v = f64::from(sample) * max;
+    if let Some(d) = dither {
+        v += d.tpdf();
+    }
+    v.round().clamp(-max, max - 1.0) as i64
+}
+
 /// Pull up to `out.len()` samples, honouring flush/pause/equaliser/gain. What
-/// the ring does not hold is silence.
-fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], apply_gain: bool, dsp: &mut Dsp) {
+/// the ring does not hold is silence. Returns whether the signal was changed on
+/// the way (equaliser active or volume below full), which decides about dither.
+fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], apply_gain: bool, dsp: &mut Dsp) -> bool {
     if shared.flush.load(Ordering::Acquire) {
         dsp.reset();
         let n = cons.slots();
@@ -123,7 +163,7 @@ fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], app
     if shared.paused.load(Ordering::Relaxed) {
         out.fill(0.0);
         shared.decay_levels();
-        return;
+        return false;
     }
     let want = out.len() - out.len() % 2;
     let n = cons.slots().min(want);
@@ -138,15 +178,24 @@ fn fill(cons: &mut rtrb::Consumer<f32>, shared: &OutShared, out: &mut [f32], app
     // Equaliser: leaves the samples untouched (bit-perfect) unless the chain does something.
     dsp.process(&shared.eq, &mut out[..n]);
     // (Band analysis for the backgrounds is no longer used: they drift on their own.)
+    let mut scaled = false;
     if apply_gain {
         let g = shared.gain();
         if g != 1.0 {
+            scaled = true;
             for s in &mut out[..n] {
                 *s *= g;
             }
         }
     }
+    // Loudest sample on its way to the device, for the equaliser page. Only
+    // reads: it never changes the audio. Positive floats order like their bits.
+    let peak = out[..n].iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    if peak > 0.0 {
+        shared.peak.fetch_max(peak.to_bits(), Ordering::Relaxed);
+    }
     shared.played.fetch_add((n / 2) as u64, Ordering::Release);
+    scaled || dsp.is_active()
 }
 
 fn find_device(name: Option<&str>) -> Result<cpal::Device> {
@@ -175,35 +224,40 @@ pub fn open_shared(device: Option<&str>, shared: Arc<OutShared>) -> Result<Outpu
     let mut scratch: Vec<f32> = Vec::new();
     let sh = shared.clone();
     let mut dsp = Dsp::new(rate);
-    let mut render = move |frames: usize, write: &mut dyn FnMut(usize, f32)| {
+    // `write` gets the index, the sample and whether the signal was processed.
+    let mut render = move |frames: usize, write: &mut dyn FnMut(usize, f32, bool)| {
         scratch.resize(frames * 2, 0.0);
-        fill(&mut cons, &sh, &mut scratch, true, &mut dsp);
+        let processed = fill(&mut cons, &sh, &mut scratch, true, &mut dsp);
         for f in 0..frames {
             for c in 0..channels {
                 // Stereo to the first two channels, silence on the others.
                 let v = if c < 2 { scratch[f * 2 + c] } else { 0.0 };
-                write(f * channels + c, v);
+                write(f * channels + c, v, processed);
             }
         }
     };
     let stream = match cfg.sample_format() {
+        // A float device takes the samples as they are (above 1.0 too, as Equalizer APO would).
         cpal::SampleFormat::F32 => dev.build_output_stream(
             &stream_cfg,
-            move |data: &mut [f32], _| render(data.len() / channels, &mut |i, v| data[i] = v),
+            move |data: &mut [f32], _| render(data.len() / channels, &mut |i, v, _| data[i] = v),
             on_err,
             None,
         )?,
-        cpal::SampleFormat::I16 => dev.build_output_stream(
-            &stream_cfg,
-            move |data: &mut [i16], _| render(data.len() / channels, &mut |i, v| data[i] = (v.clamp(-1.0, 1.0) * 32767.0) as i16),
-            on_err,
-            None,
-        )?,
+        cpal::SampleFormat::I16 => {
+            let mut dither = Dither::new();
+            dev.build_output_stream(
+                &stream_cfg,
+                move |data: &mut [i16], _| {
+                    render(data.len() / channels, &mut |i, v, processed| data[i] = quantize(v, 16, processed.then_some(&mut dither)) as i16)
+                },
+                on_err,
+                None,
+            )?
+        }
         cpal::SampleFormat::I32 => dev.build_output_stream(
             &stream_cfg,
-            move |data: &mut [i32], _| {
-                render(data.len() / channels, &mut |i, v| data[i] = (v.clamp(-1.0, 1.0) as f64 * 2147483647.0) as i32)
-            },
+            move |data: &mut [i32], _| render(data.len() / channels, &mut |i, v, _| data[i] = quantize(v, 32, None) as i32),
             on_err,
             None,
         )?,
@@ -328,16 +382,20 @@ pub fn open_exclusive(device: Option<&str>, rate: u32, source_bits: u32, shared:
             let mut scratch = Vec::<f32>::new();
             let mut bytes = Vec::<u8>::new();
             let mut dsp = Dsp::new(rate);
+            let mut dither = Dither::new();
             ac.start_stream().map_err(|e| e.to_string())?;
             while !stop2.load(Ordering::Relaxed) {
                 let frames = ac.get_available_space_in_frames().map_err(|e| e.to_string())? as usize;
                 if frames > 0 {
                     scratch.resize(frames * 2, 0.0);
-                    fill(&mut cons, &shared, &mut scratch, apply_gain, &mut dsp);
+                    let processed = fill(&mut cons, &shared, &mut scratch, apply_gain, &mut dsp);
                     bytes.clear();
                     bytes.reserve(frames * block);
+                    // Dither only a 16-bit target and only a signal that was processed:
+                    // an untouched one (the bit-perfect path) must stay exact.
+                    let dithered = processed && valid == 16 && !float;
                     for &s in &scratch {
-                        write_sample(&mut bytes, s, bytes_per_sample, valid, float);
+                        write_sample(&mut bytes, s, bytes_per_sample, valid, float, dithered.then_some(&mut dither));
                     }
                     render.write_to_device(frames, &bytes, None).map_err(|e| e.to_string())?;
                 }
@@ -374,14 +432,12 @@ pub fn open_exclusive(device: Option<&str>, rate: u32, source_bits: u32, shared:
 /// Convert one f32 sample to the device's integer/float format. Decoded
 /// integer PCM (16/24-bit) maps back to exactly the original values.
 #[cfg(windows)]
-fn write_sample(out: &mut Vec<u8>, s: f32, bytes: usize, valid: usize, float: bool) {
+fn write_sample(out: &mut Vec<u8>, s: f32, bytes: usize, valid: usize, float: bool, dither: Option<&mut Dither>) {
     if float {
         out.extend_from_slice(&s.to_le_bytes());
         return;
     }
-    let s = s.clamp(-1.0, 1.0) as f64;
-    let max = (1i64 << (valid - 1)) as f64;
-    let v = (s * max).round().clamp(-max, max - 1.0) as i64;
+    let v = quantize(s, valid as u32, dither);
     // Left-justify the valid bits in the container.
     let shifted = v << (bytes * 8 - valid);
     out.extend_from_slice(&shifted.to_le_bytes()[..bytes]);
@@ -468,12 +524,94 @@ mod tests {
                 let max = (1i64 << (valid - 1)) as f32;
                 let sample = v as f32 / max;
                 let mut out = Vec::new();
-                write_sample(&mut out, sample, bytes, valid, false);
+                write_sample(&mut out, sample, bytes, valid, false, None);
                 let mut raw = [0u8; 8];
                 raw[..bytes].copy_from_slice(&out);
                 let back = i64::from_le_bytes(raw) << (64 - bytes * 8) >> (64 - bytes * 8) >> (bytes * 8 - valid);
                 assert_eq!(back, i64::from(v), "{valid}-bit {v}");
             }
         }
+    }
+
+    #[test]
+    fn the_quantizer_is_exact_rounded_and_limited() {
+        // Every 16-bit value that went through f32 comes back unchanged (scale 2^15, not 2^15 - 1).
+        for v in (-32768i64..=32767).step_by(7).chain([-32768, -1, 0, 1, 32767]) {
+            assert_eq!(quantize(v as f32 / 32768.0, 16, None), v);
+        }
+        assert_eq!(quantize(-1.0, 16, None), -32768);
+        assert_eq!(quantize(1.0, 16, None), 32767, "full scale is limited, not wrapped");
+        assert_eq!(quantize(7.5, 24, None), 8_388_607);
+        // Rounds to nearest, not towards zero: 0.6 LSB is 1, -0.6 LSB is -1.
+        assert_eq!(quantize(0.6 / 32768.0, 16, None), 1);
+        assert_eq!(quantize(-0.6 / 32768.0, 16, None), -1);
+        assert_eq!(quantize(0.4 / 32768.0, 16, None), 0);
+        assert_eq!(quantize(f32::MAX, 32, None), i64::from(i32::MAX));
+    }
+
+    #[test]
+    fn dither_is_triangular_zero_mean_and_within_one_bit() {
+        let mut d = Dither::new();
+        let n = 200_000;
+        let values: Vec<f64> = (0..n).map(|_| d.tpdf()).collect();
+        let mean = values.iter().sum::<f64>() / n as f64;
+        let var = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64;
+        assert!(values.iter().all(|v| (-1.0..=1.0).contains(v)));
+        assert!(mean.abs() < 0.01, "mean {mean}");
+        // The variance of the sum of two uniform(0,1) numbers is 1/6.
+        assert!((var - 1.0 / 6.0).abs() < 0.005, "variance {var}");
+    }
+
+    #[test]
+    fn dither_removes_the_bias_of_quantising_a_quiet_signal() {
+        // A constant 0.3 LSB: plain rounding turns it into 0 (the signal is lost); with
+        // dither the average of the output recovers it.
+        let level = 0.3 / 32768.0;
+        let plain: f64 = (0..50_000).map(|_| quantize(level as f32, 16, None) as f64).sum::<f64>() / 50_000.0;
+        assert_eq!(plain, 0.0);
+        let mut d = Dither::new();
+        let dithered: f64 = (0..200_000).map(|_| quantize(level as f32, 16, Some(&mut d)) as f64).sum::<f64>() / 200_000.0;
+        assert!((dithered - 0.3).abs() < 0.01, "average {dithered}");
+    }
+
+    #[test]
+    fn fill_says_when_the_signal_was_changed_and_keeps_the_exact_path_exact() {
+        let input = music(4800);
+        let shared = OutShared::default();
+        // Volume at full and no equaliser: untouched, so nothing to dither.
+        shared.set_gain(1.0);
+        let (mut producer, mut consumer) = rtrb::RingBuffer::new(input.len());
+        let mut chunk = producer.write_chunk(input.len()).unwrap();
+        let (a, b) = chunk.as_mut_slices();
+        a.copy_from_slice(&input[..a.len()]);
+        b.copy_from_slice(&input[a.len()..]);
+        chunk.commit_all();
+        let mut out = vec![0.0f32; input.len()];
+        let mut dsp = Dsp::new(48_000);
+        assert!(!fill(&mut consumer, &shared, &mut out, true, &mut dsp));
+        assert_eq!(bits(&out), bits(&input));
+        // Volume below full: changed.
+        shared.set_gain(0.5);
+        let (mut producer, mut consumer) = rtrb::RingBuffer::new(input.len());
+        let mut chunk = producer.write_chunk(input.len()).unwrap();
+        let (a, b) = chunk.as_mut_slices();
+        a.copy_from_slice(&input[..a.len()]);
+        b.copy_from_slice(&input[a.len()..]);
+        chunk.commit_all();
+        assert!(fill(&mut consumer, &shared, &mut out, true, &mut dsp));
+    }
+
+    #[test]
+    fn the_peak_meter_reports_the_loudest_sample_and_resets_when_taken() {
+        let shared = OutShared::default();
+        shared.set_gain(1.0);
+        let mut input = music(4800);
+        input[1234] = 1.7; // an over, as a boost could make
+        let mut dsp = Dsp::new(48_000);
+        let out = play(&shared, &mut dsp, &input, true);
+        assert_eq!(bits(&out), bits(&input), "measuring changes nothing");
+        let peak = f32::from_bits(shared.peak.swap(0, Ordering::Relaxed));
+        assert_eq!(peak, 1.7);
+        assert_eq!(shared.peak.load(Ordering::Relaxed), 0);
     }
 }

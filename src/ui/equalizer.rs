@@ -7,7 +7,7 @@ use super::icons::Icon;
 use super::input::{InputEvent, TextInput};
 use super::settings::{group, row, small_button, switch};
 use super::{sc, theme, AppView, Drag};
-use crate::audio::dsp::{FilterKind, FilterSpec, MAX_FILTERS, MAX_GAIN_DB, MAX_PREAMP_DB, MIN_PREAMP_DB};
+use crate::audio::dsp::{Channels, FilterKind, FilterSpec, MAX_FILTERS, MAX_GAIN_DB, MAX_PREAMP_DB, MIN_PREAMP_DB};
 
 /// Range of the sliders (the numeric fields accept the full range).
 const GAIN_SLIDER_DB: f32 = 20.0;
@@ -38,6 +38,14 @@ fn kind_label(kind: FilterKind) -> &'static str {
     }
 }
 
+fn channel_label(channels: Channels) -> &'static str {
+    match channels {
+        Channels::Both => crate::i18n::t("eq.channel_both"),
+        Channels::Left => crate::i18n::t("eq.channel_left"),
+        Channels::Right => crate::i18n::t("eq.channel_right"),
+    }
+}
+
 fn fmt_freq(v: f32) -> String {
     if v.fract() == 0.0 {
         format!("{v:.0}")
@@ -59,20 +67,36 @@ impl AppView {
 
     /// Publish the chain to the audio thread; `save` also writes `settings.json`
     /// (not while a slider is being dragged).
-    fn eq_apply(&mut self, save: bool) {
-        let cfg = {
-            let s = self.settings.lock();
+    fn eq_apply(&mut self, save: bool, cx: &mut Context<Self>) {
+        let rate = if self.snap.output_rate > 0 { self.snap.output_rate } else { DEFAULT_RATE };
+        let (cfg, preamp_changed) = {
+            let mut s = self.settings.lock();
+            let mut changed = false;
+            if s.eq_auto_preamp {
+                // Measured with the switch on, so the number is right the moment it is turned on.
+                let mut measured = s.eq_config();
+                measured.enabled = true;
+                let pre = measured.auto_preamp(f64::from(rate));
+                changed = (pre - s.eq_preamp).abs() > 0.001;
+                s.eq_preamp = pre;
+            }
             if save {
                 s.save();
             }
-            s.eq_config()
+            (s.eq_config(), changed)
         };
         self.player.set_eq(&cfg);
+        if preamp_changed {
+            let text = format!("{:.1}", cfg.preamp_db);
+            if let Some(input) = &self.eq_preamp_input {
+                input.update(cx, |i, cx| i.set_text(&text, cx));
+            }
+        }
     }
 
     /// Called at start-up: publish the saved chain and build the fields.
     pub fn eq_start(&mut self, cx: &mut Context<Self>) {
-        self.eq_apply(false);
+        self.eq_apply(false, cx);
         self.eq_sync_rows(cx);
     }
 
@@ -113,7 +137,11 @@ impl AppView {
         let id = input.entity_id();
         if self.eq_preamp_input.as_ref().is_some_and(|p| p.entity_id() == id) {
             if let Some(v) = parse(text) {
-                self.settings.lock().eq_preamp = round_tenth(v).clamp(MIN_PREAMP_DB, MAX_PREAMP_DB);
+                let mut s = self.settings.lock();
+                // With the automatic pre-amp on, the number is not for typing.
+                if !s.eq_auto_preamp {
+                    s.eq_preamp = round_tenth(v).clamp(MIN_PREAMP_DB, MAX_PREAMP_DB);
+                }
             }
         } else {
             let found = self.eq_rows.iter().enumerate().find_map(|(i, r)| {
@@ -135,7 +163,7 @@ impl AppView {
                 }
             }
         }
-        self.eq_apply(true);
+        self.eq_apply(true, cx);
         // Show the value that was actually applied (clamped, or the old one if the text was not a number).
         self.eq_sync_rows(cx);
         cx.notify();
@@ -143,7 +171,7 @@ impl AppView {
 
     fn eq_set_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
         self.settings.lock().eq_enabled = on;
-        self.eq_apply(true);
+        self.eq_apply(true, cx);
         cx.notify();
     }
 
@@ -157,7 +185,7 @@ impl AppView {
             }
             s.eq_filters.push(FilterSpec::new(FilterKind::Peaking));
         }
-        self.eq_apply(true);
+        self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
         cx.notify();
     }
@@ -170,7 +198,7 @@ impl AppView {
             }
         }
         self.eq_type_open = None;
-        self.eq_apply(true);
+        self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
         cx.notify();
     }
@@ -185,7 +213,7 @@ impl AppView {
             s.eq_filters.swap(i, j);
         }
         self.eq_type_open = None;
-        self.eq_apply(true);
+        self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
         cx.notify();
     }
@@ -194,7 +222,7 @@ impl AppView {
         if let Some(f) = self.settings.lock().eq_filters.get_mut(i) {
             f.enabled = !f.enabled;
         }
-        self.eq_apply(true);
+        self.eq_apply(true, cx);
         cx.notify();
     }
 
@@ -207,7 +235,7 @@ impl AppView {
             f.kind = kind;
         }
         self.eq_type_open = None;
-        self.eq_apply(true);
+        self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
         cx.notify();
     }
@@ -219,22 +247,39 @@ impl AppView {
             s.eq_preamp = 0.0;
         }
         self.eq_type_open = None;
-        self.eq_apply(true);
+        self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
         cx.notify();
     }
 
-    fn eq_auto_preamp(&mut self, cx: &mut Context<Self>) {
-        let rate = if self.snap.output_rate > 0 { self.snap.output_rate } else { DEFAULT_RATE };
-        {
-            let mut s = self.settings.lock();
-            let mut cfg = s.eq_config();
-            cfg.enabled = true;
-            s.eq_preamp = cfg.auto_preamp(f64::from(rate));
-        }
-        self.eq_apply(true);
+    /// Turn the automatic pre-amp on or off. Off keeps the last value for manual tuning.
+    fn eq_set_auto(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.lock().eq_auto_preamp = on;
+        self.eq_apply(true, cx);
         self.eq_sync_rows(cx);
         cx.notify();
+    }
+
+    fn eq_cycle_channel(&mut self, i: usize, cx: &mut Context<Self>) {
+        if let Some(f) = self.settings.lock().eq_filters.get_mut(i) {
+            f.channels = f.channels.next();
+        }
+        self.eq_apply(true, cx);
+        cx.notify();
+    }
+
+    /// Read the loudest output sample since the last tick, with a slow fall so
+    /// the number is readable. Returns true when the equaliser page shows a
+    /// different value and needs redrawing.
+    pub fn eq_poll_peak(&mut self) -> bool {
+        let new = self.player.take_peak();
+        let before = self.eq_peak;
+        self.eq_peak = if new > self.eq_peak { new } else { self.eq_peak * 0.8 };
+        if self.eq_peak < 1e-4 {
+            self.eq_peak = 0.0;
+        }
+        let db = |v: f32| if v > 0.0 { (20.0 * v.log10() * 10.0).round() / 10.0 } else { f32::NEG_INFINITY };
+        self.settings_tab == super::settings::EQ_TAB && db(before) != db(self.eq_peak)
     }
 
     /// A slider moved: key 0 is the pre-amp, key `i + 1` the gain of filter `i`.
@@ -242,14 +287,17 @@ impl AppView {
         {
             let mut s = self.settings.lock();
             if key == 0 {
-                s.eq_preamp = round_tenth(PREAMP_SLIDER.0 + frac * (PREAMP_SLIDER.1 - PREAMP_SLIDER.0)).clamp(MIN_PREAMP_DB, MAX_PREAMP_DB);
+                if !s.eq_auto_preamp {
+                    s.eq_preamp =
+                        round_tenth(PREAMP_SLIDER.0 + frac * (PREAMP_SLIDER.1 - PREAMP_SLIDER.0)).clamp(MIN_PREAMP_DB, MAX_PREAMP_DB);
+                }
             } else if let Some(f) = s.eq_filters.get_mut(key - 1) {
                 if f.kind.has_gain() {
                     f.gain_db = round_tenth((frac * 2.0 - 1.0) * GAIN_SLIDER_DB).clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
                 }
             }
         }
-        self.eq_apply(false);
+        self.eq_apply(false, cx);
         // Keep the fields in step without moving the caret of a field being typed in.
         let s = self.settings.lock().clone();
         if key == 0 {
@@ -262,8 +310,8 @@ impl AppView {
     }
 
     /// The drag ended: write the settings once.
-    pub fn eq_commit(&mut self) {
-        self.eq_apply(true);
+    pub fn eq_commit(&mut self, cx: &mut Context<Self>) {
+        self.eq_apply(true, cx);
     }
 
     // ------------------------------------------------------------- page
@@ -383,19 +431,24 @@ impl AppView {
         self.eq_sync_rows_if_needed(cx);
 
         // ------------------------------------------------ switch, status, pre-amp
-        let status = if active { crate::i18n::t("eq.status_active") } else { crate::i18n::t("eq.status_idle") };
+        let mut status = if active { crate::i18n::t("eq.status_active").to_string() } else { crate::i18n::t("eq.status_idle").to_string() };
+        if self.eq_peak > 0.0 {
+            // What really reaches the device: over 0 dBFS the output is clipping.
+            let db = format!("{:.1}", 20.0 * self.eq_peak.log10());
+            let key = if self.eq_peak > 1.0 { "eq.clip" } else { "eq.peak" };
+            status = format!("{status}  |  {}", crate::i18n::text(key, &[db]));
+        }
         let preamp_frac = (s.eq_preamp - PREAMP_SLIDER.0) / (PREAMP_SLIDER.1 - PREAMP_SLIDER.0);
         let preamp_slider = self.eq_slider(0, preamp_frac, cx);
         let preamp_input = self.eq_preamp_input.clone();
+        let manual = !s.eq_auto_preamp;
         let preamp_right = div()
             .flex()
             .items_center()
             .gap(sc(10.))
+            .opacity(if manual { 1.0 } else { 0.5 })
             .child(preamp_slider)
-            .children(preamp_input.map(|input| self.eq_field("dB", &input, 56., true)))
-            .child(
-                small_button("eq-auto", crate::i18n::t("eq.preamp_auto"), false).on_click(cx.listener(|v, _, _, cx| v.eq_auto_preamp(cx))),
-            )
+            .children(preamp_input.map(|input| self.eq_field("dB", &input, 56., manual)))
             .into_any_element();
         let main = vec![
             self.toggle_row(
@@ -412,6 +465,17 @@ impl AppView {
             row("eq-status", status, None, None)
                 .text_color(if active { theme::accent() } else { theme::text_secondary() })
                 .into_any_element(),
+            self.toggle_row(
+                "eq-auto-preamp",
+                crate::i18n::t("eq.auto_preamp"),
+                crate::i18n::t("eq.auto_preamp_help"),
+                s.eq_auto_preamp,
+                |this, cx| {
+                    let on = !this.settings.lock().eq_auto_preamp;
+                    this.eq_set_auto(on, cx)
+                },
+                cx,
+            ),
             row("eq-preamp", crate::i18n::t("eq.preamp"), Some(crate::i18n::t("eq.preamp_help").into()), Some(preamp_right))
                 .into_any_element(),
         ];
@@ -443,6 +507,9 @@ impl AppView {
                     cx.notify();
                 }))
                 .into_any_element();
+            let channel_button = small_button(("eq-channel", i), channel_label(f.channels), false)
+                .on_click(cx.listener(move |this, _, _, cx| this.eq_cycle_channel(i, cx)))
+                .into_any_element();
             let up = self.eq_icon_button(("eq-up", i), Icon::ChevUp, crate::i18n::t("eq.move_up"), i > 0, cx, move |this, cx| {
                 this.eq_move(i, false, cx)
             });
@@ -468,6 +535,7 @@ impl AppView {
                         .gap(sc(10.))
                         .child(toggle)
                         .child(kind_button)
+                        .child(channel_button)
                         .child(div().flex_1())
                         .child(up)
                         .child(down)
