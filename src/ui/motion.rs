@@ -8,12 +8,14 @@ use gpui::Window;
 use super::AppView;
 
 // One rhythm for the entire UI. Never transform raster artwork in GPUI 0.2.2.
-pub const PRESS: Duration = Duration::from_millis(80);
-pub const FAST: Duration = Duration::from_millis(140);
-pub const CONTROL: Duration = Duration::from_millis(220);
-pub const PANEL: Duration = Duration::from_millis(300);
-pub const AMBIENT_FADE: Duration = Duration::from_millis(900);
-pub const STAGGER: f32 = 0.035;
+// 1.5.0: every duration is 35 % shorter than before (80, 140, 220, 300, 900 ms
+// and a 35 ms stagger), so the interface answers faster.
+pub const PRESS: Duration = Duration::from_millis(52);
+pub const FAST: Duration = Duration::from_millis(91);
+pub const CONTROL: Duration = Duration::from_millis(143);
+pub const PANEL: Duration = Duration::from_millis(195);
+pub const AMBIENT_FADE: Duration = Duration::from_millis(585);
+pub const STAGGER: f32 = 0.023;
 pub const SIDEBAR_ANIM: Duration = CONTROL;
 
 pub fn duration(normal: Duration) -> Duration {

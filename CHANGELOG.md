@@ -11,8 +11,8 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [1.5.0] - 2026-11-18
 
-Highlights: interface polish (WCAG AA contrast for every text level, a volume fill that
-glides, a soft entrance when the track changes, allocation-free hover and press
+Highlights: interface polish (WCAG AA contrast for every text level, animations 35 %
+faster, an instant volume fill, a soft entrance when the track changes, allocation-free hover and press
 tracking), a play queue that survives restarts, AIFF / Ogg Vorbis / ALAC and local
 ReplayGain, privacy-first defaults, data export, a fix for seeking back in AAC streams and
 a set of reliability fixes for large libraries and unplugged drives.
@@ -22,10 +22,12 @@ a set of reliability fixes for large libraries and unplugged drives.
   (4.5:1) on every surface it sits on in both themes; it was as low as 3.8:1 on hovered
   and pressed rows. The three text levels stay clearly distinct. A test checks every text
   colour against every surface.
-- **Volume**: the fill glides to wheel, keyboard and mute changes (140 ms); dragging still
-  follows the pointer exactly.
-- **Track change**: the title, album and artist in the player bar fade and slide in once
-  per new track (instant with Windows' reduced animations).
+- **Faster motion**: every animation in the interface is 35 % shorter (press 52 ms,
+  quick feedback 91 ms, controls 143 ms, panels 195 ms, artwork fades 585 ms).
+- **Volume**: wheel and drag changes land at once, so the fill never trails the input;
+  only a big jump (mute, unmute) glides, in 78 ms.
+- **Track change**: the title, album and artist in the player bar slide in once per new
+  track, subtly (no dip below 70 % opacity; instant with Windows' reduced animations).
 - Hover and press states are looked up without building a new string per element per
   frame (they were, for every row, on every animation frame).
 
