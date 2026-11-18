@@ -90,7 +90,7 @@ pub struct Settings {
     pub shuffle: bool,
     pub repeat: Repeat,
     pub recent_searches: Vec<String>,
-    /// Discord Rich Presence ("Listening to Abyss").
+    /// Discord Rich Presence ("Listening to Abyss"). Off until the user turns it on.
     pub discord: bool,
     /// Now Playing background: blurred cover (true) or flat colour (false).
     pub np_blur: bool,
@@ -115,7 +115,18 @@ pub struct Settings {
     pub side_panel_width: Option<f32>,
     /// Look up lyrics on third-party services (LRCLIB, NetEase, lyrics.ovh)
     /// when TIDAL has none. Sends the track title, artist, album and length.
+    /// Off until the user turns it on.
     pub external_lyrics: bool,
+    /// Version of the privacy defaults this file was written with. Files from
+    /// before 1.5.0 have 0: Discord and third-party lyrics were on by default.
+    #[serde(default)]
+    pub privacy_defaults: u32,
+    /// The one-time notice that the migration turned those two off is pending.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub privacy_notice: bool,
+    /// This start could not read `settings.json`: the name of the copy kept aside.
+    #[serde(skip)]
+    pub settings_recovered: Option<String>,
     /// Application ID of the Discord application named Abyss.
     pub discord_client_id: String,
     /// Send listens to Last.fm. Off until the user connects an account.
@@ -192,7 +203,7 @@ impl Default for Settings {
             shuffle: false,
             repeat: Repeat::Off,
             recent_searches: Vec::new(),
-            discord: true,
+            discord: false,
             np_blur: true,
             light_theme: false,
             accent: crate::ui::theme::DEFAULT_ACCENT,
@@ -205,7 +216,10 @@ impl Default for Settings {
             lyrics_romanize: true,
             wide_side_panel: false,
             side_panel_width: None,
-            external_lyrics: true,
+            external_lyrics: false,
+            privacy_defaults: PRIVACY_DEFAULTS,
+            privacy_notice: false,
+            settings_recovered: None,
             discord_client_id: String::new(),
             lastfm_enabled: false,
             lastfm_user: None,
@@ -229,6 +243,9 @@ impl Default for Settings {
     }
 }
 
+/// Current version of the privacy defaults (see `Settings::privacy_defaults`).
+pub const PRIVACY_DEFAULTS: u32 = 1;
+
 /// Public application identifier. No verified Abyss ID is bundled.
 // The owner must register or rename the Discord application for Abyss.
 // An empty ID keeps activity publishing inactive until one is configured.
@@ -238,11 +255,27 @@ pub const DISCORD_APP_ID: &str = "1569976551288864879";
 pub const DEVICE_CLIENT_ID: &str = "fX2JxdmntZWK0ixT";
 pub const DEVICE_CLIENT_SECRET: &str = "1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg=";
 
+/// Portable mode: when a folder named `data` sits next to `Abyss.exe`, settings,
+/// the session, ratings, history and caches live there instead of in the user's
+/// profile (a USB stick, a shared PC, or a second copy next to an installed one).
+pub fn portable_dir() -> Option<PathBuf> {
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?.join("data");
+        dir.is_dir().then_some(dir)
+    })
+    .clone()
+}
+
 pub fn config_dir() -> PathBuf {
     // Tests and side-by-side runs can use their own settings, ratings and
     // recents instead of the user's.
     if let Some(dir) = std::env::var_os("ABYSS_CONFIG_DIR").or_else(|| std::env::var_os("TIDE_CONFIG_DIR")) {
         return PathBuf::from(dir);
+    }
+    if let Some(dir) = portable_dir() {
+        return dir.join("config");
     }
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("abyss")
 }
@@ -251,6 +284,9 @@ pub fn cache_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("ABYSS_CACHE_DIR").or_else(|| std::env::var_os("TIDE_CACHE_DIR")) {
         return PathBuf::from(dir);
     }
+    if let Some(dir) = portable_dir() {
+        return dir.join("cache");
+    }
     dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".")).join("abyss")
 }
 
@@ -258,7 +294,7 @@ pub fn cache_dir() -> PathBuf {
 /// tree, then publish it with one directory rename. Existing Abyss data wins.
 /// Originals and incomplete copies are retained, including on failure.
 pub fn prepare_config() -> std::io::Result<()> {
-    if std::env::var_os("ABYSS_CONFIG_DIR").or_else(|| std::env::var_os("TIDE_CONFIG_DIR")).is_some() {
+    if std::env::var_os("ABYSS_CONFIG_DIR").or_else(|| std::env::var_os("TIDE_CONFIG_DIR")).is_some() || portable_dir().is_some() {
         return Ok(());
     }
     let destination = config_dir();
@@ -345,7 +381,10 @@ struct Tokens {
 
 impl Settings {
     pub fn load() -> Self {
-        let mut s: Settings = std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let mut s = match std::fs::read(settings_path()) {
+            Ok(bytes) => Self::parse_or_keep(&bytes, &config_dir()),
+            Err(_) => Settings::default(),
+        };
         if let Some(blob) = s.protected_tokens.take() {
             let tokens = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob.as_bytes())
                 .ok()
@@ -373,9 +412,47 @@ impl Settings {
             // Plaintext key (no protection was available): rewrite it protected if possible.
             s.save();
         }
+        if s.migrate_privacy_defaults() {
+            s.save();
+        }
         crate::i18n::set_language(s.language.as_deref());
         s.recompile_bands();
         s
+    }
+
+    /// Read a settings file. A UTF-8 BOM (Notepad adds one) is accepted. A file that
+    /// still does not parse is copied to `settings.broken-<time>.json` in `dir` first,
+    /// so starting with the defaults (and saving them later) never loses it.
+    fn parse_or_keep(bytes: &[u8], dir: &std::path::Path) -> Self {
+        let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+        if body.iter().all(u8::is_ascii_whitespace) {
+            return Settings::default();
+        }
+        match serde_json::from_slice(body) {
+            Ok(s) => s,
+            Err(error) => {
+                let name = format!("settings.broken-{}.json", crate::history::unix_now());
+                let kept = std::fs::write(dir.join(&name), bytes).is_ok();
+                log::warn!("settings.json could not be read ({error}); kept as {name}: {kept}");
+                Settings { settings_recovered: kept.then_some(name), ..Default::default() }
+            }
+        }
+    }
+
+    /// Files written before the privacy defaults changed had Discord Rich Presence
+    /// and third-party lyrics on without the user choosing it. Turn both off once
+    /// and leave a notice for the interface. Returns true when the file changed.
+    fn migrate_privacy_defaults(&mut self) -> bool {
+        if self.privacy_defaults >= PRIVACY_DEFAULTS {
+            return false;
+        }
+        if self.discord || self.external_lyrics {
+            self.discord = false;
+            self.external_lyrics = false;
+            self.privacy_notice = true;
+        }
+        self.privacy_defaults = PRIVACY_DEFAULTS;
+        true
     }
 
     /// Rebuild the filters of the graphic bars (call after any change to them).
@@ -452,6 +529,64 @@ mod tests {
         let raw = crate::secure::unprotect(&base64::Engine::decode(&base64::engine::general_purpose::STANDARD, blob).unwrap()).unwrap();
         let t: Tokens = serde_json::from_slice(&raw).unwrap();
         assert_eq!(t.refresh_token.as_deref(), Some("RT-secret-2"));
+    }
+
+    #[test]
+    fn discord_and_external_lyrics_start_off() {
+        let s = Settings::default();
+        assert!(!s.discord && !s.external_lyrics);
+        assert_eq!(s.privacy_defaults, PRIVACY_DEFAULTS);
+        // A new file round-trips without a pending notice.
+        let back: Settings = serde_json::from_slice(&s.to_disk_json().unwrap()).unwrap();
+        let mut back = back;
+        assert!(!back.migrate_privacy_defaults() && !back.privacy_notice);
+    }
+
+    #[test]
+    fn old_files_turn_discord_and_external_lyrics_off_once_with_a_notice() {
+        // A settings.json from 1.4.0 or earlier: no `privacy_defaults`, both on.
+        let mut s: Settings = serde_json::from_str(r#"{"discord":true,"external_lyrics":true,"volume":0.5}"#).unwrap();
+        assert_eq!(s.privacy_defaults, 0);
+        assert!(s.migrate_privacy_defaults());
+        assert!(!s.discord && !s.external_lyrics && s.privacy_notice);
+        assert_eq!(s.volume, 0.5);
+        // The notice survives a save until the interface clears it.
+        let mut back: Settings = serde_json::from_slice(&s.to_disk_json().unwrap()).unwrap();
+        assert!(back.privacy_notice);
+        // And the migration does not run again: turning Discord on later sticks.
+        back.privacy_notice = false;
+        back.discord = true;
+        assert!(!back.migrate_privacy_defaults());
+        assert!(back.discord && !back.privacy_notice);
+        let json = String::from_utf8(back.to_disk_json().unwrap()).unwrap();
+        assert!(!json.contains("privacy_notice"));
+    }
+
+    #[test]
+    fn old_files_with_both_off_get_no_notice() {
+        let mut s: Settings = serde_json::from_str(r#"{"discord":false,"external_lyrics":false}"#).unwrap();
+        assert!(s.migrate_privacy_defaults());
+        assert!(!s.privacy_notice);
+        assert_eq!(s.privacy_defaults, PRIVACY_DEFAULTS);
+    }
+
+    #[test]
+    fn a_bom_is_accepted_and_a_broken_file_is_kept_aside() {
+        let dir = std::env::temp_dir().join(format!("abyss-settings-{}-{}", std::process::id(), rand::random::<u32>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Notepad's UTF-8 BOM.
+        let s = Settings::parse_or_keep(b"\xEF\xBB\xBF{\"volume\":0.3}", &dir);
+        assert_eq!(s.volume, 0.3);
+        assert!(s.settings_recovered.is_none());
+        // Empty: defaults, nothing kept.
+        assert!(Settings::parse_or_keep(b" \r\n", &dir).settings_recovered.is_none());
+        // Broken: defaults, and the original bytes are kept next to it.
+        let broken = b"{\"volume\":0.3,,}";
+        let s = Settings::parse_or_keep(broken, &dir);
+        let name = s.settings_recovered.expect("kept aside");
+        assert_eq!(std::fs::read(dir.join(&name)).unwrap(), broken);
+        assert_eq!(s.volume, Settings::default().volume);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Decrypt the `protected_tokens` blob of a JSON written by `to_disk_json`.

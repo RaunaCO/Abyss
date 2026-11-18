@@ -59,11 +59,11 @@ impl FileMetadata {
 fn probe(source: MediaSourceStream, hint: &Hint) -> Result<ProbeResult> {
     symphonia::default::get_probe()
         .format(hint, source, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
-        .context("Formato de audio no reconocido")
+        .context(crate::i18n::t("audio.unrecognized_format"))
 }
 
 fn probe_file(path: &Path) -> Result<ProbeResult> {
-    let file = File::open(path).context("No se pudo abrir el archivo de audio")?;
+    let file = File::open(path).context(crate::i18n::t("audio.open_failed"))?;
     let mut hint = Hint::new();
     if let Some(extension) = path.extension().and_then(|s| s.to_str()) {
         hint.with_extension(&extension.to_ascii_lowercase());
@@ -105,7 +105,7 @@ impl Decoder {
             .tracks()
             .iter()
             .find(|t| t.codec_params.codec != CODEC_TYPE_NULL && t.codec_params.sample_rate.is_some())
-            .ok_or_else(|| anyhow!("El archivo no contiene una pista de audio compatible"))?;
+            .ok_or_else(|| anyhow!(crate::i18n::t("audio.no_audio_track")))?;
         let params = track.codec_params.clone();
         let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default()).context("unsupported codec")?;
         let sample_rate = params.sample_rate.ok_or_else(|| anyhow!("unknown sample rate"))?;

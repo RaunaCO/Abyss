@@ -41,9 +41,10 @@ fn window_button(id: &'static str, icon: Icon, which: WinButton, width: f32, cx:
         .flex()
         .items_center()
         .justify_center()
-        .rounded(sc(7.))
+        // Concentric with the control group: its radius less border and padding.
+        .rounded(sc(theme::concentric(9., 3.)))
         .bg(bg)
-        .child(icon.el_scaled(14., fg, 1. + 0.06 * h - 0.12 * p))
+        .child(super::icons::swap(&key, icon, 14., fg, 1. + 0.06 * h - 0.12 * p))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |_, _, window, cx| {
             cx.stop_propagation();
@@ -199,9 +200,14 @@ fn toolbar_button(
             .border_1()
             .border_color(theme::control_border())
             .cursor_pointer()
-            .bg(theme::liquid_glass((0.8 * hover + 0.2 * press).clamp(0., 1.)))
-            .child(super::glass::sheen("toolbar-button-glass", 8., 1.05))
-            .child(icon.el_scaled(15., super::interact::mix(theme::text_secondary(), theme::text(), hover), 1.0 - 0.07 * press))
+            .bg(theme::ink(0.05 + 0.07 * hover + 0.03 * press))
+            .child(super::icons::swap(
+                id,
+                icon,
+                15.,
+                super::interact::mix(theme::text_secondary(), theme::text(), hover),
+                1.0 - 0.07 * press,
+            ))
             .tooltip(super::sidebar::tip(label))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx))),
@@ -285,10 +291,9 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
         .items_center()
         .gap(sc(2.))
         .rounded(sc(9.))
-        .bg(theme::liquid_glass(0.05))
+        .bg(theme::ink(0.05))
         .border_1()
         .border_color(theme::control_border())
-        .child(super::glass::sheen("window-controls-glass", 9., 0.85))
         .child(window_button("win-min", Icon::WinMin, WinButton::Min, layout.window_button, cx))
         .child(window_button("win-max", if maximized { Icon::WinRestore } else { Icon::WinMax }, WinButton::Max, layout.window_button, cx))
         .child(window_button("win-close", Icon::WinClose, WinButton::Close, layout.window_button, cx));
@@ -315,9 +320,19 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
         .border_1()
         .border_color(if search_focused { theme::text_dim() } else { theme::control_border() })
         .cursor_text()
-        .child(super::glass::sheen("search-box-glass", 10., 1.05))
+        .child(super::glass::sheen_rim("search-box-glass", 10., 1.05))
         .child(Icon::Search.el(14., theme::text_secondary()))
-        .child(div().flex_1().min_w(sc(0.)).overflow_hidden().child(view.search_input.clone()))
+        .child(div().flex_1().min_w(sc(0.)).overflow_hidden().child(if view.search_open {
+            // The floating search panel holds the live input meanwhile.
+            let shown = if view.search_query.is_empty() { crate::i18n::t("search").to_string() } else { view.search_query.clone() };
+            div()
+                .text_size(sc(12.5))
+                .text_color(if view.search_query.is_empty() { theme::text_dim() } else { theme::text_secondary() })
+                .child(shown)
+                .into_any_element()
+        } else {
+            view.search_input.clone().into_any_element()
+        }))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _, window, cx| {
             let fh = this.search_input.focus_handle(cx);

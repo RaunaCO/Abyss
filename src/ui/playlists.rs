@@ -523,7 +523,7 @@ pub fn dialog_overlay(view: &mut AppView, cx: &mut Context<AppView>) -> Option<A
                         .flex_col()
                         .gap(sc(18.))
                         .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(super::glass::sheen("playlist-dialog-glass", 16., 0.75))
+                        .child(super::glass::sheen_rim("playlist-dialog-glass", 16., 0.75))
                         .child(div().text_size(sc(20.)).font_weight(FontWeight::BOLD).child(heading))
                         .child(body)
                         .child(

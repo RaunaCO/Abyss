@@ -6,14 +6,57 @@ pub mod icons;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 static ZOOM_BITS: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
+static AUTO_BITS: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
 
-/// Current UI zoom (1.0 = 100 %).
-pub fn zoom() -> f32 {
+/// The zoom the user chose (Settings, Ctrl +/-): 1.0 = 100 %.
+pub fn user_zoom() -> f32 {
     f32::from_bits(ZOOM_BITS.load(AtomicOrdering::Relaxed))
+}
+
+/// The extra scale the window's size asks for (see [`auto_zoom_for`]).
+pub fn auto_zoom() -> f32 {
+    f32::from_bits(AUTO_BITS.load(AtomicOrdering::Relaxed))
+}
+
+/// The scale every design pixel is drawn at: the user's zoom times the
+/// automatic one. Layout code reads this one.
+pub fn zoom() -> f32 {
+    user_zoom() * auto_zoom()
 }
 
 pub fn set_zoom(z: f32) {
     ZOOM_BITS.store(z.to_bits(), AtomicOrdering::Relaxed);
+}
+
+/// The window size (logical px) the interface is designed to fill at 100 %.
+const AUTO_BASE: (f32, f32) = (2200.0, 1240.0);
+
+/// Extra scale for a window `w` x `h` logical px. Fixed-size design px make
+/// everything tiny on a 1440p or 4K screen at 100 % scaling (and leave the
+/// page lost in the middle of a huge window), so above `AUTO_BASE` the
+/// interface grows with the window, in steps of 5 % so a resize does not
+/// re-measure every frame. It follows the geometric mean of the two sides, so
+/// a tall, narrow window (a portrait monitor) grows as much as a wide one of
+/// the same area. Never below 1 and never above 2: small windows are left to
+/// the layout.
+pub fn auto_zoom_for(w: f32, h: f32) -> f32 {
+    let k = ((w / AUTO_BASE.0) * (h / AUTO_BASE.1)).sqrt();
+    if k <= 1.0 {
+        return 1.0;
+    }
+    ((k.min(2.0) * 20.0 + 0.001).floor() / 20.0).max(1.0)
+}
+
+/// Update the automatic scale for the window's size; true when it changed.
+/// `TIDE_AUTO_ZOOM=<factor>` forces it (screenshots on a smaller screen).
+pub fn fit_viewport(size: gpui::Size<gpui::Pixels>) -> bool {
+    let forced = std::env::var("TIDE_AUTO_ZOOM").ok().and_then(|v| v.parse::<f32>().ok());
+    let next = forced.unwrap_or_else(|| auto_zoom_for(f32::from(size.width), f32::from(size.height)));
+    let changed = (next - auto_zoom()).abs() > 0.001;
+    if changed {
+        AUTO_BITS.store(next.to_bits(), AtomicOrdering::Relaxed);
+    }
+    changed
 }
 
 /// A design pixel at the current zoom. All layout sizes use this instead of `px`.
@@ -236,6 +279,8 @@ pub enum MenuTarget {
     AddToPlaylist(Vec<Track>),
     Album(Album),
     Artist(Artist),
+    /// The sound output devices (right-click on the volume icon).
+    Output,
 }
 
 pub enum LoginState {
@@ -313,6 +358,15 @@ pub struct AppView {
     next_info: Option<(u64, StreamInfo)>,
     /// Playback reached the end of the queue.
     pub ended: bool,
+    /// A queue restored at startup: (index, seconds) to continue from on play.
+    resume_at: Option<(usize, f64)>,
+    /// The saved queue is still being read (in the background): do not overwrite it.
+    queue_restoring: bool,
+    /// Tracks in a row that failed to play (an unplugged drive, a dropped share).
+    play_failures: u32,
+    /// What `queue.json` last held (order fingerprint, index, whole seconds) and when.
+    queue_saved: (u64, usize, i64),
+    queue_saved_at: std::time::Instant,
     pub snap: Snapshot,
     next_key: u64,
     next_uid: u64,
@@ -396,6 +450,8 @@ pub struct AppView {
     pub history: Vec<crate::history::Entry>,
     pub local_tracks: Vec<Track>,
     pub local_busy: bool,
+    /// Folded search text of each local track (see `crate::local::search_key`).
+    pub local_search_keys: HashMap<u64, String>,
     pub local_editor: Option<local::LocalEditor>,
     /// Albums made from the local tracks (also cached in `albums`).
     pub local_albums: Vec<Album>,
@@ -511,11 +567,16 @@ pub struct AppView {
     pub discord_input: Entity<TextInput>,
     pub credits: HashMap<u64, Load<Vec<(String, Vec<String>)>>>,
     pub toast: Option<(String, std::time::Instant)>,
+    /// The "Check for updates" row in Settings > About.
+    pub update_check: settings::UpdateCheck,
     pub login: LoginState,
     pub signed_in: bool,
     pub devices: Vec<String>,
     pub current_blocks: Vec<pages::Block>,
 }
+
+/// Tracks in a row that may fail before playback stops (see `skip_after_error`).
+const MAX_PLAY_FAILURES: u32 = 4;
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1)
@@ -665,6 +726,11 @@ impl AppView {
             queued_next: None,
             next_info: None,
             ended: false,
+            resume_at: None,
+            queue_restoring: true,
+            play_failures: 0,
+            queue_saved: (crate::queue_store::fingerprint(std::iter::empty()), 0, 0),
+            queue_saved_at: std::time::Instant::now(),
             snap: Snapshot::default(),
             next_key: 1,
             next_uid: 1,
@@ -729,6 +795,7 @@ impl AppView {
                 Vec::new()
             }),
             local_busy: false,
+            local_search_keys: HashMap::new(),
             local_editor: None,
             local_albums: Vec::new(),
             local_artists: Vec::new(),
@@ -803,6 +870,7 @@ impl AppView {
             discord_input,
             credits: HashMap::new(),
             toast: None,
+            update_check: Default::default(),
             login: LoginState::Idle,
             signed_in: s.signed_in() && s.preferred_service != "local",
             devices: audio::output::device_names(),
@@ -811,13 +879,54 @@ impl AppView {
         if storage_unavailable {
             this.notify_toast(crate::i18n::t("storage.partial_load_warning"), cx);
         }
+        // Read the saved queue off the UI thread: checking that local files still
+        // exist can stall for seconds on an unplugged drive or a sleeping share.
+        let signed_in = this.signed_in;
+        cx.spawn(async move |view, cx| {
+            let saved = cx.background_executor().spawn(async move { crate::queue_store::load(signed_in) }).await;
+            let _ = view.update(cx, |this, cx| {
+                this.queue_restoring = false;
+                let Some(saved) = saved else { return };
+                // Something already started playing while the file was read: keep it.
+                if !this.queue.is_empty() || this.now.is_some() {
+                    return;
+                }
+                let count = saved.tracks.len();
+                this.queue = saved.tracks.into_iter().map(|track| QItem { uid: 0, track }).collect();
+                for i in 0..this.queue.len() {
+                    this.queue[i].uid = this.new_uid();
+                }
+                this.resume_at = Some((saved.index, saved.position));
+                this.queue_saved = (this.queue_fingerprint(), saved.index, saved.position as i64);
+                this.notify_toast(crate::i18n::text("queue.restored", &[count.to_string()]), cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        if let Some(name) = &s.settings_recovered {
+            this.notify_toast_for(crate::i18n::text("settings.recovered", std::slice::from_ref(name)), 12, cx);
+        }
+        if s.privacy_notice {
+            // Shown once: Discord and third-party lyrics were turned off by the
+            // privacy-defaults migration (see `Settings::migrate_privacy_defaults`).
+            this.notify_toast_for(crate::i18n::t("privacy.defaults_notice"), 12, cx);
+            let mut st = this.settings.lock();
+            st.privacy_notice = false;
+            st.save();
+        }
         let view = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
-            let _ = view.update(cx, |this, _| this.flush_history());
+            let _ = view.update(cx, |this, _| {
+                this.flush_history();
+                this.save_queue(true);
+                crate::local::flush_index(Duration::from_secs(5));
+            });
             true
         });
         cx.on_app_quit(|this, _| {
             this.flush_history();
+            this.save_queue(true);
+            crate::local::flush_index(Duration::from_secs(5));
             std::future::ready(())
         })
         .detach();
@@ -854,6 +963,35 @@ impl AppView {
         .detach();
     }
 
+    fn queue_fingerprint(&self) -> u64 {
+        crate::queue_store::fingerprint(self.queue.iter().map(|q| q.track.id))
+    }
+
+    /// Keep `queue.json` up to date: at most every 20 s while things change, or
+    /// right away with `now` (closing). Writes only when the queue, the track or
+    /// the position moved.
+    fn save_queue(&mut self, now: bool) {
+        if self.queue_restoring || (!now && self.queue_saved_at.elapsed() < Duration::from_secs(20)) {
+            return;
+        }
+        self.queue_saved_at = std::time::Instant::now();
+        let (index, position) = match (&self.now, self.resume_at) {
+            (Some(n), _) if !self.ended => (n.index, self.snap.position),
+            (_, Some(resume)) => resume,
+            (Some(n), None) => (n.index, 0.0),
+            (None, None) => (0, 0.0),
+        };
+        let state = (self.queue_fingerprint(), index, position as i64);
+        if state == self.queue_saved {
+            return;
+        }
+        let tracks: Vec<Track> = self.queue.iter().map(|q| q.track.clone()).collect();
+        match crate::queue_store::save(&tracks, index, position) {
+            Ok(()) => self.queue_saved = state,
+            Err(error) => log::warn!("could not save the queue: {error}"),
+        }
+    }
+
     fn flush_history(&mut self) {
         if let Err(error) = self.recorder.flush() {
             log::warn!("No se pudo guardar Replay al cerrar Abyss: {error:#}");
@@ -888,6 +1026,14 @@ impl AppView {
 
     pub fn notify_toast(&mut self, msg: impl Into<String>, cx: &mut Context<Self>) {
         self.toast = Some((msg.into(), std::time::Instant::now()));
+        cx.notify();
+    }
+
+    /// A toast that stays `secs` seconds instead of the usual 4 (for longer notices).
+    pub fn notify_toast_for(&mut self, msg: impl Into<String>, secs: u64, cx: &mut Context<Self>) {
+        // The toast hides 4 s after its instant; a later instant keeps it longer.
+        let at = std::time::Instant::now() + std::time::Duration::from_secs(secs.saturating_sub(4));
+        self.toast = Some((msg.into(), at));
         cx.notify();
     }
 
@@ -1099,7 +1245,7 @@ impl AppView {
 
     /// Zoom one step in (+1) or out (-1).
     pub fn step_zoom(&mut self, dir: i32, cx: &mut Context<Self>) {
-        let cur = zoom();
+        let cur = user_zoom();
         let idx = ZOOM_STEPS.iter().position(|z| (z - cur).abs() < 0.01).unwrap_or_else(|| {
             // Between steps (settings edited by hand): snap to the nearest.
             ZOOM_STEPS.iter().enumerate().min_by(|a, b| (a.1 - cur).abs().total_cmp(&(b.1 - cur).abs())).map(|(i, _)| i).unwrap_or(5)
@@ -1462,6 +1608,7 @@ impl AppView {
         if tracks.is_empty() {
             return;
         }
+        self.play_failures = 0;
         let flags: Vec<bool> = tracks.iter().map(|t| t.streamable).collect();
         let Some(start) = playable_start(&flags, start) else {
             // Never play a different track instead of an unavailable one.
@@ -1504,6 +1651,7 @@ impl AppView {
 
     pub fn play_index(&mut self, index: usize, start: f64, paused: bool, cx: &mut Context<Self>) {
         let Some(item) = self.queue.get(index).cloned() else { return };
+        self.resume_at = None;
         self.next_key += 1;
         let key = self.next_key;
         self.queued_next = None;
@@ -1559,6 +1707,17 @@ impl AppView {
             return;
         }
         let idx = now.index;
+        // Without a limit, an unplugged drive walks the whole queue, one failure and
+        // one notice per track. Stop after a few in a row and say why.
+        self.play_failures += 1;
+        if self.play_failures >= MAX_PLAY_FAILURES {
+            self.play_failures = 0;
+            self.ended = true;
+            self.player.send(Cmd::Stop);
+            self.notify_toast_for(crate::i18n::text("playback.stopped_after_errors", &[MAX_PLAY_FAILURES.to_string()]), 10, cx);
+            cx.notify();
+            return;
+        }
         if idx + 1 < self.queue.len() {
             self.play_index(idx + 1, 0.0, false, cx);
         } else {
@@ -1800,10 +1959,16 @@ impl AppView {
     }
 
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
+        self.play_failures = 0;
         if self.now.is_none() || self.ended {
             let i = self.now.as_ref().map(|n| n.index).unwrap_or(0);
             if !self.queue.is_empty() {
-                self.play_index(if self.ended { i } else { 0 }, 0.0, false, cx);
+                // A queue restored at startup continues where it was left.
+                let (index, start) = match self.resume_at {
+                    Some((r, pos)) if self.now.is_none() && r < self.queue.len() => (r, pos),
+                    _ => (if self.ended { i } else { 0 }, 0.0),
+                };
+                self.play_index(index, start, false, cx);
             }
             return;
         }
@@ -2123,6 +2288,7 @@ impl AppView {
 
     fn tick(&mut self, cx: &mut Context<Self>) {
         let mut changed = false;
+        self.save_queue(false);
         // Media keys / system media widget.
         let actions = self.media.as_mut().map(|m| m.poll()).unwrap_or_default();
         for a in actions {
@@ -2160,6 +2326,14 @@ impl AppView {
         }
 
         let snap = self.player.snapshot();
+        // A track is really playing: the failure streak is over.
+        if self.play_failures > 0 && !snap.paused && !snap.buffering && snap.position > 1.0 && snap.key == self.now.as_ref().map(|n| n.key)
+        {
+            self.play_failures = 0;
+        }
+        if let Some(error) = crate::local::take_save_error() {
+            self.notify_toast(crate::i18n::text("could_not_save_the_local_library", &[error]), cx);
+        }
         // The engine moved on to the queued track (gapless transition).
         if let (Some(k), Some((qk, qi))) = (snap.key, self.queued_next) {
             if k == qk {
@@ -2369,13 +2543,20 @@ impl Render for AppView {
         }
         let perf_t0 = std::time::Instant::now();
         self.frame_started = perf_t0;
+        // Before anything is sized: a window that grew past the base size scales up.
+        if fit_viewport(window.viewport_size()) {
+            self.list_len = usize::MAX - 1;
+        }
         self.step_smooth_scroll();
         self.drive_animations(window);
         self.viewport_w = f32::from(window.viewport_size().width) / zoom();
         self.update_sidebar();
         winctl::set_border_color(window, theme::frame_rgb());
-        let fullscreen = window.is_fullscreen();
-        let requested = self.np_fullscreen_request.take();
+        // `TIDE_NP_FORCE=1` shows Now Playing in the window as it is (screenshots of
+        // layouts a monitor cannot be put into, such as portrait fullscreen).
+        let forced_np = std::env::var_os("TIDE_NP_FORCE").is_some();
+        let fullscreen = window.is_fullscreen() || forced_np;
+        let requested = if forced_np { None } else { self.np_fullscreen_request.take() };
         let target = requested.unwrap_or(fullscreen);
         if target != fullscreen {
             window.toggle_fullscreen();
@@ -2490,8 +2671,10 @@ impl Render for AppView {
             .on_mouse_down(MouseButton::Navigate(gpui::NavigationDirection::Forward), cx.listener(|this, _, _, cx| this.go_forward(cx)))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 if this.signed_in {
+                    this.search_open = true;
                     let fh = this.search_input.focus_handle(cx);
                     window.focus(&fh);
+                    cx.notify();
                 }
             }))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
@@ -2705,5 +2888,39 @@ mod play_start_tests {
     fn unplayable_or_missing_track_plays_nothing() {
         assert_eq!(playable_start(&[true, false], 1), None);
         assert_eq!(playable_start(&[true], 5), None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auto_zoom_for;
+
+    #[test]
+    fn windows_up_to_1080p_and_small_ones_are_not_scaled() {
+        assert_eq!(auto_zoom_for(1280.0, 720.0), 1.0);
+        assert_eq!(auto_zoom_for(1920.0, 1080.0), 1.0);
+        assert_eq!(auto_zoom_for(2200.0, 1240.0), 1.0);
+    }
+
+    #[test]
+    fn a_1440p_and_a_4k_window_at_100_percent_grow_to_match() {
+        assert_eq!(auto_zoom_for(2560.0, 1440.0), 1.15);
+        assert_eq!(auto_zoom_for(3840.0, 2160.0), 1.7);
+    }
+
+    #[test]
+    fn a_portrait_window_grows_like_a_landscape_one_of_the_same_area() {
+        assert_eq!(auto_zoom_for(2160.0, 3840.0), auto_zoom_for(3840.0, 2160.0));
+        assert_eq!(auto_zoom_for(1440.0, 2560.0), auto_zoom_for(2560.0, 1440.0));
+        // Narrow and tall, but small: left alone.
+        assert_eq!(auto_zoom_for(900.0, 3000.0), 1.0);
+    }
+
+    #[test]
+    fn the_scale_is_capped_and_moves_in_steps_of_five_percent() {
+        assert_eq!(auto_zoom_for(7680.0, 4320.0), 2.0);
+        assert_eq!(auto_zoom_for(20000.0, 20000.0), 2.0);
+        let z = auto_zoom_for(2900.0, 1700.0);
+        assert!((z * 20.0 - (z * 20.0).round()).abs() < 1e-4, "{z}");
     }
 }

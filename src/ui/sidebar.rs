@@ -26,6 +26,9 @@ const REACH: f32 = 8.0;
 /// Delay before closing once the pointer has left (s).
 const CLOSE_DELAY: f32 = 0.15;
 const BODY_RAIL: f32 = RAIL_W - 2.0 * theme::FRAME_GAP;
+/// What is left of the rail inside the panel's 1 px borders: everything on the
+/// rail is centred on this, so icons, logo, rules and avatar share one axis.
+const INNER_RAIL: f32 = BODY_RAIL - 2.0;
 
 /// Small tooltip bubble.
 pub struct Tip(pub SharedString);
@@ -125,7 +128,12 @@ fn label_alpha(t: f32) -> f32 {
 
 /// Inner horizontal margin of rows; the icon box after it is centred on the rail.
 const ROW_MX: f32 = 6.0;
-const ICON_BOX: f32 = BODY_RAIL - 2.0 * ROW_MX;
+const ICON_BOX: f32 = INNER_RAIL - 2.0 * ROW_MX;
+/// Where a row's label starts, and (with `ICON_LEFT`) where its icon does.
+const TEXT_LEFT: f32 = ROW_MX + ICON_BOX;
+const ICON_LEFT: f32 = ROW_MX + (ICON_BOX - 18.0) / 2.0;
+/// Side of the logo tile.
+const LOGO: f32 = 30.0;
 
 /// Width of a row's surface: the icon's square on the rail, the full row unfolded.
 fn row_w(width: f32) -> f32 {
@@ -180,12 +188,14 @@ fn section_label(text: &'static str, lab: f32, trailing: Option<AnyElement>) -> 
         .flex_none()
         .items_center()
         .justify_between()
-        .pl(sc(19.))
+        // The label hangs from the same line as the icons below it.
+        // (the icon drawings have a margin of about 3 px inside their box)
+        .pl(sc(ICON_LEFT + 3.0))
         .pr(sc(10.))
         .child(
             div()
                 .absolute()
-                .left(sc(BODY_RAIL / 2.0 - 10.0))
+                .left(sc(INNER_RAIL / 2.0 - 10.0))
                 .top(sc(14.))
                 .w(sc(20.))
                 .h(sc(2.))
@@ -227,45 +237,42 @@ fn small_icon_button(
     interact::track(el, key, cx).into_any_element()
 }
 
-/// Abyss's mark centred on the rail, and the name beside it.
-fn identity(lab: f32, cx: &mut Context<AppView>) -> AnyElement {
-    let key = "sb-logo".to_string();
-    let (h, p) = (interact::hover(&key), interact::press(&key));
-    let mark = div()
-        .id("sb-logo")
-        .cursor_pointer()
-        .opacity(1.0 - 0.1 * p)
-        .shadow(if h > 0.01 {
-            vec![gpui::BoxShadow {
-                color: gpui::Hsla::from(theme::ink(0.25 * h)),
-                offset: gpui::point(sc(0.), sc(0.)),
-                blur_radius: sc(0.),
-                spread_radius: sc(2. * h),
-            }]
-        } else {
-            vec![]
-        })
-        // The logo opens the app menu (File, Navigation, Playback...).
-        .tooltip(tip(crate::i18n::t("menu")))
-        .on_click(cx.listener(|this, _, _, cx| this.toggle_app_menu(cx)))
-        .size(sc(34.))
-        .flex_none()
-        .rounded(sc(9.))
-        .overflow_hidden()
-        .bg(gpui::rgb(0xffffff))
-        .border_1()
-        .border_color(theme::ink(0.12))
-        .child(gpui::img(super::images::logo()).size_full());
-    let mark = interact::track(mark, key, cx);
+/// Abyss's mark centred on the rail, and the name beside it. The mark is only
+/// a mark: it used to open the app menu, a button nobody could tell was one.
+fn identity(lab: f32) -> AnyElement {
+    // A mark a little larger than the icons under it, on their axis; the name
+    // is set like the labels of the rows (same left edge, same quiet weight),
+    // not as a headline beside a big logo.
+    //
+    // The picture is drawn alone, at whole device pixels and with nothing
+    // behind or around it: its corners are already part of the image (the
+    // artwork touches its top edge). A white tile with another radius and a
+    // border behind it showed a fringe at the corners and made the top look cut.
+    let z = super::zoom();
+    let side = (LOGO * z).round();
+    let left = ((INNER_RAIL * z - side) / 2.0).round();
+    let top = ((theme::TOP_H * z - side) / 2.0).round();
+    let mark = gpui::img(super::images::logo()).w(gpui::px(side)).h(gpui::px(side)).flex_none().ml(gpui::px(left)).mt(gpui::px(top));
     // Same height as the top bar beside it: one line across the window.
     div()
         // Lined up with the top bar inside the page panel (below the frame gap).
         .h(sc(theme::TOP_H))
         .flex()
         .flex_none()
-        .items_center()
-        .child(div().w(sc(BODY_RAIL)).flex_none().flex().justify_center().child(mark))
-        .child(div().opacity(lab).text_size(sc(theme::TYPE_BRAND)).font_weight(FontWeight::BOLD).child(crate::i18n::t("app.name")))
+        .items_start()
+        .child(div().w(sc(INNER_RAIL)).flex_none().child(mark))
+        // The name starts where the labels of the rows below start.
+        .child(
+            div()
+                .h(sc(theme::TOP_H))
+                .ml(sc(TEXT_LEFT - INNER_RAIL))
+                .flex()
+                .items_center()
+                .opacity(lab)
+                .text_size(sc(15.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(crate::i18n::t("app.name")),
+        )
         .into_any_element()
 }
 
@@ -297,7 +304,7 @@ fn account_panel(view: &mut AppView, width: f32, lab: f32, cx: &mut Context<AppV
         .or_else(|| uid.map(|id| crate::i18n::text("id", &[format!("{}", id)])))
         .unwrap_or_default();
     // Keep the avatar centred on the rail at every width.
-    let pad_l = BODY_RAIL / 2.0 - ROW_MX - 18.0 - 1.0;
+    let pad_l = INNER_RAIL / 2.0 - ROW_MX - 18.0 - 1.0;
     div()
         .flex_none()
         .mx(sc(ROW_MX))
@@ -311,13 +318,12 @@ fn account_panel(view: &mut AppView, width: f32, lab: f32, cx: &mut Context<AppV
         .pr(sc(6.))
         .relative()
         .rounded(sc(12.))
-        .bg(theme::liquid_glass(0.05))
+        .bg(theme::ink(0.05))
         .border_1()
-        .border_color(theme::divider())
+        .border_color(theme::ink(0.10))
         .flex()
         .items_center()
         .gap(sc(12.))
-        .child(super::glass::sheen("sidebar-account-glass", 12., 0.65))
         .child(avatar)
         .child(
             div()
@@ -442,7 +448,7 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
     if loading {
         middle.push(
             div()
-                .pl(sc(BODY_RAIL))
+                .pl(sc(TEXT_LEFT))
                 .py(sc(6.))
                 .opacity(lab)
                 .text_color(theme::text_dim())
@@ -503,7 +509,7 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(identity(lab, cx))
+                .child(identity(lab))
                 .child(
                     div()
                         .id("sidebar-scroll")

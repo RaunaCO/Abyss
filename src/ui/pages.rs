@@ -89,13 +89,16 @@ impl AppView {
         }
     }
 
-    fn content_limit(&self) -> f32 {
+    fn content_limit(&self, window: &Window) -> f32 {
         // One column width for every page, so switching pages never moves the
-        // left edge; Settings stays narrower for readable rows.
+        // left edge; Settings stays narrower for readable rows. Both grow
+        // with a large window (a fixed 1480 left a third of a 1440p screen
+        // empty on each side), up to a width that is still comfortable.
+        let body = self.page_body_width(window);
         if matches!(self.page, Page::Settings) {
-            theme::CONTENT_W
+            (body * 0.62).clamp(theme::CONTENT_W, 1280.0)
         } else {
-            theme::WIDE_W
+            (body * 0.8).clamp(theme::WIDE_W, 1900.0)
         }
     }
 
@@ -114,7 +117,7 @@ impl AppView {
 
     /// Width used by both the content column and its responsive children.
     pub fn column_width(&self, window: &Window) -> f32 {
-        (self.page_body_width(window) - 2.0 * self.content_inset(window)).clamp(1.0, self.content_limit())
+        (self.page_body_width(window) - 2.0 * self.content_inset(window)).clamp(1.0, self.content_limit(window))
     }
 
     /// Does `t` pass the filter box? (title, artist or album)
@@ -602,7 +605,7 @@ impl AppView {
         let inner = if panel {
             div()
                 .pb(sc(PANEL_GAP))
-                .child(widget_panel(("shelf-glass", ix)).p(sc(shelf_inset(self.column_width(window)))).child(inner))
+                .child(super::widgets::flat_panel(("shelf-glass", ix)).p(sc(shelf_inset(self.column_width(window)))).child(inner))
                 .into_any_element()
         } else {
             inner
@@ -612,7 +615,7 @@ impl AppView {
             .px(sc(self.content_inset(window)))
             .flex()
             .justify_center()
-            .child(div().min_w(sc(0.)).w_full().max_w(sc(self.content_limit())).child(inner))
+            .child(div().min_w(sc(0.)).w_full().max_w(sc(self.content_limit(window))).child(inner))
             .into_any_element()
     }
 
@@ -994,10 +997,9 @@ impl AppView {
                         .gap(sc(10.))
                         .relative()
                         .rounded(sc(10.))
-                        .bg(theme::liquid_glass(0.))
+                        .bg(theme::ink(0.05))
                         .border_1()
-                        .border_color(theme::glass_rim(0.))
-                        .child(super::glass::sheen("filter-bar-glass", 10., 0.9))
+                        .border_color(theme::ink(0.10))
                         .child(Icon::Search.el(14., theme::text_secondary()))
                         .child(self.filter_input.clone()),
                 )
@@ -1087,7 +1089,7 @@ impl AppView {
             Block::Biography(text) => div()
                 .py(sc(PANEL_GAP))
                 .child(
-                    widget_panel("biography-glass")
+                    super::widgets::flat_panel("biography-glass")
                         .p(sc(shelf_inset(self.column_width(window))))
                         .flex()
                         .flex_col()
@@ -1129,7 +1131,7 @@ impl AppView {
                             .border_color(theme::glass_rim(0.))
                             .shadow(theme::glass_shadow())
                             .cursor_pointer()
-                            .child(super::glass::sheen("tophit-glass", 18., 0.8))
+                            .child(super::glass::sheen_rim("tophit-glass", 18., 0.8))
                             .child(cover(url, 112., round, cx))
                             .child(
                                 div()
@@ -1161,7 +1163,7 @@ impl AppView {
                         .border_1()
                         .border_color(theme::glass_rim(0.))
                         .cursor_pointer()
-                        .child(super::glass::sheen(("recent-glass", i), 999., 0.9))
+                        .child(super::glass::sheen_rim(("recent-glass", i), 999., 0.9))
                         .child(q)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.search_input.update(cx, |i, cx| i.set_text(&qq, cx));
@@ -1261,7 +1263,10 @@ impl AppView {
             .child(div().id(("row", row)).w_full().flex().gap(sc(theme::GAP)).overflow_x_scroll().track_scroll(&handle).children(
                 items.iter().enumerate().map(|(i, it)| {
                     let c = card(SharedString::from(format!("r{row}-{i}")), it, card_w, false, &*self, cx);
-                    super::fx::stagger(SharedString::from(format!("rs{}-{row}-{i}", self.page_anim)), i, c)
+                    let c = super::fx::stagger(SharedString::from(format!("rs{}-{row}-{i}", self.page_anim)), i, c);
+                    // Masked edge: a card the strip cuts fades out with the part
+                    // that is hidden, instead of ending in a hard vertical line.
+                    div().flex_none().opacity(super::fx::edge_fade_x(&handle, i)).child(c).into_any_element()
                 }),
             ))
             .into_any_element()
@@ -1599,9 +1604,9 @@ impl AppView {
 }
 
 fn home_lead(lead: Option<(SharedString, Item)>, recent: Vec<Item>, width: f32, cx: &mut Context<AppView>) -> AnyElement {
-    let wide = width >= 820.;
+    let wide = width >= 940.;
     let gap = 20.;
-    let rail_w = if wide { (width * 0.29).clamp(250., 340.) } else { width };
+    let rail_w = if wide { (width * 0.29).clamp(280., 380.) } else { width };
     let lead_w = if wide { width - rail_w - gap } else { width };
     let pad = shelf_inset(width);
     let inner_w = (lead_w - 2. * pad - 2.).max(1.);
@@ -2345,7 +2350,7 @@ fn lyrics_panel(view: &mut AppView, cx: &mut Context<AppView>) -> AnyElement {
             .child(provider(&crate::i18n::text("unsynced", &[l.provider.to_string()])))
             .into_any_element(),
         Some(Load::Loading) => message(crate::i18n::t("searching_for_lyrics")),
-        _ => super::now_playing::missing_lyrics(cx),
+        _ => super::now_playing::missing_lyrics(view.settings.lock().external_lyrics, cx),
     }
 }
 
@@ -2366,8 +2371,10 @@ pub fn overlays(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVi
         }
         view.last_menu_pos = Some(pos);
         if let Some(panel) = super::ctxmenu::panel(view, &target, cx) {
+            // The output menu comes from the bottom bar: it opens upward.
+            let corner = if matches!(target, MenuTarget::Output) { Corner::BottomLeft } else { Corner::TopLeft };
             out.push(
-                deferred(anchored().position(pos).anchor(Corner::TopLeft).snap_to_window().child(div().child(panel).with_animation(
+                deferred(anchored().position(pos).anchor(corner).snap_to_window().child(div().child(panel).with_animation(
                     SharedString::from(format!("cmenu-{:.0}-{:.0}", f32::from(pos.x), f32::from(pos.y))),
                     super::motion::animation(super::motion::FAST),
                     |d, t| d.opacity(t),
@@ -2413,7 +2420,8 @@ pub fn overlays(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVi
                     );
                 }
             }
-            MenuTarget::Album(_) | MenuTarget::Artist(_) | MenuTarget::Track(_) | MenuTarget::PlaylistTrack { .. } => {}
+            MenuTarget::Album(_) | MenuTarget::Artist(_) | MenuTarget::Track(_) | MenuTarget::PlaylistTrack { .. } | MenuTarget::Output => {
+            }
             MenuTarget::AddToPlaylist(tracks) => {
                 let ids: Vec<u64> = tracks.iter().map(|t| t.id).collect();
                 push(

@@ -74,7 +74,7 @@ TIDAL's public app credentials, not user secrets.
 - One `reqwest` blocking client with **rustls** (no OpenSSL) and certificate
   validation on. Connect timeout 10 s, request timeout 30 s, and longer
   per-request timeouts for audio (60–120 s).
-- User-Agent: `Abyss/<version> (https://github.com/RaunaCO/TIDE)`. LRCLIB asks
+- User-Agent: `Abyss/<version> (https://github.com/RaunaCO/Abyss)`. LRCLIB asks
   clients to identify themselves. The User-Agent contains nothing about the
   user.
 - Stream URLs from manifests are rejected unless they are `https://`.

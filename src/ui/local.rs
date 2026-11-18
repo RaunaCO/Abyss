@@ -107,10 +107,8 @@ impl AppView {
         }
         let mut combined = self.local_tracks.clone();
         combined.extend(tracks);
-        if let Err(e) = crate::local::save(&combined) {
-            self.notify_toast(crate::i18n::text("could_not_save_the_local_library", &[format!("{:#}", e)]), cx);
-            return 0;
-        }
+        // Written in the background (a large index takes a while); errors come back through `tick`.
+        crate::local::save_async(combined.clone());
         self.local_tracks = combined;
         self.local_changed();
         self.content_changed_pub();
@@ -121,6 +119,7 @@ impl AppView {
     /// Rebuild the local albums (cached like TIDAL albums so they open in the
     /// album page and inline) and the Library's lists.
     pub fn local_changed(&mut self) {
+        self.local_search_keys = self.local_tracks.iter().map(|t| (t.id, crate::local::search_key(t))).collect();
         for a in &self.local_albums {
             self.albums.remove(&a.id);
         }
@@ -151,23 +150,19 @@ impl AppView {
             return;
         }
         let remaining: Vec<_> = self.local_tracks.iter().filter(|t| t.album.as_ref().map(|a| a.id) != Some(album)).cloned().collect();
-        match crate::local::save(&remaining) {
-            Ok(()) => {
-                self.local_tracks = remaining;
-                if self.local_editor.as_ref().is_some_and(|e| !self.local_tracks.iter().any(|t| t.id == e.id)) {
-                    self.local_editor = None;
-                }
-                self.local_changed();
-                self.albums.remove(&album);
-                self.expanded_album = None;
-                if self.page == Page::Album(album) {
-                    self.set_library_cat("albums", cx);
-                }
-                self.content_changed_pub();
-                self.notify_toast(crate::i18n::t("album_removed_from_library_files_kept"), cx);
-            }
-            Err(e) => self.notify_toast(crate::i18n::text("could_not_save_the_local_library", &[format!("{:#}", e)]), cx),
+        crate::local::save_async(remaining.clone());
+        self.local_tracks = remaining;
+        if self.local_editor.as_ref().is_some_and(|e| !self.local_tracks.iter().any(|t| t.id == e.id)) {
+            self.local_editor = None;
         }
+        self.local_changed();
+        self.albums.remove(&album);
+        self.expanded_album = None;
+        if self.page == Page::Album(album) {
+            self.set_library_cat("albums", cx);
+        }
+        self.content_changed_pub();
+        self.notify_toast(crate::i18n::t("album_removed_from_library_files_kept"), cx);
     }
 
     pub fn remove_local_track(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -175,15 +170,11 @@ impl AppView {
             return;
         }
         let remaining: Vec<_> = self.local_tracks.iter().filter(|t| t.id != id).cloned().collect();
-        match crate::local::save(&remaining) {
-            Ok(()) => {
-                self.local_tracks = remaining;
-                self.local_changed();
-                self.content_changed_pub();
-                self.notify_toast(crate::i18n::t("removed_from_library_file_kept"), cx);
-            }
-            Err(e) => self.notify_toast(crate::i18n::text("could_not_save_the_local_library", &[format!("{:#}", e)]), cx),
-        }
+        crate::local::save_async(remaining.clone());
+        self.local_tracks = remaining;
+        self.local_changed();
+        self.content_changed_pub();
+        self.notify_toast(crate::i18n::t("removed_from_library_file_kept"), cx);
     }
 }
 
@@ -313,17 +304,12 @@ impl AppView {
                         v.lyrics_epoch = v.lyrics_epoch.wrapping_add(1);
                         v.lyrics.clear();
                         crate::tidal::lyrics::forget_missing(&track);
-                        let saved = crate::local::save(&v.local_tracks);
+                        // The file itself is already written; the index follows in the background.
+                        crate::local::save_async(v.local_tracks.clone());
                         v.local_changed();
                         v.content_changed_pub();
                         v.local_editor = None;
-                        match saved {
-                            Ok(()) => v.notify_toast(crate::i18n::t(if undo { "local.restored" } else { "local.saved" }), cx),
-                            Err(e) => v.notify_toast(
-                                crate::i18n::text("local.operation_failed", &[format!("{}: {e:#}", crate::i18n::t("local.index_retry"))]),
-                                cx,
-                            ),
-                        }
+                        v.notify_toast(crate::i18n::t(if undo { "local.restored" } else { "local.saved" }), cx);
                     }
                     Err(e) => v.notify_toast(crate::i18n::text("local.operation_failed", &[format!("{e:#}")]), cx),
                 }
@@ -392,7 +378,7 @@ impl AppView {
                 .as_ref()
                 .map(|p| (!p.as_os_str().is_empty()).then(|| format!("local:{}", p.to_string_lossy())))
                 .unwrap_or_else(|| self.local_tracks.iter().find(|t| t.id == id).and_then(|t| t.cover(160)));
-            let mut form = widget_panel("local-tag-editor")
+            let mut form = super::widgets::flat_panel("local-tag-editor")
                 .p(sc(16.))
                 .flex()
                 .flex_col()

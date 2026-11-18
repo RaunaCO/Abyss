@@ -19,8 +19,9 @@ const DEBOUNCE: Duration = Duration::from_millis(260);
 
 impl AppView {
     pub fn with_local_search(&self, query: &str, mut results: SearchResults) -> SearchResults {
-        let query = query.trim().to_lowercase();
-        let matches = |fields: &[&str]| fields.iter().any(|s| s.to_lowercase().contains(&query));
+        // Accent- and case-insensitive; track keys are folded once per library change.
+        let query = crate::local::fold(query);
+        let matches = |fields: &[&str]| fields.iter().any(|s| crate::local::fold(s).contains(&query));
         results.tracks.retain(|t| t.local_path.is_none());
         results.albums.retain(|a| !crate::local::is_local_id(a.id));
         results.artists.retain(|a| !crate::local::is_local_id(a.id));
@@ -36,7 +37,11 @@ impl AppView {
             .lib_tracks
             .iter()
             .filter(|t| {
-                t.local_path.is_some() && matches(&[&t.title, &t.artist_names(), t.album.as_ref().map(|a| a.title.as_str()).unwrap_or("")])
+                t.local_path.is_some()
+                    && match self.local_search_keys.get(&t.id) {
+                        Some(key) => key.contains(&query),
+                        None => crate::local::search_key(t).contains(&query),
+                    }
             })
             .cloned()
             .collect();
@@ -177,15 +182,14 @@ fn row(
         )
 }
 
-fn heading(t: &'static str) -> AnyElement {
+/// A section title; the first one needs no rule above it (the panel has one).
+fn heading(first: bool, t: &'static str) -> AnyElement {
     div()
         .flex_none()
         .px(sc(8.))
-        .mt(sc(6.))
-        .pt(sc(9.))
+        .when(!first, |d| d.mt(sc(6.)).pt(sc(9.)).border_t_1().border_color(theme::divider()))
+        .when(first, |d| d.pt(sc(4.)))
         .pb(sc(6.))
-        .border_t_1()
-        .border_color(theme::divider())
         .text_size(sc(12.))
         .font_weight(FontWeight::BOLD)
         .text_color(theme::text_dim())
@@ -211,34 +215,37 @@ pub fn overlay(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView
                     .into_any_element(),
             );
         } else {
-            body.push(heading(crate::i18n::t("recent_searches")));
-            for (i, r) in recent.into_iter().take(6).enumerate() {
-                let rr = r.clone();
-                body.push(
-                    div()
-                        .id(("recent-q", i))
-                        .h(sc(34.))
-                        .px(sc(8.))
-                        .flex()
-                        .items_center()
-                        .gap(sc(10.))
-                        .rounded(sc(6.))
-                        .cursor_pointer()
-                        .text_size(sc(12.))
-                        .hover(|s| s.bg(theme::hover()))
-                        .child(Icon::Clock.el(14., theme::text_dim()))
-                        .child(r)
-                        .on_click(cx.listener(move |this, _, _, cx| this.use_recent(rr.clone(), cx)))
-                        .into_any_element(),
-                );
-            }
+            body.push(heading(body.is_empty(), crate::i18n::t("recent_searches")));
+            // The new glass pills, wrapped: a recent search is one click.
+            body.push(
+                div()
+                    .flex_none()
+                    .px(sc(8.))
+                    .pb(sc(6.))
+                    .flex()
+                    .flex_wrap()
+                    .gap(sc(8.))
+                    .children(recent.into_iter().take(8).enumerate().map(|(i, r)| {
+                        let rr = r.clone();
+                        super::widgets::pill(
+                            ("recent-q", i),
+                            r,
+                            Some(Icon::Clock),
+                            false,
+                            move |this, _, _, cx| this.use_recent(rr.clone(), cx),
+                            cx,
+                        )
+                        .into_any_element()
+                    }))
+                    .into_any_element(),
+            );
         }
     } else {
         match view.search.get(&q) {
             Some(Load::Ready(r)) => {
                 let r = r.clone();
                 if let Some(top) = r.top.clone() {
-                    body.push(heading(crate::i18n::t("top_result")));
+                    body.push(heading(body.is_empty(), crate::i18n::t("top_result")));
                     let (title, sub, url, round) = match &top {
                         Item::Album(a) => {
                             (a.title.clone(), crate::i18n::text("album.detail", &[a.artist_names().to_string()]), a.cover(160), false)
@@ -262,7 +269,7 @@ pub fn overlay(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView
                     }
                 }
                 if !r.tracks.is_empty() {
-                    body.push(heading(crate::i18n::t("songs")));
+                    body.push(heading(body.is_empty(), crate::i18n::t("songs")));
                     let list: Vec<_> = r.tracks.iter().take(8).cloned().collect();
                     for (i, t) in list.iter().enumerate() {
                         let all = list.clone();
@@ -293,7 +300,7 @@ pub fn overlay(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView
                     others.push((Item::Playlist(p.clone()), p.title.clone(), crate::i18n::t("playlist").into(), p.cover(160), false));
                 }
                 if !others.is_empty() {
-                    body.push(heading(crate::i18n::t("albums_artists_and_playlists")));
+                    body.push(heading(body.is_empty(), crate::i18n::t("albums_artists_and_playlists")));
                     for (i, (item, title, sub, url, round)) in others.into_iter().enumerate() {
                         body.push(
                             row(SharedString::from(format!("sq-o-{i}")), url, round, title, sub, cx)
@@ -323,73 +330,133 @@ pub fn overlay(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView
                 div().p(sc(14.)).text_size(sc(12.)).text_color(theme::text_dim()).child(crate::i18n::t("searching")).into_any_element(),
             ),
         }
+    }
+    // "See all results" lives in a bar under the list, always in view.
+    let footer = (!q.is_empty()).then(|| {
         let qq = q.clone();
-        body.push(
+        let shown = if q.chars().count() > 26 { format!("{}…", q.chars().take(25).collect::<String>()) } else { q.clone() };
+        div()
+            .flex_none()
+            .px(sc(14.))
+            .py(sc(10.))
+            .border_t_1()
+            .border_color(theme::divider())
+            .flex()
+            .items_center()
+            .justify_end()
+            .child(super::widgets::pill(
+                "sq-all",
+                crate::i18n::text("see_all_results_for", &[shown]),
+                Some(Icon::Search),
+                false,
+                move |this, _, window, cx| this.search_all(qq.clone(), window, cx),
+                cx,
+            ))
+            .into_any_element()
+    });
+    let layout = super::titlebar::layout(view, window);
+    let zoom = super::zoom();
+    let (vw, vh) = (f32::from(window.viewport_size().width) / zoom, f32::from(window.viewport_size().height) / zoom);
+    // Everything below the top bar sits under the veil; the bar (and the window
+    // controls in it) stay usable.
+    let veil_top = theme::FRAME_GAP + layout.height;
+    // The panel scales with the window: roomy on a large screen, full width on a narrow one.
+    let panel_w = (vw * 0.5).clamp(460., 760.).min(vw - 24.);
+    let panel_top = (vh * 0.09).clamp(16., 120.);
+    let list_h = (vh - veil_top - panel_top - 150.).clamp(160., (vh * 0.62).max(160.));
+    let veil = {
+        // GPUI cannot blur what is behind a view, so the background is frosted
+        // the other way: a veil of the page colour that thickens toward the
+        // bottom, over which the panel floats.
+        let base = theme::bg();
+        let (top, bottom) = if theme::is_light() { (0.62, 0.78) } else { (0.58, 0.8) };
+        div()
+            .id("search-veil")
+            .absolute()
+            .top(sc(veil_top))
+            .left(sc(0.))
+            .right(sc(0.))
+            .bottom(sc(0.))
+            .occlude()
+            .bg(theme::gradient(
+                180.,
+                gpui::linear_color_stop(super::fx::with_alpha(base, top), 0.),
+                gpui::linear_color_stop(super::fx::with_alpha(base, bottom), 1.),
+            ))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.search_sb_drag {
+                        this.search_open = false;
+                        window.focus(&this.focus);
+                        cx.notify();
+                    }
+                }),
+            )
+            .with_animation("search-veil-fade", super::motion::animation(super::motion::CONTROL), super::motion::enter)
+    };
+    let input_row = div()
+        .flex_none()
+        .h(sc(54.))
+        .px(sc(16.))
+        .flex()
+        .items_center()
+        .gap(sc(12.))
+        .child(Icon::Search.el(17., theme::text_secondary()))
+        .child(div().flex_1().min_w(sc(0.)).overflow_hidden().child(view.search_input.clone()))
+        .child(
             div()
-                .id("sq-all")
-                .mt(sc(6.))
-                .h(sc(36.))
-                .px(sc(10.))
+                .flex_none()
+                .h(sc(22.))
+                .px(sc(8.))
                 .flex()
                 .items_center()
-                .gap(sc(8.))
-                .rounded(sc(6.))
-                .cursor_pointer()
-                .border_t_1()
-                .border_color(theme::border())
-                .text_size(sc(12.))
+                .rounded(sc(7.))
+                .bg(theme::ink(0.07))
+                .border_1()
+                .border_color(theme::glass_rim(0.))
+                .text_size(sc(10.5))
                 .font_weight(FontWeight::SEMIBOLD)
-                .hover(|s| s.bg(theme::hover()))
-                .child(Icon::Search.el(14., theme::text_secondary()))
-                .child(crate::i18n::text("see_all_results_for", &[q.to_string()]))
-                .on_click(cx.listener(move |this, _, window, cx| this.search_all(qq.clone(), window, cx)))
-                .into_any_element(),
+                .text_color(theme::text_dim())
+                .child(crate::i18n::t("search.close_key")),
         );
-    }
-    let layout = super::titlebar::layout(view, window);
-    let viewport_h = f32::from(window.viewport_size().height) / super::zoom();
-    let menu_h = (viewport_h - layout.height - theme::PLAYER_H - 3. * theme::FRAME_GAP).clamp(1., 560.);
+    let list = div().relative().flex_none().child(
+        div()
+            .id("search-menu-list")
+            .max_h(sc(list_h))
+            .overflow_y_scroll()
+            .track_scroll(&view.search_scroll)
+            .child({
+                super::smooth::register("search", &view.search_scroll);
+                super::smooth::glide("search")
+            })
+            .p(sc(8.))
+            .pr(sc(16.))
+            .flex()
+            .flex_col()
+            .children(body),
+    );
+    let list = list.children(scrollbar(view, cx));
     Some(
         deferred(
-            // Centred under the top bar's search.
-            div()
-                .absolute()
-                .top(sc(theme::FRAME_GAP + layout.height - 4.))
-                .left(sc(view.sidebar_width()))
-                .right(sc(theme::FRAME_GAP))
-                .flex()
-                .justify_center()
-                .child(
-                    super::widgets::floating_panel(14.)
+            div().absolute().top(sc(0.)).left(sc(0.)).size_full().child(veil).child(
+                div().absolute().top(sc(panel_top)).left(sc(0.)).right(sc(0.)).flex().justify_center().child(
+                    super::widgets::floating_panel(18.)
                         .id("search-menu")
                         .occlude()
-                        .w(sc(layout.search_w))
-                        .child(super::glass::sheen("quick-search-glass", 14., 0.7))
-                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                            if !this.search_sb_drag {
-                                this.search_open = false;
-                                cx.notify();
-                            }
-                        }))
-                        .child(
-                            div()
-                                .id("search-menu-list")
-                                .max_h(sc(menu_h))
-                                .overflow_y_scroll()
-                                .track_scroll(&view.search_scroll)
-                                .child({
-                                    super::smooth::register("search", &view.search_scroll);
-                                    super::smooth::glide("search")
-                                })
-                                .p(sc(6.))
-                                .pr(sc(16.))
-                                .flex()
-                                .flex_col()
-                                .children(body),
-                        )
-                        .children(scrollbar(view, cx))
-                        .with_animation("search_menu-entrance", super::motion::animation(super::motion::FAST), super::motion::enter),
+                        .w(sc(panel_w))
+                        .flex()
+                        .flex_col()
+                        .child(super::glass::sheen_rim("quick-search-glass", 18., 0.5))
+                        .child(input_row)
+                        .child(div().h(sc(1.)).flex_none().bg(theme::divider()))
+                        .child(list)
+                        .children(footer)
+                        .with_animation("search_menu-entrance", super::motion::animation(super::motion::PANEL), |d, t| {
+                            d.opacity(if super::motion::reduced_motion() { 1.0 } else { t })
+                        }),
                 ),
+            ),
         )
         .with_priority(3)
         .into_any_element(),

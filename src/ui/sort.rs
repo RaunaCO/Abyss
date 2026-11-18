@@ -337,7 +337,7 @@ pub fn bar(view: &mut AppView, section: &'static str, cx: &mut Context<AppView>)
                 .relative()
                 .when(active, |d| d.bg(theme::text()))
                 .when(!active, |d| {
-                    d.bg(theme::liquid_glass(0.)).border_1().border_color(theme::glass_rim(0.)).child(super::glass::sheen(
+                    d.bg(theme::liquid_glass(0.)).border_1().border_color(theme::glass_rim(0.)).child(super::glass::sheen_rim(
                         SharedString::from(format!("glass-sort-{section}-{}", k.code())),
                         999.,
                         0.9,

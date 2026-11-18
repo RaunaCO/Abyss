@@ -53,7 +53,7 @@ Streaming, very large libraries and long sessions still need separate measuremen
 [TIDAL](https://tidal.com) account (TIDAL is a paid music streaming service) and from
 music files on your PC. You can also use it with files only, with no account at all.
 
-1. Download **Abyss-1.4.0-win-x64-setup.exe** from the
+1. Download **Abyss-1.5.0-win-x64-setup.exe** from the
    [latest release](https://github.com/RaunaCO/Abyss/releases/latest). Only download it
    from that page. A portable `.zip` is also available.
 2. Check the download (see below). It takes a minute.
@@ -83,7 +83,7 @@ fingerprint changes.
 2. Run:
 
    ```powershell
-   Get-FileHash -Algorithm SHA256 .\Abyss-1.4.0-win-x64-setup.exe
+   Get-FileHash -Algorithm SHA256 .\Abyss-1.5.0-win-x64-setup.exe
    ```
 
 3. Compare the `Hash` it prints with the one in the release notes. They must be
@@ -134,11 +134,11 @@ identifiers and the non-public endpoints). It is not legal advice.
 - **Ratings**: 0 to 5 stars in half-star steps for any track (lists, album panel, player bar), sortable. Stored locally in `%APPDATA%\abyss\ratings.json` since TIDAL has no rating API.
 - **Equalizer**: a parametric filter chain like Equalizer APO (Peaking, shelves, High / Low Pass, pre-amp), applied in the output so it works in WASAPI exclusive too. With no filters, or filters that do nothing, the audio is not processed at all. See [docs/AUDIO.md](docs/AUDIO.md).
 - **Last.fm**: optional scrobbling of what you play (TIDAL and local files) and a one-click sync of your saved Replay history. Off until you connect your account in Settings → Integrations. See [docs/PRIVACY.md](docs/PRIVACY.md).
-- **Discord**: optional Rich Presence with cover, title, artist, progress and a TIDAL link. Works out of the box with the Abyss application ID. See [docs/DISCORD.md](docs/DISCORD.md).
+- **Discord**: optional Rich Presence with cover, title, artist, progress and a TIDAL link. Off until you turn it on in Settings > Privacy; it then works with the Abyss application ID. See [docs/DISCORD.md](docs/DISCORD.md).
 - **Languages**: English, Spanish, Portuguese, French, German and Japanese. Follows the system by default; change it in Settings > Appearance.
 - **System**: Windows media controls (SMTC), Inter font bundled.
 
-Current version: **1.4.0** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
+Current version: **1.5.0** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
 source (MIT); it is not sold and must not be bundled with a paid offering.
 
 ## Getting started
@@ -153,9 +153,10 @@ cargo run --release
 
 The Windows binary is `Abyss.exe`. Existing `%APPDATA%\tide` data is copied to `%APPDATA%\abyss` on first launch, preserving the original. See [configuration](docs/CONFIGURATION.md).
 
-Manage local music and edit file tags in Settings > Local files. MP3, FLAC and
-M4A changes are written safely to the file with a one-time original backup;
-WAV changes stay in the index. See [local files](docs/LOCAL-FILES.md).
+Manage local music and edit file tags in Settings > Local files. Abyss plays FLAC,
+MP3, WAV, AIFF, Ogg Vorbis and M4A (AAC or ALAC). MP3, FLAC and M4A changes are
+written safely to the file with a one-time original backup; WAV, AIFF and Ogg
+changes stay in the index. See [local files](docs/LOCAL-FILES.md).
 
 On first launch choose *Log in*: Abyss uses TIDAL's device-code flow, and you
 authorise it in your browser. Tokens are stored in

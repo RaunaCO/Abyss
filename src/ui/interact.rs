@@ -53,11 +53,22 @@ impl Anim {
 
 thread_local! {
     static MAP: RefCell<HashMap<String, Anim>> = RefCell::new(HashMap::new());
+    /// Hover and press state live in their own maps so `hover(key)` and
+    /// `press(key)`, read for every row on every frame, look up `key` as it is
+    /// instead of building a prefixed `String` each time.
+    static HOVER: RefCell<HashMap<String, Anim>> = RefCell::new(HashMap::new());
+    static PRESS: RefCell<HashMap<String, Anim>> = RefCell::new(HashMap::new());
 }
+
+type Store = std::thread::LocalKey<RefCell<HashMap<String, Anim>>>;
 
 /// Start gliding `key` toward `target` (no-op if already heading there).
 pub fn set(key: &str, target: f32, dur: f32) {
-    MAP.with(|m| {
+    set_in(&MAP, key, target, dur)
+}
+
+fn set_in(store: &'static Store, key: &str, target: f32, dur: f32) {
+    store.with(|m| {
         let mut m = m.borrow_mut();
         match m.get_mut(key) {
             Some(a) if (a.to - target).abs() < 1e-4 => {}
@@ -105,29 +116,34 @@ pub fn follow(key: &str, target: f32, dur: f32) -> f32 {
 }
 
 pub fn hover(key: &str) -> f32 {
-    get(&format!("h:{key}"))
+    HOVER.with(|m| m.borrow().get(key).map(Anim::value).unwrap_or(0.0))
 }
 
 pub fn press(key: &str) -> f32 {
-    get(&format!("p:{key}"))
+    PRESS.with(|m| m.borrow().get(key).map(Anim::value).unwrap_or(0.0))
 }
 
 /// Release every pressed element (the button went up somewhere else).
 pub fn release_all() {
-    let keys: Vec<String> =
-        MAP.with(|m| m.borrow().iter().filter(|(k, a)| k.starts_with("p:") && a.to > 0.0).map(|(k, _)| k.clone()).collect());
+    let keys: Vec<String> = PRESS.with(|m| m.borrow().iter().filter(|(_, a)| a.to > 0.0).map(|(k, _)| k.clone()).collect());
     for k in keys {
-        set(&k, 0.0, PRESS_OUT);
+        set_in(&PRESS, &k, 0.0, PRESS_OUT);
     }
 }
 
 /// True while any value is still moving; also forgets settled idle entries.
 pub fn animating() -> bool {
+    // Hover and press entries that settled back at 0 are dropped.
+    for store in [&HOVER, &PRESS] {
+        store.with(|m| m.borrow_mut().retain(|_, a| !(a.done() && a.to == 0.0)));
+    }
+    let moving = |store: &'static Store| store.with(|m| m.borrow().iter().find(|(_, a)| !a.done()).map(|(k, _)| k.clone()));
+    let busy = moving(&HOVER).or_else(|| moving(&PRESS));
+    let busy_hp = busy.is_some();
     MAP.with(|m| {
-        let mut m = m.borrow_mut();
-        m.retain(|k, a| !(a.done() && a.to == 0.0 && (k.starts_with("h:") || k.starts_with("p:"))));
-        let busy = m.iter().find(|(_, a)| !a.done());
-        if let Some((k, _)) = busy {
+        let m = m.borrow();
+        let busy = busy.or_else(|| m.iter().find(|(_, a)| !a.done()).map(|(k, _)| k.clone()));
+        if let Some(k) = &busy {
             if super::motion::perf_on() {
                 thread_local!(static LAST: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) });
                 LAST.with(|l| {
@@ -138,7 +154,7 @@ pub fn animating() -> bool {
                 });
             }
         }
-        busy.is_some()
+        busy_hp || busy.is_some()
     })
 }
 
@@ -148,23 +164,23 @@ pub fn track(el: Stateful<gpui::Div>, key: impl Into<SharedString>, cx: &mut Con
     let key: SharedString = key.into();
     let (k1, k2, k3) = (key.clone(), key.clone(), key);
     el.on_hover(cx.listener(move |_, hovered: &bool, _, cx| {
-        set(&format!("h:{k1}"), if *hovered { 1.0 } else { 0.0 }, if *hovered { HOVER_IN } else { HOVER_OUT });
+        set_in(&HOVER, &k1, if *hovered { 1.0 } else { 0.0 }, if *hovered { HOVER_IN } else { HOVER_OUT });
         if !*hovered {
-            set(&format!("p:{k1}"), 0.0, PRESS_OUT);
+            set_in(&PRESS, &k1, 0.0, PRESS_OUT);
         }
         cx.notify();
     }))
     .on_mouse_down(
         MouseButton::Left,
         cx.listener(move |_, _, _, cx| {
-            set(&format!("p:{k2}"), 1.0, PRESS_IN);
+            set_in(&PRESS, &k2, 1.0, PRESS_IN);
             cx.notify();
         }),
     )
     .on_mouse_up(
         MouseButton::Left,
         cx.listener(move |_, _, _, cx| {
-            set(&format!("p:{k3}"), 0.0, PRESS_OUT);
+            set_in(&PRESS, &k3, 0.0, PRESS_OUT);
             cx.notify();
         }),
     )

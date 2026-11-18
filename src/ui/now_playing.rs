@@ -147,7 +147,8 @@ fn tab_button(tab: NpTab, view: &AppView, cx: &mut Context<AppView>) -> AnyEleme
         .into_any_element()
 }
 
-/// Space kept left of the lyrics for the glow of the current line.
+/// Space kept left of the lyrics for the glow of the current line, on top of
+/// the bleed the lyrics box is given into the layout's margins.
 const LYRICS_GUTTER: f32 = 36.0;
 
 /// Follow the song: ease the lyrics scroll so `child` sits at `fraction` of the
@@ -196,12 +197,24 @@ pub fn follow_lyrics(view: &mut AppView, child: usize, fraction: f32, next: Opti
     }
 }
 
+/// Cover over details (one column) when the window is narrow, or tall enough
+/// that two columns would leave the cover small in a sea of empty height (a
+/// portrait monitor, a window dragged tall).
+pub fn np_stacked(vw: f32, vh: f32) -> bool {
+    vw < 820. || vh > vw * 1.15
+}
+
 /// Artwork fits the available column and leaves room for metadata and controls.
 pub fn cover_size(_view: &AppView, window: &Window) -> f32 {
     let vw = f32::from(window.viewport_size().width) / super::zoom();
     let vh = f32::from(window.viewport_size().height) / super::zoom();
-    let stacked = vw < 820.;
-    let width = if stacked { (vw - 48.).min(520.) } else { (vw * 0.46 - 80.).min(640.) };
+    if np_stacked(vw, vh) {
+        // Full width, but never more than about a third of the height: the
+        // title, the controls and the tabs have to fit under it.
+        let margin = (vw * 0.035).clamp(20., 64.);
+        return (vw - 2. * margin).min(vh * 0.34).clamp(80., 900.);
+    }
+    let width = (vw * 0.46 - 80.).min(640.);
     width.min((vh - 400.).max(120.)).max(80.)
 }
 
@@ -228,9 +241,20 @@ pub fn edge_fade(handle: &gpui::ScrollHandle, child: usize, top_zone: f32, botto
     smooth(mid / (top_zone * z)).min(smooth((h - mid) / (bottom_zone * z)))
 }
 
-/// Big lyrics (synced lines you can click, or plain text).
-pub(super) fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
-    let lyric_scale = (f32::from(window.viewport_size().height) / super::zoom() / 900.).clamp(0.55, 2.5);
+/// Big lyrics (synced lines you can click, or plain text). `bleed` is how far
+/// the scroll box reaches past the text column on each side (into the gap
+/// beside the cover and the window margin): a scroll box clips what it holds,
+/// so the room for the current line's halo has to be inside it.
+pub(super) fn lyrics_view(view: &mut AppView, id: u64, bleed: f32, window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
+    // The text follows the height of the window, but never outgrows its width
+    // (a tall, narrow window would otherwise get enormous lines).
+    let lyric_scale = {
+        let (vw, vh) = (f32::from(window.viewport_size().width) / super::zoom(), f32::from(window.viewport_size().height) / super::zoom());
+        (vh / 900.).min(vw / 1500.).clamp(0.55, 2.5)
+    };
+    // The halo grows with the text and the viewport, but never past the room
+    // around the line: a blur is still visible at about twice its radius.
+    let halo = (46. * lyric_scale).min((LYRICS_GUTTER + bleed) / 2.2);
     let pos = view.display_position();
     let glow_color = {
         let c = view.ambient(cx);
@@ -271,9 +295,9 @@ pub(super) fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: 
                 }))
                 // Room around the lines so the glow of the current one is not cut by the
                 // scroll box (the cover column is narrower by the same amount).
-                .pl(sc(LYRICS_GUTTER))
+                .pl(sc(LYRICS_GUTTER + bleed))
                 .pt(sc(32.))
-                .pr(sc(36.))
+                .pr(sc(36. + bleed))
                 .pb(sc(64.))
                 .flex()
                 .flex_col()
@@ -331,13 +355,13 @@ pub(super) fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: 
                             gpui::BoxShadow {
                                 color: gpui::Hsla::from(super::fx::with_alpha(glow_color, 0.30 * emphasis)),
                                 offset: gpui::point(sc(0.), sc(0.)),
-                                blur_radius: sc(34.),
+                                blur_radius: sc(halo * 0.7),
                                 spread_radius: sc(2. * emphasis),
                             },
                             gpui::BoxShadow {
                                 color: gpui::Hsla::from(super::fx::with_alpha(glow_color, 0.16 * emphasis)),
                                 offset: gpui::point(sc(0.), sc(0.)),
-                                blur_radius: sc(48.),
+                                blur_radius: sc(halo),
                                 spread_radius: sc(4. * emphasis),
                             },
                         ])
@@ -360,7 +384,8 @@ pub(super) fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: 
             .overflow_y_scroll()
             .track_scroll(&super::smooth::handle("np-lyrics-text"))
             .child(super::smooth::glide("np-lyrics-text"))
-            .pr(sc(24.))
+            .pl(sc(bleed))
+            .pr(sc(24. + bleed))
             .pb(sc(64.))
             .text_size(sc(36. * lyric_scale))
             .line_height(sc(48. * lyric_scale))
@@ -373,10 +398,13 @@ pub(super) fn lyrics_view(view: &mut AppView, id: u64, window: &mut Window, cx: 
                     .when(reading.is_some(), |d| d.child(div().text_size(sc(16.)).line_height(sc(23.)).opacity(0.8).child(line.to_owned())))
             }))
             .into_any_element(),
-        Some(Load::Loading) => {
-            div().text_size(sc(16.)).text_color(gpui::rgba(0xffffff99)).child(crate::i18n::t("searching_for_lyrics")).into_any_element()
-        }
-        _ => missing_lyrics(cx),
+        Some(Load::Loading) => div()
+            .px(sc(bleed))
+            .text_size(sc(16.))
+            .text_color(gpui::rgba(0xffffff99))
+            .child(crate::i18n::t("searching_for_lyrics"))
+            .into_any_element(),
+        _ => div().px(sc(bleed)).child(missing_lyrics(view.settings.lock().external_lyrics, cx)).into_any_element(),
     }
 }
 
@@ -492,8 +520,15 @@ fn similar_view(view: &mut AppView, id: u64, cx: &mut Context<AppView>) -> AnyEl
 
 pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
     let vw = f32::from(window.viewport_size().width) / super::zoom();
-    let stacked = vw < 820.;
+    let vh = f32::from(window.viewport_size().height) / super::zoom();
+    let stacked = np_stacked(vw, vh);
+    // Everything is spaced from the viewport, so the view breathes the same in
+    // a small window and in fullscreen on a large screen.
     let margin = (vw * 0.035).clamp(20., 64.);
+    // Only a very short viewport (small window at a large zoom) needs the cover
+    // column to scroll. A scroll box clips its content, the cover's halo
+    // included, so it is not one unless it has to be.
+    let tight = vh < 540.;
     let Some(track) = view.now.as_ref().map(|n| n.track.clone()) else {
         return div()
             .id("now-playing-empty")
@@ -530,7 +565,9 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
     }
     let tab = view.np_tab;
     let body = match tab {
-        NpTab::Lyrics => lyrics_view(view, id, window, cx),
+        // The lyrics box bleeds into the margins (room for the halo); the
+        // other tabs are simply inset by them (see `details`).
+        NpTab::Lyrics => lyrics_view(view, id, margin, window, cx),
         NpTab::Queue => super::pages::queue_panel(view, "np-queue", cx),
         NpTab::Credits => credits_view(view, id),
         NpTab::Similar => similar_view(view, id, cx),
@@ -542,6 +579,7 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
         .items_center()
         .justify_center()
         .gap(sc(6.))
+        .px(sc(margin))
         .pb(sc(20.))
         .child(tab_button(NpTab::Queue, view, cx))
         .when(!local, |d| d.child(tab_button(NpTab::Similar, view, cx)).child(tab_button(NpTab::Credits, view, cx)))
@@ -607,8 +645,9 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
         .id("np-artwork-column")
         .min_w(sc(0.))
         .flex_none()
-        .when(stacked, |d| d.w_full())
-        .when(!stacked, |d| d.w(relative(0.46)).h_full().overflow_y_scroll())
+        .when(stacked, |d| d.w_full().px(sc(margin)))
+        .when(!stacked, |d| d.w(relative(0.46)).h_full().pl(sc(margin)))
+        .when(!stacked && tight, |d| d.overflow_y_scroll())
         .flex()
         .flex_col()
         .items_center()
@@ -628,7 +667,7 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .child(
                     div()
                         .w_full()
-                        .text_size(sc(if stacked { 24. } else { 30. }))
+                        .text_size(sc(if stacked { (vw * 0.028).clamp(24., 38.) } else { 30. }))
                         .line_height(sc(36.))
                         .font_weight(FontWeight::BOLD)
                         .line_clamp(2)
@@ -637,27 +676,39 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .child(
                     div()
                         .w_full()
-                        .text_size(sc(17.))
+                        .text_size(sc(if stacked { (vw * 0.015).clamp(17., 22.) } else { 17. }))
                         .line_height(sc(24.))
                         .text_color(gpui::rgba(0xffffffb3))
                         .line_clamp(2)
                         .child(track.artist_names()),
                 ),
         )
-        .child(div().w_full().max_w(sc(500.)).flex_none().child(super::player_bar::controls(view, true, vw, cx)));
+        .child(
+            div()
+                .w_full()
+                .max_w(sc(if stacked { (vw * 0.45).clamp(500., 760.) } else { 500. }))
+                .flex_none()
+                .child(super::player_bar::controls(view, true, vw, cx)),
+        );
     let details = div()
         .min_w(sc(0.))
         .min_h(sc(0.))
         .flex()
         .flex_col()
-        .when(stacked, |d| d.w_full().h(sc(480.)).flex_none())
+        .when(stacked, |d| d.w_full().h(sc((vh * 0.36).clamp(320., 900.))).flex_none())
         .when(!stacked, |d| d.flex_1().h_full())
         .child(tabs)
-        .child(div().relative().flex_1().min_h(sc(0.)).flex().flex_col().child(body).with_animation(
-            ("np-detail", tab as usize),
-            super::motion::animation(super::motion::PANEL),
-            super::motion::enter,
-        ));
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .min_h(sc(0.))
+                .px(sc(if tab == NpTab::Lyrics { 0. } else { margin }))
+                .flex()
+                .flex_col()
+                .child(body)
+                .with_animation(("np-detail", tab as usize), super::motion::animation(super::motion::PANEL), super::motion::enter),
+        );
     div()
         .id("now-playing")
         // Dark palette in both themes (see theme::dark_scope).
@@ -685,7 +736,7 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                 .top(sc(0.))
                 .left(sc(0.))
                 .size_full()
-                .bg(gpui::linear_gradient(
+                .bg(theme::gradient(
                     180.,
                     gpui::linear_color_stop(super::fx::with_alpha(ambient, 0.78), 0.),
                     gpui::linear_color_stop(super::fx::with_alpha(theme::bg(), 0.96), 1.),
@@ -705,12 +756,12 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                     let tau = std::f32::consts::TAU;
                     let a1 = 0.5 + 0.5 * (t * tau).sin();
                     let a2 = 0.5 + 0.5 * (t * tau * 1.0 + 2.4).sin();
-                    d.child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(gpui::linear_gradient(
+                    d.child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(theme::gradient(
                         60.0 + 90.0 * (t * tau).cos(),
                         gpui::linear_color_stop(super::fx::with_alpha(c0, 0.34 * a1), 0.),
                         gpui::linear_color_stop(super::fx::with_alpha(c0, 0.0), 0.75),
                     )))
-                    .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(gpui::linear_gradient(
+                    .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(theme::gradient(
                         240.0 + 90.0 * (t * tau + 1.0).sin(),
                         gpui::linear_color_stop(super::fx::with_alpha(c1, 0.30 * a2), 0.),
                         gpui::linear_color_stop(super::fx::with_alpha(c1, 0.0), 0.75),
@@ -719,20 +770,26 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
             },
         ))
         // A soft veil keeps the text and controls readable over the artwork.
-        .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(gpui::linear_gradient(
-            180.,
-            gpui::linear_color_stop(gpui::rgba(0x00000057), 0.),
-            gpui::linear_color_stop(gpui::rgba(0x000000c2), 1.),
-        )))
+        // Its colour is the cover's own multiplied down to near black, so the
+        // darkening keeps the artwork's hue instead of greying it.
+        .child({
+            let shade = theme::multiply(theme::with_lightness(ambient, 0.42), gpui::rgb(0x2a2a2a));
+            div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(theme::gradient(
+                180.,
+                gpui::linear_color_stop(super::fx::with_alpha(shade, 0.34), 0.),
+                gpui::linear_color_stop(super::fx::with_alpha(shade, 0.78), 1.),
+            ))
+        })
         .child(
             div()
                 .id("np-layout")
                 .relative()
                 .size_full()
-                .p(sc(margin))
+                // Vertical margins only: the columns carry the horizontal ones,
+                // so the lyrics box can reach into them.
+                .py(sc(margin))
                 .flex()
-                .gap(sc(margin))
-                .when(stacked, |d| d.flex_col().overflow_y_scroll())
+                .when(stacked, |d| d.flex_col().gap(sc(margin)).overflow_y_scroll())
                 .child(left)
                 .child(details),
         )
@@ -764,7 +821,8 @@ pub fn upcoming(lines: &[(f64, String)], current: Option<usize>, position: f64, 
     Some((next + first, blend))
 }
 
-pub fn missing_lyrics(cx: &mut Context<AppView>) -> AnyElement {
+/// `external`: third-party providers are on. When they are off, offer to turn them on.
+pub fn missing_lyrics(external: bool, cx: &mut Context<AppView>) -> AnyElement {
     div()
         .flex()
         .flex_col()
@@ -786,5 +844,17 @@ pub fn missing_lyrics(cx: &mut Context<AppView>) -> AnyElement {
             },
             cx,
         ))
+        .when(!external, |d| {
+            d.child(div().text_size(sc(13.)).text_color(theme::text_secondary()).child(crate::i18n::t("lyrics.external_offer"))).child(
+                super::widgets::pill(
+                    "enable-external-lyrics",
+                    crate::i18n::t("lyrics.external_enable"),
+                    None,
+                    false,
+                    |v, _, _, cx| v.toggle_setting("external_lyrics", cx),
+                    cx,
+                ),
+            )
+        })
         .into_any_element()
 }

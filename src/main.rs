@@ -5,9 +5,11 @@
 mod audio;
 mod config;
 mod discord;
+mod export;
 mod history;
 mod i18n;
 mod local;
+mod queue_store;
 mod ratings;
 mod recents;
 mod romanize;
@@ -16,6 +18,7 @@ mod secure;
 mod storage;
 mod tidal;
 mod ui;
+mod updates;
 
 use gpui::{prelude::*, px, size, App, Application, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions};
 
@@ -71,6 +74,57 @@ fn main() {
 
     // Diagnostics: `Abyss --probe <track id>` prints what TIDAL offers.
     let args: Vec<String> = std::env::args().collect();
+    // Diagnostics: `Abyss --seekprobe [track id]` plays through the real engine at
+    // volume 0 and seeks forward, then back, printing positions and engine errors.
+    if args.get(1).map(String::as_str) == Some("--seekprobe") {
+        let settings = std::sync::Arc::new(parking_lot::Mutex::new(config::Settings::load()));
+        let t = tidal::Tidal::new(settings.clone());
+        let id: u64 = args
+            .get(2)
+            .and_then(|a| a.parse().ok())
+            .unwrap_or_else(|| t.favorite_tracks().ok().and_then(|f| f.first().map(|x| x.id)).unwrap_or(0));
+        let s = settings.lock().clone();
+        let (player, events) = audio::Player::new(
+            t.http().clone(),
+            0.0,
+            audio::OutputPrefs {
+                device: s.output_device.clone(),
+                exclusive: s.exclusive_mode,
+                force_volume: s.force_volume,
+                normalize: s.normalize,
+            },
+        );
+        let info = match t.stream(id, s.quality) {
+            Ok(i) => i,
+            Err(e) => return println!("stream FAILED: {e:#}"),
+        };
+        println!("track {id}: {} {}", info.tier(), info.detail());
+        player.send(audio::Cmd::Play { key: 1, source: audio::Source::Stream(info), start: 0.0, paused: false });
+        let started = std::time::Instant::now();
+        let mut plan: Vec<(f64, f64)> = vec![(12.0, 120.0), (18.0, 30.0), (24.0, 5.0), (30.0, 60.0), (34.0, 40.0)];
+        while started.elapsed().as_secs_f64() < 40.0 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let at = started.elapsed().as_secs_f64();
+            if plan.first().is_some_and(|(when, _)| at >= *when) {
+                let (_, to) = plan.remove(0);
+                println!("{at:5.1}s  SEEK -> {to}");
+                player.send(audio::Cmd::Seek(to));
+            }
+            let snap = player.snapshot();
+            println!(
+                "{at:5.1}s  key={:?} pos={:.2} dur={:.1} buffering={} out={}",
+                snap.key, snap.position, snap.duration, snap.buffering, snap.output
+            );
+            while let Ok(ev) = events.try_recv() {
+                match ev {
+                    audio::Event::Error { key, message } => println!("      EVENT error key={key:?}: {message}"),
+                    audio::Event::Finished { key } => println!("      EVENT finished key={key}"),
+                }
+            }
+        }
+        player.send(audio::Cmd::Stop);
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--probe") {
         let settings = std::sync::Arc::new(parking_lot::Mutex::new(config::Settings::load()));
         let t = tidal::Tidal::new(settings);
@@ -188,6 +242,28 @@ fn main() {
                             }
                         }
                         println!("resampler to 48 kHz produced {out} frames");
+                        // Going back, as dragging the progress bar to the left does.
+                        for back in [30.0, 5.0] {
+                            let st = std::time::Instant::now();
+                            match audio::do_seek(&mut d, &buf, mp4, back) {
+                                Ok(at) => {
+                                    let mut got = 0usize;
+                                    let mut err = None;
+                                    for _ in 0..50 {
+                                        match d.next_chunk() {
+                                            Ok(Some(c)) => got += c.len() / 2,
+                                            Ok(None) => break,
+                                            Err(e) => {
+                                                err = Some(format!("{e:#}"));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    println!("seek back to {back} s -> {at:.2} s in {:?}, then {got} frames, error {err:?}", st.elapsed())
+                                }
+                                Err(e) => println!("seek back to {back} s FAILED: {e:#}"),
+                            }
+                        }
                     }
                     Err(e) => println!("decoder open FAILED: {e:#}"),
                 }

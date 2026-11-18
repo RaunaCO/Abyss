@@ -120,32 +120,46 @@ impl Tilt {
             .flex_none()
             .size(sc(size))
             .rounded(r)
-            // A still, soft shadow in the cover's colour.
+            // A still, soft halo in the cover's colour, sized from the cover so
+            // it keeps its proportion at any viewport, over a contact shadow in
+            // the same hue (the colour multiplied down, not plain black).
             .shadow(vec![
                 BoxShadow {
                     color: Hsla::from(super::fx::with_alpha(ambient, 0.42)),
-                    offset: gpui::point(sc(0.), sc(18.)),
-                    blur_radius: sc(70.),
+                    offset: gpui::point(sc(0.), sc(size * 0.028)),
+                    blur_radius: sc((size * 0.11).clamp(24., 80.)),
                     spread_radius: sc(-6.),
                 },
                 BoxShadow {
-                    color: Hsla::from(gpui::rgba(0x00000088)),
-                    offset: gpui::point(sc(0.), sc(9.)),
-                    blur_radius: sc(26.),
+                    color: Hsla::from(super::fx::with_alpha(super::theme::multiply(ambient, gpui::rgb(0x303030)), 0.6)),
+                    offset: gpui::point(sc(0.), sc(size * 0.014)),
+                    blur_radius: sc((size * 0.04).clamp(10., 28.)),
                     spread_radius: sc(0.),
                 },
             ])
             .when(prev.is_none() && now.is_none(), |d| d.bg(placeholder))
             .children(prev.map(|p| layer(p, 1.0)))
             .children(now.map(|(n, a)| layer(n, a)))
+            // An alpha edge on top of the picture: it outlines dark artwork
+            // against the dark backdrop without tinting it.
+            .child(
+                div()
+                    .absolute()
+                    .top(sc(0.))
+                    .left(sc(0.))
+                    .size(sc(size))
+                    .rounded(r)
+                    .border_1()
+                    .border_color(super::fx::with_alpha(gpui::rgb(0xffffff), 0.10)),
+            )
             // Light under the pointer, gently darker on the far side.
             .when(glow > 0.003, |d| {
-                d.child(light(gpui::linear_gradient(
+                d.child(light(super::theme::gradient(
                     angle,
                     gpui::linear_color_stop(white(0.16 * glow * (0.45 + 0.55 * reach)), 0.0),
                     gpui::linear_color_stop(white(0.0), 0.62),
                 )))
-                .child(light(gpui::linear_gradient(
+                .child(light(super::theme::gradient(
                     angle,
                     gpui::linear_color_stop(black(0.0), 0.45),
                     gpui::linear_color_stop(black(0.14 * glow * reach), 1.0),

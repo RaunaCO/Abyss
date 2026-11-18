@@ -632,7 +632,7 @@ pub fn render(view: &mut AppView, part: Part, window: &Window, cx: &mut Context<
                         .border_1()
                         .border_color(super::fx::with_alpha(theme::divider(), a))
                         .bg(theme::ink(0.04 * h + 0.055 * a))
-                        .child(super::glass::sheen(SharedString::from(format!("glass-{key}")), 6., 0.95))
+                        .child(super::glass::sheen_rim(SharedString::from(format!("glass-{key}")), 6., 0.95))
                         .child(p.label())
                         .on_click(cx.listener(move |this, _, _, cx| this.set_replay_period(p2, cx)));
                     interact::track(el, key, cx).into_any_element()
@@ -755,7 +755,7 @@ pub fn render(view: &mut AppView, part: Part, window: &Window, cx: &mut Context<
             let compact = section_w < 410.;
             let stat_w = ((body_w - PANEL_GAP) / 2.).max(1.);
             let days = (st.today - st.start_day + 1).max(1);
-            let stats = widget_panel("replay-summary")
+            let stats = super::widgets::flat_panel("replay-summary")
                 .p(sc(inset))
                 .min_w(sc(0.))
                 .flex()
@@ -800,11 +800,14 @@ pub fn render(view: &mut AppView, part: Part, window: &Window, cx: &mut Context<
                 );
 
             let most = match st.top_tracks.first() {
-                None => widget_panel("replay-empty-glass").p(sc(inset)).text_center().child(empty(crate::i18n::t("replay.period_empty"))),
+                None => super::widgets::flat_panel("replay-empty-glass")
+                    .p(sc(inset))
+                    .text_center()
+                    .child(empty(crate::i18n::t("replay.period_empty"))),
                 Some(track) => {
                     let vertical = !wide && col_w < 420.;
                     let size = (body_w * if vertical { 0.55 } else { 0.42 }).clamp(76., 220.).min(body_w);
-                    widget_panel("replay-featured-glass")
+                    super::widgets::flat_panel("replay-featured-glass")
                         .p(sc(inset))
                         .flex()
                         .items_center()

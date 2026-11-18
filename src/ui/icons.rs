@@ -1,8 +1,10 @@
 //! Abyss's own icon family, embedded as SVG.
 //!
-//! Drawn on a 24 px grid (live area 3..21) with one consistent language: a
-//! 1.7 stroke with round caps and joins, geometric shapes, generous negative
-//! space. Solid glyphs (play, pause, skip, filled heart and star) are filled
+//! Drawn on a 24 px grid (live area 3..21) with one consistent language:
+//! round caps and joins, geometric shapes, generous negative space. The
+//! stroke is not a fixed share of the glyph: it is chosen per drawn size (see
+//! `stroke_for`) so a 13 px icon and a 24 px one carry the same visual weight
+//! as the text beside them, instead of small icons turning hairline-thin. Solid glyphs (play, pause, skip, filled heart and star) are filled
 //! AND stroked, so their corners are softened like the outlines. Window
 //! controls use a hairline (1 px) stroke. Every glyph is a single colour; the
 //! colour comes from the element (`text_color`). Original artwork, part of
@@ -11,7 +13,21 @@
 use super::sc;
 use std::borrow::Cow;
 
-use gpui::{px, svg, AssetSource, Rgba, SharedString, Styled, Svg};
+use gpui::{div, prelude::*, px, svg, AnyElement, AssetSource, Rgba, SharedString, Styled, Svg};
+
+/// Stroke of the original drawings, in grid units (the weight at 24 px).
+const BASE_STROKE: f32 = 1.7;
+
+/// Stroke width, in tenths of a grid unit, for an icon drawn `size` logical
+/// px tall. The stroke on screen goes from about 1.35 px (small glyphs next
+/// to 11-12 px labels) to 1.75 px (24 px glyphs), matching the stems of the
+/// medium and semibold text they sit with; a plain scale of the 24 px drawing
+/// would give 0.9 px at 13 px.
+fn stroke_for(size: f32) -> u32 {
+    let on_screen = (0.9 + size * 0.035).clamp(1.3, 1.8);
+    let grid = (on_screen * 24.0 / size.max(1.0)).clamp(BASE_STROKE, 2.3);
+    (grid * 10.0).round() as u32
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
@@ -74,11 +90,12 @@ pub enum Icon {
     List,
     Stats,
     Upload,
+    Check,
 }
 
 impl Icon {
     /// Every icon, for the diagnostic sheet (`TIDE_ICON_SHEET`).
-    pub const ALL: [Icon; 59] = [
+    pub const ALL: [Icon; 60] = [
         Icon::Play,
         Icon::Pause,
         Icon::PlayRound,
@@ -138,6 +155,7 @@ impl Icon {
         Icon::List,
         Icon::Stats,
         Icon::Upload,
+        Icon::Check,
     ];
 
     fn name(self) -> &'static str {
@@ -201,6 +219,7 @@ impl Icon {
             Icon::List => "list",
             Icon::Stats => "stats",
             Icon::Upload => "upload",
+            Icon::Check => "check",
         }
     }
 
@@ -218,8 +237,75 @@ impl Icon {
     pub fn el(self, size: f32, color: Rgba) -> Svg {
         // Whole device pixels: crisp edges, and the rasterised glyph is reused.
         let px_size = (size * super::zoom()).round().max(1.0);
-        svg().path(SharedString::from(format!("icons/{}.svg", self.name()))).size(px(px_size)).flex_none().text_color(color)
+        svg()
+            .path(SharedString::from(format!("icons/{}={}.svg", self.name(), stroke_for(size))))
+            .size(px(px_size))
+            .flex_none()
+            .text_color(color)
     }
+}
+
+/// How long one glyph takes to give way to another.
+const SWAP: std::time::Duration = super::motion::CONTROL;
+
+thread_local! {
+    /// Per control: the glyph it shows and, while changing, the one it showed before.
+    static SWAPS: std::cell::RefCell<std::collections::HashMap<String, (Icon, Option<(Icon, std::time::Instant)>)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The icon of a control whose glyph changes with its state (play / pause,
+/// heart, mute, repeat...). When `icon` differs from the one last drawn under
+/// `key`, the old glyph dissolves while the new one resolves: they cross-fade,
+/// the old shrinking away and the new growing in, each with soft ghost copies
+/// around it that stand in for a blur (GPUI has no blur filter). `scale` is an
+/// extra paint scale for the caller's own hover / press feedback.
+pub fn swap(key: &str, icon: Icon, size: f32, color: Rgba, scale: f32) -> AnyElement {
+    let from = SWAPS.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 512 {
+            m.retain(|_, e| e.1.is_some());
+        }
+        match m.get_mut(key) {
+            None => {
+                m.insert(key.to_string(), (icon, None));
+                None
+            }
+            Some(e) => {
+                if e.0 != icon {
+                    *e = (icon, Some((e.0, std::time::Instant::now())));
+                }
+                let (old, at) = e.1?;
+                let t = super::motion::progress(at, SWAP);
+                if t >= 1.0 {
+                    e.1 = None;
+                    return None;
+                }
+                Some((old, t))
+            }
+        }
+    });
+    let Some((old, t)) = from else {
+        return icon.el_scaled(size, color, scale).into_any_element();
+    };
+    super::motion::want_frame("icon-swap");
+    // Smoothstep: both glyphs ease at each end, so neither pops.
+    let s = t * t * (3.0 - 2.0 * t);
+    let haze = (std::f32::consts::PI * s).sin();
+    let px_size = (size * super::zoom()).round().max(1.0);
+    let layer = |i: Icon, alpha: f32, k: f32| {
+        i.el_scaled(size, Rgba { a: color.a * alpha.clamp(0.0, 1.0), ..color }, scale * k).absolute().top(px(0.)).left(px(0.))
+    };
+    let mut stack = div().relative().flex_none().size(px(px_size));
+    for (glyph, alpha, k) in [(old, 1.0 - s, 1.0 - 0.3 * s), (icon, s, 0.7 + 0.3 * s)] {
+        // Two faint copies, a little larger and a little smaller: the blur.
+        stack = stack.child(layer(glyph, alpha * haze * 0.32, k * 1.16)).child(layer(glyph, alpha * haze * 0.32, k * 0.86)).child(layer(
+            glyph,
+            alpha * (1.0 - 0.45 * haze),
+            k,
+        ));
+    }
+    stack.into_any_element()
 }
 
 fn markup(name: &str) -> Option<&'static str> {
@@ -301,6 +387,7 @@ fn markup(name: &str) -> Option<&'static str> {
         }
         "menu" => r##"<path d="M4.5 7.2h15M4.5 12h15M4.5 16.8h15"/>"##,
         "plus" => r##"<path d="M12 5v14M5 12h14"/>"##,
+        "check" => r##"<path d="M5.6 12.6l4.3 4.3 8.5-9.2"/>"##,
         "edit" => r##"<path d="M15.4 5.3l3.3 3.3-9.6 9.6H5.8v-3.3z"/><path d="M13.3 7.4l3.3 3.3"/>"##,
         "link" => {
             r##"<path d="M10 14l4-4"/><path d="M8.6 11.4L7.1 12.9a3.5 3.5 0 0 0 5 5l1.5-1.5M15.4 12.6l1.5-1.5a3.5 3.5 0 0 0-5-5l-1.5 1.5"/>"##
@@ -350,7 +437,7 @@ const SYNC_STEPS: u32 = 48;
 pub fn sync_turned(size: f32, color: Rgba, radians: f32) -> Svg {
     let k = ((radians / std::f32::consts::TAU).rem_euclid(1.0) * SYNC_STEPS as f32).round() as u32 % SYNC_STEPS;
     let px_size = (size * super::zoom()).round().max(1.0);
-    svg().path(SharedString::from(format!("icons/sync@{k}.svg"))).size(px(px_size)).flex_none().text_color(color)
+    svg().path(SharedString::from(format!("icons/sync@{k}={}.svg", stroke_for(size)))).size(px(px_size)).flex_none().text_color(color)
 }
 
 pub struct Assets;
@@ -366,6 +453,11 @@ impl AssetSource for Assets {
         let Some(name) = p.strip_prefix("icons/").and_then(|n| n.strip_suffix(".svg")) else {
             return Ok(None);
         };
+        // "name=22": the glyph with a 2.2 stroke (see `stroke_for`).
+        let (name, stroke) = match name.split_once('=') {
+            Some((n, w)) => (n, w.parse::<u32>().map_or(BASE_STROKE, |w| w as f32 / 10.0)),
+            None => (name, BASE_STROKE),
+        };
         // "sync@k": the sync glyph turned by k steps (see `sync_turned`), drawn
         // as vectors so every angle is as crisp as the still icon.
         if let Some(k) = name.strip_prefix("sync@").and_then(|k| k.parse::<u32>().ok()) {
@@ -373,7 +465,7 @@ impl AssetSource for Assets {
             let m = markup("sync").unwrap_or_default();
             return Ok(Some(Cow::Owned(
                 format!(
-                    r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate({deg} 12 12)">{m}</g></svg>"##
+                    r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate({deg} 12 12)">{m}</g></svg>"##
                 )
                 .into_bytes(),
             )));
@@ -382,7 +474,7 @@ impl AssetSource for Assets {
         Ok(markup(name).map(|m| {
             Cow::Owned(
                 format!(
-                    r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">{m}</svg>"##
+                    r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round">{m}</svg>"##
                 )
                 .into_bytes(),
             )

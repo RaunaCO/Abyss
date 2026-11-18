@@ -23,7 +23,28 @@ fn lerp(a: Rgba, b: Rgba, t: f32) -> Rgba {
 
 /// Vertical gradient from a colour (top) into the page background.
 pub fn tint(color: Rgba, strength: f32) -> gpui::Background {
-    linear_gradient(180., linear_color_stop(with_alpha(color, strength), 0.), linear_color_stop(with_alpha(theme::bg(), 0.0), 1.))
+    // Fades to the same colour at zero alpha (not to a transparent background
+    // colour), so the middle of the fade never turns grey.
+    theme::gradient(180., linear_color_stop(with_alpha(color, strength), 0.), linear_color_stop(with_alpha(color, 0.0), 1.))
+}
+
+/// Opacity of child `child` of a sideways scroll strip from how much of it is
+/// inside the visible area: fully shown items are opaque, an item cut by the
+/// strip's edge fades with the part that is hidden. It works over any
+/// background (page, glass, artwork), unlike a gradient overlay, which has to
+/// know the colour behind it. Measured from the last layout.
+pub fn edge_fade_x(handle: &gpui::ScrollHandle, child: usize) -> f32 {
+    let Some(b) = handle.bounds_for_item(child) else { return 1.0 };
+    let vp = handle.bounds();
+    let (vw, w) = (f32::from(vp.size.width), f32::from(b.size.width));
+    if vw <= 1.0 || w <= 1.0 {
+        return 1.0;
+    }
+    // Child bounds are layout positions; add the scroll offset.
+    let left = f32::from(b.left()) - f32::from(vp.left()) + f32::from(handle.offset().x);
+    let shown = ((left + w).min(vw) - left.max(0.0)).clamp(0.0, w) / w;
+    let t = shown * shown * (3.0 - 2.0 * shown);
+    0.18 + 0.82 * t
 }
 
 /// Delay an animation's start: the first `delay` fraction stays at 0.

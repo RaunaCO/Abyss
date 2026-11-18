@@ -1,6 +1,6 @@
 [package]
 name = "tide"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2021"
 description = "Abyss, an unofficial native TIDAL desktop client written in Rust with GPUI"
 license = "MIT"
@@ -35,7 +35,7 @@ lofty = { version = "0.25.5", path = "vendor/lofty-rs/lofty" }
 tempfile = "3"
 
 # Audio: decoding, high quality resampling, output
-symphonia = { version = "0.5.4", default-features = false, features = ["flac", "isomp4", "aac", "mp3", "wav", "pcm"] }
+symphonia = { version = "0.5.4", default-features = false, features = ["flac", "isomp4", "aac", "alac", "mp3", "wav", "aiff", "pcm", "ogg", "vorbis"] }
 rubato = "0.16"
 cpal = "0.15.3"
 rtrb = "0.3"

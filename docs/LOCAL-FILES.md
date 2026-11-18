@@ -1,5 +1,11 @@
 # Local files
 
+Playable formats: FLAC, MP3, WAV, AIFF (`.aif`, `.aiff`), Ogg Vorbis (`.ogg`, `.oga`)
+and M4A/MP4 with AAC or ALAC. Opus, WMA, APE, WavPack, DSD, Musepack and TTA are
+not played yet; a folder import counts them as unsupported. With *Normalize
+volume* on, `REPLAYGAIN_TRACK_GAIN` and `REPLAYGAIN_TRACK_PEAK` tags are applied
+(not in bit-perfect exclusive mode).
+
 Settings > Local files owns file/folder imports, watched folders, the imported
 list, removal from the index, per-file metadata editing and restoration. The
 top import button links there. The sidebar opens the unified Library, with
@@ -12,7 +18,7 @@ be removed from the index.
 
 Title, artist, album artist, album, genre, year, track number, disc number and
 front artwork are written into MP3, FLAC and M4A/MP4 tags using Lofty 0.25.5.
-WAV edits are stored only in local-library.json. Blank optional values remove
+WAV, AIFF and Ogg Vorbis edits are stored only in local-library.json. Blank optional values remove
 those fields. Covers accept PNG/JPEG up to 16 MiB. Titles are required and
 numeric fields accept nonnegative integers.
 

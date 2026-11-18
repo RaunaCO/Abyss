@@ -284,24 +284,47 @@ pub fn do_seek(dec: &mut Decoder, buf: &Arc<Buffer>, mp4: bool, t: f64) -> anyho
         *dec = d;
         return Ok(reached);
     }
+    if mp4 {
+        // A single-file MP4 (AAC) stream is read front to back: its demuxer can
+        // move forward but not back ("packet out-of-bounds for a non-seekable
+        // stream"). The whole file stays in `buf`, so reopen it from the first
+        // byte, without downloading again, and move forward to `t`.
+        let mut d = Decoder::open(buf.clone(), mp4)?;
+        let reached = match d.seek(t) {
+            Ok(at) => at,
+            Err(e) => {
+                log::debug!("seek after reopening failed, decoding up to it: {e:#}");
+                d = Decoder::open(buf.clone(), mp4)?;
+                skip_to(&mut d, t)
+            }
+        };
+        *dec = d;
+        return Ok(reached);
+    }
     match dec.seek(t) {
         Ok(at) => Ok(at),
         Err(e) => {
             log::debug!("seek fallback: {e:#}");
             let mut d = Decoder::open(buf.clone(), mp4)?;
-            let skip = (t * d.sample_rate as f64) as usize * 2;
-            let mut done = 0usize;
-            while done < skip {
-                match d.next_chunk() {
-                    Ok(Some(c)) => done += c.len(),
-                    _ => break,
-                }
-            }
-            let reached = done as f64 / 2.0 / d.sample_rate as f64;
+            let reached = skip_to(&mut d, t);
             *dec = d;
             Ok(reached)
         }
     }
+}
+
+/// Decode and discard from the start of a freshly opened `d` up to `t` seconds.
+/// Returns where it stopped (earlier if the stream ends first).
+fn skip_to(d: &mut Decoder, t: f64) -> f64 {
+    let skip = (t.max(0.0) * d.sample_rate as f64) as usize * 2;
+    let mut done = 0usize;
+    while done < skip {
+        match d.next_chunk() {
+            Ok(Some(c)) => done += c.len(),
+            _ => break,
+        }
+    }
+    done as f64 / 2.0 / d.sample_rate.max(1) as f64
 }
 
 fn decode_loop(input: DecodeInput, tx: SyncSender<DecMsg>, seek_rx: Receiver<f64>) {
@@ -534,24 +557,27 @@ impl Engine {
     }
 
     /// Linear gain for loudness normalisation (1.0 = untouched).
-    fn norm_gain(&self, info: &StreamInfo) -> f32 {
+    fn norm_gain(&self, replay_gain: Option<f32>, peak: Option<f32>) -> f32 {
         let bit_perfect = self.prefs.exclusive && self.prefs.force_volume;
         if !self.prefs.normalize || bit_perfect {
             return 1.0;
         }
-        let Some(db) = info.replay_gain else { return 1.0 };
-        let mut g = 10f32.powf(db / 20.0);
-        // Never push the track's peak past full scale.
-        if let Some(peak) = info.peak.filter(|p| *p > 0.0) {
-            g = g.min(1.0 / peak);
-        }
-        g.clamp(0.05, 4.0)
+        normalisation(replay_gain, peak)
     }
 
     fn make_track(&self, key: u64, source: Source) -> Track {
         let (norm, bits) = match &source {
-            Source::Stream(info) => (self.norm_gain(info), info.bit_depth.unwrap_or(16)),
-            Source::Local(_) => (1.0, 16),
+            Source::Stream(info) => (self.norm_gain(info.replay_gain, info.peak), info.bit_depth.unwrap_or(16)),
+            Source::Local(path) => {
+                // Only read the tags when they would be used.
+                let norm = if self.prefs.normalize {
+                    let (gain, peak) = local_replay_gain(path);
+                    self.norm_gain(gain, peak)
+                } else {
+                    1.0
+                };
+                (norm, 16)
+            }
         };
         let worker = spawn_worker(&self.http, source);
         Track {
@@ -682,7 +708,7 @@ impl Engine {
             output::open_exclusive(self.prefs.device.as_deref(), rate, bits, self.out_shared.clone(), gain).or_else(|e| {
                 let _ = self
                     .ev
-                    .send(Event::Error { key: None, message: format!("Modo exclusivo no disponible ({e:#}); usando modo compartido") });
+                    .send(Event::Error { key: None, message: crate::i18n::text("audio.exclusive_unavailable", &[format!("{e:#}")]) });
                 output::open_shared(self.prefs.device.as_deref(), self.out_shared.clone())
             })
         } else {
@@ -703,7 +729,7 @@ impl Engine {
                 OutState::Ready
             }
             Err(e) => {
-                let _ = self.ev.send(Event::Error { key: None, message: format!("No se pudo abrir la salida de audio: {e:#}") });
+                let _ = self.ev.send(Event::Error { key: None, message: crate::i18n::text("audio.output_failed", &[format!("{e:#}")]) });
                 OutState::Failed
             }
         }
@@ -855,5 +881,54 @@ impl Engine {
         }
         self.cur = Some(t);
         true
+    }
+}
+
+/// Linear gain from a ReplayGain value in dB, never pushing the sample peak past
+/// full scale. No value: 1.0 (untouched).
+fn normalisation(replay_gain: Option<f32>, peak: Option<f32>) -> f32 {
+    let Some(db) = replay_gain.filter(|d| d.is_finite()) else { return 1.0 };
+    let mut g = 10f32.powf(db / 20.0);
+    if let Some(peak) = peak.filter(|p| p.is_finite() && *p > 0.0) {
+        g = g.min(1.0 / peak);
+    }
+    g.clamp(0.05, 4.0)
+}
+
+/// Track gain (dB) and peak (linear) from a local file's ReplayGain tags
+/// (`REPLAYGAIN_TRACK_GAIN` / `_PEAK`, as foobar2000, MusicBee or loudgain write them).
+fn local_replay_gain(path: &std::path::Path) -> (Option<f32>, Option<f32>) {
+    use lofty::{file::TaggedFileExt, tag::ItemKey};
+    let Ok(file) = lofty::read_from_path(path) else { return (None, None) };
+    let read = |key: ItemKey| file.tags().iter().find_map(|t| t.get_string(key).and_then(parse_replay_gain));
+    (read(ItemKey::ReplayGainTrackGain), read(ItemKey::ReplayGainTrackPeak))
+}
+
+/// "-6.52 dB", "+1.2dB" or "0.988" to a number.
+fn parse_replay_gain(text: &str) -> Option<f32> {
+    let t = text.trim();
+    let t = t.strip_suffix("dB").or_else(|| t.strip_suffix("db")).or_else(|| t.strip_suffix("DB")).unwrap_or(t);
+    t.trim().trim_start_matches('+').parse::<f32>().ok().filter(|v| v.is_finite())
+}
+
+#[cfg(test)]
+mod replay_gain_tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_usual_tag_spellings() {
+        assert_eq!(parse_replay_gain("-6.52 dB"), Some(-6.52));
+        assert_eq!(parse_replay_gain("+1.20dB"), Some(1.2));
+        assert_eq!(parse_replay_gain(" 0.988 "), Some(0.988));
+        assert_eq!(parse_replay_gain("loud"), None);
+        assert_eq!(parse_replay_gain("NaN dB"), None);
+    }
+
+    #[test]
+    fn gain_never_lifts_the_peak_past_full_scale() {
+        assert_eq!(normalisation(None, Some(0.5)), 1.0);
+        assert!((normalisation(Some(-6.0), None) - 0.501).abs() < 0.001);
+        // +6 dB would be about 2.0, but a 0.8 peak only allows 1.25.
+        assert!((normalisation(Some(6.0), Some(0.8)) - 1.25).abs() < 0.001);
     }
 }
