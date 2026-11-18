@@ -64,7 +64,7 @@ pub struct Tidal {
 impl Tidal {
     pub fn new(settings: Arc<Mutex<Settings>>) -> Self {
         let http = Client::builder()
-            .user_agent(concat!("Abyss/", env!("CARGO_PKG_VERSION"), " (https://github.com/RaunaCO/TIDE)"))
+            .user_agent(concat!("Abyss/", env!("CARGO_PKG_VERSION"), " (https://github.com/RaunaCO/Abyss)"))
             .gzip(true)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))

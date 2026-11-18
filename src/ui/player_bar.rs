@@ -57,6 +57,7 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
             d.child(div().flex_none().child(bar_cover))
                 .child(
                     div()
+                        .relative()
                         .flex_1()
                         .min_w(sc(0.))
                         .flex()
@@ -130,7 +131,11 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                                             })),
                                     )
                                 }),
-                        ),
+                        )
+                        // A new track slides its title in, once per track (instant with reduced motion).
+                        .with_animation(("bar-track", track.id as usize), super::motion::animation(super::motion::CONTROL), |el, t| {
+                            el.opacity(0.35 + 0.65 * t).left(sc((1.0 - t) * 6.0))
+                        }),
                 )
                 .when(!local, |d| {
                     d.child(icon_button(
@@ -284,17 +289,16 @@ pub fn controls(view: &mut AppView, over_fullscreen: bool, width: f32, cx: &mut 
                         .rounded(sc(if over_fullscreen { 26. } else { 19. }))
                         .bg(theme::button())
                         .hover(|d| d.bg(theme::button_hover()))
-                        .child(super::glass::sheen("playpause-glass", 19., 0.58))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child((if playing { Icon::PauseRound } else { Icon::PlayRound }).el_scaled(24., theme::button_text(), pop))
-                                .with_animation(("pp-morph", playing as usize), super::motion::animation(super::motion::FAST), |d, t| {
-                                    d.opacity(0.25 + 0.75 * t)
-                                }),
-                        )
+                        .active(|d| d.bg(theme::button_pressed()))
+                        .child(super::glass::sheen("playpause-glass", if over_fullscreen { 26. } else { 19. }, 0.58))
+                        // Play and pause dissolve into each other.
+                        .child(super::icons::swap(
+                            if over_fullscreen { "playpause-np" } else { "playpause" },
+                            if playing { Icon::PauseRound } else { Icon::PlayRound },
+                            if over_fullscreen { 28. } else { 24. },
+                            theme::button_text(),
+                            pop,
+                        ))
                         .on_click(cx.listener(|this, _, _, cx| {
                             cx.stop_propagation();
                             this.pulse("playpause");
@@ -320,7 +324,13 @@ pub fn controls(view: &mut AppView, over_fullscreen: bool, width: f32, cx: &mut 
         );
 
     // --------------------------------------------------------- right
-    let vol = if view.muted { 0.0 } else { view.volume };
+    // The fill glides to wheel, keyboard and mute changes; a drag follows the pointer exactly.
+    let vol_target = if view.muted { 0.0 } else { view.volume };
+    let vol = if view.drag == Some(Drag::Volume) {
+        super::interact::follow("volume-fill", vol_target, 0.0)
+    } else {
+        super::interact::follow("volume-fill", vol_target, super::motion::seconds(super::motion::FAST))
+    };
     let show_pct = view.drag == Some(Drag::Volume) || view.volume_hint_until.is_some_and(|t| std::time::Instant::now() < t);
     let e2 = entity.clone();
     let volume = div()
@@ -394,7 +404,13 @@ pub fn controls(view: &mut AppView, over_fullscreen: bool, width: f32, cx: &mut 
             .cursor_pointer()
             .bg(super::interact::mix(rest, theme::hover(), h * 0.85))
             .child(super::glass::sheen("player-toggle-glass", 8., 1.05))
-            .child(icon.el_scaled(16., if on { theme::accent() } else { theme::text_secondary() }, 1.0 + 0.06 * h - 0.09 * p))
+            .child(super::icons::swap(
+                &key,
+                icon,
+                16.,
+                if on { theme::accent() } else { theme::text_secondary() },
+                1.0 + 0.06 * h - 0.09 * p,
+            ))
             .tooltip(super::sidebar::tip(label))
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
@@ -439,14 +455,41 @@ pub fn controls(view: &mut AppView, over_fullscreen: bool, width: f32, cx: &mut 
             cx,
             AppView::toggle_lyrics,
         ))
-        .child(icon_button(
-            "mute",
-            if vol <= 0.001 { Icon::VolumeOff } else { Icon::VolumeUp },
-            16.,
-            theme::text_secondary(),
-            |this, _, _, cx| this.toggle_mute(cx),
-            cx,
-        ))
+        .child(
+            // Right-click: pick the device the sound plays on.
+            div()
+                .flex_none()
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        // Open at once with the list already known. Asking the
+                        // audio host for the devices takes a while (a few
+                        // hundred ms with several of them) and must not hold
+                        // the click: the list is refreshed when it arrives.
+                        this.menu = Some((ev.position, MenuTarget::Output));
+                        cx.notify();
+                        cx.spawn(async move |this, cx| {
+                            let names = cx.background_executor().spawn(async { crate::audio::output::device_names() }).await;
+                            let _ = this.update(cx, |this, cx| {
+                                if this.devices != names {
+                                    this.devices = names;
+                                    cx.notify();
+                                }
+                            });
+                        })
+                        .detach();
+                    }),
+                )
+                .child(icon_button(
+                    "mute",
+                    if vol <= 0.001 { Icon::VolumeOff } else { Icon::VolumeUp },
+                    16.,
+                    theme::text_secondary(),
+                    |this, _, _, cx| this.toggle_mute(cx),
+                    cx,
+                )),
+        )
         .child(volume)
         .child(
             div()
@@ -480,8 +523,9 @@ pub fn controls(view: &mut AppView, over_fullscreen: bool, width: f32, cx: &mut 
 /// the controls readable and leaves the light independent of playback and scrubbing.
 fn bar_light(left: gpui::Rgba, right: gpui::Rgba) -> impl IntoElement {
     let layer = div().absolute().top(sc(0.)).left(sc(0.)).size_full();
+    // The pools share the bar's rounded corners, so the light ends with it.
     let gradient = |color, angle, alpha| {
-        div().absolute().top(sc(0.)).left(sc(0.)).size_full().bg(gpui::linear_gradient(
+        div().absolute().top(sc(0.)).left(sc(0.)).size_full().rounded(sc(theme::PANEL_R - 1.0)).bg(theme::gradient(
             angle,
             gpui::linear_color_stop(super::fx::with_alpha(color, alpha), 0.),
             gpui::linear_color_stop(super::fx::with_alpha(color, 0.), 0.74),

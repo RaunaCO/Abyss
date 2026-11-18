@@ -21,7 +21,7 @@ pub(super) fn group(icon: Icon, title: &'static str, description: &'static str, 
             title,
             (!description.is_empty()).then(|| description.into()),
         )))
-        .child(div().rounded(sc(13.)).bg(theme::ink(0.036)).border_1().border_color(theme::panel_border()).flex().flex_col().children(
+        .child(div().rounded(sc(CARD_R)).bg(theme::ink(0.036)).border_1().border_color(theme::ink(0.09)).flex().flex_col().children(
             rows.into_iter().enumerate().map(|(index, row)| {
                 div().px(sc(ROW_INSET)).py(sc(3.)).when(index > 0, |d| d.border_t_1().border_color(theme::divider())).child(row)
             }),
@@ -43,6 +43,8 @@ fn row_text(title: impl Into<SharedString>, desc: Option<SharedString>) -> AnyEl
 
 /// Gap between a card's edge and the highlight of the rows inside it.
 const ROW_INSET: f32 = 4.0;
+/// Corner radius of a settings card; its rows are concentric with it.
+const CARD_R: f32 = 16.0;
 
 pub(super) fn row(
     id: impl Into<ElementId>,
@@ -54,7 +56,7 @@ pub(super) fn row(
         .id(id)
         .px(sc(super::widgets::PANEL_PAD - ROW_INSET))
         .py(sc(14. - ROW_INSET))
-        .rounded(sc(10.))
+        .rounded(sc(theme::concentric(CARD_R, ROW_INSET + 1.)))
         .flex()
         .items_center()
         .gap(sc(12.))
@@ -83,26 +85,58 @@ pub(super) fn switch(on: bool, key: &str) -> AnyElement {
 
 pub(super) fn small_button(id: impl Into<ElementId>, label: impl Into<SharedString>, white: bool) -> gpui::Stateful<gpui::Div> {
     div()
-        .id(id)
+        .id(id.into())
         .flex_none()
         .min_w(sc(0.))
         .h(sc(30.))
-        .px(sc(12.))
+        .px(sc(13.))
         .flex()
         .items_center()
         .gap(sc(6.))
         .rounded(sc(15.))
         .relative()
         .border_1()
-        .border_color(if white { theme::divider() } else { theme::glass_rim(0.) })
+        .border_color(if white { theme::divider() } else { theme::ink(0.12) })
         .cursor_pointer()
-        .text_size(sc(11.))
+        .text_size(sc(11.5))
         .font_weight(FontWeight::BOLD)
-        .bg(if white { theme::button().into() } else { theme::liquid_glass(0.) })
+        .bg(if white { theme::button() } else { theme::ink(0.06) })
         .text_color(if white { theme::button_text() } else { theme::text() })
-        .hover(|s| s.opacity(0.9).shadow_md())
-        .active(|s| s.opacity(0.65))
+        .hover(move |s| if white { s.opacity(0.9) } else { s.bg(theme::ink(0.11)) })
+        .active(|s| s.opacity(0.7))
         .child(div().min_w(sc(0.)).truncate().child(label.into()))
+}
+
+/// A read-only status chip (the settings summary under a section's title).
+fn chip(label: String, accent: bool) -> AnyElement {
+    div()
+        .flex_none()
+        .max_w_full()
+        .h(sc(24.))
+        .px(sc(10.))
+        .flex()
+        .items_center()
+        .gap(sc(6.))
+        .rounded(sc(12.))
+        .bg(theme::ink(0.06))
+        .border_1()
+        .border_color(theme::glass_rim(0.))
+        .text_size(sc(11.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme::text_secondary())
+        .when(accent, |d| d.child(div().flex_none().size(sc(7.)).rounded(sc(3.5)).bg(theme::accent())))
+        .child(div().min_w(sc(0.)).truncate().child(label))
+        .into_any_element()
+}
+
+/// Sections in the order they are listed, in groups: (group title, tab indexes).
+fn nav_groups() -> [(&'static str, &'static [usize]); 4] {
+    [
+        (crate::i18n::t("settings.group.listening"), &[0, EQ_TAB]),
+        (crate::i18n::t("interface"), &[1, 2, LOCAL_TAB]),
+        (crate::i18n::t("settings.group.connections"), &[3, 4]),
+        (crate::i18n::t("settings.group.app"), &[ABOUT_TAB]),
+    ]
 }
 
 impl AppView {
@@ -147,10 +181,59 @@ impl AppView {
         cx.notify();
     }
 
+    /// Show section `i` of the settings.
+    fn pick_section(&mut self, i: usize, cx: &mut Context<Self>) {
+        if self.settings_tab != i {
+            self.settings_tab = i;
+            self.settings_dev_open = false;
+            self.content_changed_pub();
+            cx.notify();
+        }
+    }
+
+    /// What is currently chosen in a section, as short chips under its title.
+    fn settings_chips(&self, tab: usize) -> Vec<(String, bool)> {
+        let s = self.settings.lock().clone();
+        match tab {
+            0 => {
+                let mut chips = vec![
+                    (s.quality.label().to_string(), true),
+                    (s.output_device.clone().unwrap_or_else(|| crate::i18n::t("system_default").into()), false),
+                ];
+                if s.exclusive_mode {
+                    chips.push((crate::i18n::t("exclusive_mode_wasapi").into(), false));
+                }
+                if s.normalize {
+                    chips.push((crate::i18n::t("normalize_volume").into(), false));
+                }
+                chips
+            }
+            1 => vec![
+                ((if s.light_theme { crate::i18n::t("light") } else { crate::i18n::t("dark") }).into(), false),
+                (format!("#{:06X}", theme::accent_rgb()), true),
+                (crate::i18n::text("format.percent_spaced", &[format!("{}", (super::user_zoom() * 100.0).round() as i32)]), false),
+            ],
+            3 => {
+                let mut chips = Vec::new();
+                if s.discord {
+                    chips.push((crate::i18n::t("discord").to_string(), true));
+                }
+                if self.lastfm_connected() {
+                    chips.push((crate::i18n::t("lastfm.title").to_string(), true));
+                }
+                chips
+            }
+            4 => s.username.clone().filter(|name| !name.trim().is_empty()).map(|name| (name, true)).into_iter().collect(),
+            ABOUT_TAB => vec![(crate::i18n::text("app.version", &[env!("CARGO_PKG_VERSION").to_string()]), false)],
+            _ => Vec::new(),
+        }
+    }
+
     pub fn settings_panel(&mut self, width: f32, cx: &mut Context<Self>) -> AnyElement {
         let tab = self.settings_tab;
-        let wide = width >= 830.;
-        let body_width = if wide { width - 210. - PANEL_GAP } else { width };
+        let wide = width >= 900.;
+        const NAV_W: f32 = 236.;
+        let body_width = if wide { width - NAV_W - PANEL_GAP } else { width };
         let sections = [
             (crate::i18n::t("audio"), Icon::VolumeUp, crate::i18n::t("quality_sound_output_and_queue")),
             (crate::i18n::t("appearance"), Icon::Sun, crate::i18n::t("theme_accent_background_and_scale")),
@@ -161,90 +244,148 @@ impl AppView {
             (crate::i18n::t("local_files"), Icon::Upload, crate::i18n::t("local.settings_description")),
             (crate::i18n::t("eq.title"), Icon::Stats, crate::i18n::t("eq.tab_description")),
         ];
-        let tabs = widget_panel("settings-navigation")
-            .flex()
-            .flex_none()
-            .p(sc(8.))
-            .gap(sc(4.))
-            .when(wide, |d| d.w(sc(210.)).flex_col())
-            .when(!wide, |d| d.w_full().flex_wrap())
-            .children(sections.into_iter().enumerate().map(|(i, (label, icon, _))| {
-                let selected = i == tab;
-                let key = format!("settings-tab-{i}");
-                let hover = super::interact::hover(&key);
-                let press = super::interact::press(&key);
-                let color = super::interact::mix(theme::text_secondary(), theme::text(), hover);
-                let button = div()
-                    .id(("settings-tab", i))
-                    .h(sc(40.))
-                    .px(sc(11.))
-                    .flex()
-                    .items_center()
-                    .gap(sc(9.))
-                    .rounded(sc(11.))
-                    .border_1()
-                    .border_color(if selected { theme::glass_rim(0.3) } else { theme::ink(0.) })
-                    .bg(theme::ink(if selected { 0.10 + 0.03 * hover } else { 0.07 * hover }))
-                    .cursor_pointer()
-                    .text_size(sc(13.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(if selected { theme::text() } else { color })
-                    .child(icon.el_scaled(16., if selected { theme::accent() } else { color }, 1. + 0.07 * hover - 0.1 * press))
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.settings_tab != i {
-                            this.settings_tab = i;
-                            this.settings_dev_open = false;
-                            this.content_changed_pub();
-                            cx.notify();
-                        }
-                    }));
-                super::interact::track(button, key, cx)
-            }));
+        // ------------------------------------------------------ navigation
+        // Wide: a glass panel with the sections in groups. Narrow: the same
+        // sections as a row of pills, the open one solid.
+        let nav: AnyElement = if wide {
+            let mut panel =
+                super::widgets::flat_panel("settings-navigation").flex().flex_none().w(sc(NAV_W)).p(sc(10.)).flex().flex_col().gap(sc(2.));
+            for (g, (group_title, members)) in nav_groups().into_iter().enumerate() {
+                panel = panel.child(
+                    div()
+                        .px(sc(10.))
+                        .pt(sc(if g == 0 { 4. } else { 14. }))
+                        .pb(sc(5.))
+                        .text_size(sc(10.5))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_dim())
+                        .child(group_title.to_uppercase()),
+                );
+                for &i in members {
+                    let (label, icon, _) = sections[i];
+                    let selected = i == tab;
+                    let key = format!("settings-tab-{i}");
+                    let (hover, press) = (super::interact::hover(&key), super::interact::press(&key));
+                    let color = super::interact::mix(theme::text_secondary(), theme::text(), hover);
+                    let button = div()
+                        .id(("settings-tab", i))
+                        .h(sc(42.))
+                        .px(sc(8.))
+                        .flex()
+                        .items_center()
+                        .gap(sc(10.))
+                        // Concentric with the panel: its radius less border and padding.
+                        .rounded(sc(theme::concentric(18., 11.)))
+                        .border_1()
+                        .border_color(if selected { theme::glass_rim(0.3) } else { theme::ink(0.) })
+                        .bg(theme::ink(if selected { 0.10 + 0.03 * hover } else { 0.07 * hover }))
+                        .cursor_pointer()
+                        .text_size(sc(13.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(if selected { theme::text() } else { color })
+                        .child(
+                            div()
+                                .flex_none()
+                                .size(sc(28.))
+                                .rounded(sc(8.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(if selected { theme::accent_dim() } else { theme::ink(0.05 + 0.03 * hover) })
+                                .child(icon.el_scaled(
+                                    15.,
+                                    if selected { theme::accent() } else { color },
+                                    1. + 0.07 * hover - 0.1 * press,
+                                )),
+                        )
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, _, cx| this.pick_section(i, cx)));
+                    panel = panel.child(super::interact::track(button, key, cx));
+                }
+            }
+            panel.into_any_element()
+        } else {
+            div()
+                .w_full()
+                .flex()
+                .flex_wrap()
+                .gap(sc(8.))
+                .children(nav_groups().into_iter().flat_map(|(_, members)| members.iter().copied()).map(|i| {
+                    let (label, icon, _) = sections[i];
+                    super::widgets::pill(
+                        ("settings-tab", i),
+                        label,
+                        Some(icon),
+                        i == tab,
+                        move |this, _, _, cx| this.pick_section(i, cx),
+                        cx,
+                    )
+                    .into_any_element()
+                }))
+                .into_any_element()
+        };
+        // ------------------------------------------------------ the section
         let body = match tab {
             1 => self.settings_appearance(body_width, cx),
             2 => self.settings_library(cx),
             3 => self.settings_privacy(cx),
             4 => self.settings_account(cx),
-            ABOUT_TAB => self.settings_about(),
+            ABOUT_TAB => self.settings_about(cx),
             LOCAL_TAB => self.settings_local(cx),
             EQ_TAB => self.settings_equalizer(cx),
             _ => self.settings_audio(body_width, cx),
         };
-        let (title, _, description) = sections[tab];
+        let (title, icon, description) = sections[tab];
+        let chips = self.settings_chips(tab);
+        let hero = super::widgets::flat_panel("settings-hero")
+            .px(sc(super::widgets::PANEL_PAD))
+            .py(sc(18.))
+            .flex()
+            .items_center()
+            .gap(sc(16.))
+            .child(
+                div()
+                    .flex_none()
+                    .size(sc(48.))
+                    .rounded(sc(14.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(theme::accent_dim())
+                    .border_1()
+                    .border_color(theme::ink(0.08))
+                    .child(icon.el(22., theme::accent())),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(sc(0.))
+                    .flex()
+                    .flex_col()
+                    .gap(sc(4.))
+                    .child(div().text_size(sc(22.)).font_weight(FontWeight::BOLD).child(title))
+                    .child(div().text_size(sc(12.5)).text_color(theme::text_secondary()).child(description))
+                    .when(!chips.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .pt(sc(6.))
+                                .flex()
+                                .flex_wrap()
+                                .gap(sc(6.))
+                                .children(chips.into_iter().map(|(label, accent)| chip(label, accent))),
+                        )
+                    }),
+            );
+        let content = div().flex_1().w_full().min_w(sc(0.)).flex().flex_col().gap(sc(PANEL_GAP)).child(hero).child(body);
         div()
             .w_full()
             .pt(sc(22.))
             .pb(sc(12.))
             .flex()
             .flex_col()
-            .gap(sc(24.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sc(4.))
-                    .child(div().text_size(sc(32.)).font_weight(FontWeight::BOLD).child(crate::i18n::t("settings"))),
-            )
-            .child(
-                div().flex().gap(sc(PANEL_GAP)).items_start().when(!wide, |d| d.flex_col()).child(tabs).child(
-                    div()
-                        .flex_1()
-                        .w_full()
-                        .min_w(sc(0.))
-                        .flex()
-                        .flex_col()
-                        .gap(sc(PANEL_GAP))
-                        .child(
-                            div()
-                                .px(sc(3.))
-                                .pb(sc(3.))
-                                .child(div().text_size(sc(22.)).font_weight(FontWeight::BOLD).child(title))
-                                .child(div().text_size(sc(12.5)).text_color(theme::text_secondary()).child(description)),
-                        )
-                        .child(body),
-                ),
-            )
+            .gap(sc(22.))
+            .child(div().text_size(sc(32.)).font_weight(FontWeight::BOLD).child(crate::i18n::t("settings")))
+            .child(div().flex().gap(sc(PANEL_GAP)).items_start().when(!wide, |d| d.flex_col()).child(nav).child(content))
             .into_any_element()
     }
 
@@ -310,7 +451,7 @@ impl AppView {
             row(
                 "sound-output",
                 crate::i18n::t("sound_output"),
-                None,
+                Some(crate::i18n::t("output.right_click_tip").into()),
                 Some(
                     small_button("sound-output-pick", device_label, false)
                         .max_w(sc((width * 0.42).min(300.)))
@@ -555,7 +696,7 @@ impl AppView {
             )
             .into_any_element();
         let accent_row = self.accent_row(width, cx);
-        let zoom_pct = crate::i18n::text("format.percent_spaced", &[format!("{}", (super::zoom() * 100.0).round() as i32)]);
+        let zoom_pct = crate::i18n::text("format.percent_spaced", &[format!("{}", (super::user_zoom() * 100.0).round() as i32)]);
         let zoom_row = row(
             "zoom-row",
             crate::i18n::t("interface_zoom"),
@@ -824,7 +965,101 @@ impl AppView {
             .into_any_element()
     }
 
-    fn settings_about(&self) -> AnyElement {
+    /// Help and data actions: they used to live only in the app menu.
+    fn about_help_rows(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let arrow = || Some(Icon::Forward.el(14., theme::text_secondary()).into_any_element());
+        let update_desc: SharedString = match &self.update_check {
+            UpdateCheck::Idle => crate::i18n::t("about.update_idle").into(),
+            UpdateCheck::Checking => crate::i18n::t("about.update_checking").into(),
+            UpdateCheck::Latest(v) => crate::i18n::text("about.update_latest", std::slice::from_ref(v)).into(),
+            UpdateCheck::Newer(v) => crate::i18n::text("about.update_newer", std::slice::from_ref(v)).into(),
+            UpdateCheck::Failed => crate::i18n::t("about.update_failed").into(),
+        };
+        let data_dir: SharedString = crate::config::config_dir().display().to_string().into();
+        vec![
+            row("about-update", crate::i18n::t("check_for_updates"), Some(update_desc), arrow())
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::ink(0.05)))
+                .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(cx)))
+                .into_any_element(),
+            row("about-issue", crate::i18n::t("about.report_problem"), Some(crate::i18n::t("about.report_problem_desc").into()), arrow())
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::ink(0.05)))
+                .on_click(cx.listener(|_, _, _, _| {
+                    let _ = open::that("https://github.com/RaunaCO/Abyss/issues/new");
+                }))
+                .into_any_element(),
+            row("about-data", crate::i18n::t("about.open_data_folder"), Some(data_dir), arrow())
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::ink(0.05)))
+                .on_click(cx.listener(|_, _, _, _| {
+                    let dir = crate::config::config_dir();
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = open::that(dir);
+                }))
+                .into_any_element(),
+            row("about-export", crate::i18n::t("about.export_data"), Some(crate::i18n::t("about.export_desc").into()), arrow())
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::ink(0.05)))
+                .on_click(cx.listener(|this, _, _, cx| this.export_data(cx)))
+                .into_any_element(),
+        ]
+    }
+
+    /// Ask GitHub for the latest published release (only when the user clicks).
+    /// When a newer one is already known, open its page instead.
+    pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        match self.update_check {
+            UpdateCheck::Checking => return,
+            UpdateCheck::Newer(_) => {
+                let _ = open::that("https://github.com/RaunaCO/Abyss/releases/latest");
+                return;
+            }
+            _ => {}
+        }
+        self.update_check = UpdateCheck::Checking;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_executor().spawn(async move { crate::updates::latest_release() }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.update_check = match result {
+                    Ok(v) if crate::updates::is_newer(&v, env!("CARGO_PKG_VERSION")) => UpdateCheck::Newer(v),
+                    Ok(_) => UpdateCheck::Latest(env!("CARGO_PKG_VERSION").to_string()),
+                    Err(error) => {
+                        log::warn!("update check failed: {error:#}");
+                        UpdateCheck::Failed
+                    }
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Write the export folder into Documents (or the data folder) and open it.
+    pub fn export_data(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings.lock().clone();
+        self.notify_toast(crate::i18n::t("export.working"), cx);
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let parent = dirs::document_dir().unwrap_or_else(crate::config::config_dir);
+                    crate::export::export_all(&parent, &settings)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(dir) => {
+                    this.notify_toast_for(crate::i18n::text("export.done", &[dir.display().to_string()]), 8, cx);
+                    let _ = open::that(dir);
+                }
+                Err(error) => this.notify_toast(crate::i18n::text("export.failed", &[format!("{error:#}")]), cx),
+            });
+        })
+        .detach();
+    }
+
+    fn settings_about(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let header = div()
             .px(sc(16.))
             .py(sc(16.))
@@ -859,6 +1094,7 @@ impl AppView {
             .flex_col()
             .gap(sc(PANEL_GAP))
             .child(group(Icon::Track, crate::i18n::t("installed_version"), "", vec![header]))
+            .child(group(Icon::Link, crate::i18n::t("about.help_and_data"), "", self.about_help_rows(cx)))
             .child(group(Icon::List, crate::i18n::t("licenses_and_credits"), crate::i18n::t("about.components"), credits))
             .child(group(
                 Icon::Link,
@@ -963,7 +1199,7 @@ impl AppView {
             .children((0..6).map(|k| {
                 let a = hue_color(k as f32 / 6.0);
                 let b = hue_color((k + 1) as f32 / 6.0);
-                div().absolute().top(sc(0.)).left(sc(segment * k as f32)).w(sc(segment + 1.)).h_full().bg(gpui::linear_gradient(
+                div().absolute().top(sc(0.)).left(sc(segment * k as f32)).w(sc(segment + 1.)).h_full().bg(theme::gradient(
                     90.,
                     gpui::linear_color_stop(theme::rgb_u32(a), 0.),
                     gpui::linear_color_stop(theme::rgb_u32(b), 1.),
@@ -1047,4 +1283,17 @@ impl AppView {
             )
             .into_any_element()
     }
+}
+
+/// State of the "Check for updates" row in About.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum UpdateCheck {
+    #[default]
+    Idle,
+    Checking,
+    /// Up to date (this version).
+    Latest(String),
+    /// A newer published release.
+    Newer(String),
+    Failed,
 }

@@ -6,6 +6,12 @@ playlist editing, lyrics from several providers, Now Playing and a clean
 fullscreen view, Replay, context menus and Song Info, six languages, guided
 introduction, local file tag editing, Windows media controls.
 
+## Done (1.5.0)
+Interface polish (AA contrast, gliding volume, track-change entrance), persistent queue,
+AIFF / Ogg Vorbis / ALAC and local ReplayGain, privacy-first defaults (Discord and
+third-party lyrics opt-in), data export, portable mode, help and update check in About,
+reliability fixes (unplugged drives, large libraries, backward seeks in AAC streams).
+
 ## Done (1.4.0)
 Equaliser v3: level meters and gain faders per channel, aligned response graph,
 draggable nodes on the graph and a customisable graphic bars mode.
@@ -42,4 +48,4 @@ notices (README and welcome guide), automatic draft releases from a tag.
 - [x] DASH limits, HTTPS-only streams, bounded audio buffer, byte-limited caches.
 - [x] Third-party notices (`THIRD_PARTY_NOTICES.md`) and licence texts ship with binaries.
 - [ ] Revoke tokens on sign-out.
-- [ ] Third-party lyrics off by default for public releases.
+- [x] Third-party lyrics off by default (1.5.0). Discord Rich Presence too.

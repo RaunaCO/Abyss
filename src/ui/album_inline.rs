@@ -278,7 +278,7 @@ pub fn render(view: &mut AppView, album: Album, column: usize, cols: usize, card
                 .border_1()
                 .border_color(theme::glass_rim(0.))
                 .shadow(theme::glass_shadow())
-                .child(super::glass::sheen(("inline-panel-glass", id as usize), 14., 0.55))
+                .child(super::glass::sheen_rim(("inline-panel-glass", id as usize), 14., 0.55))
                 .flex()
                 .when(stacked, |d| d.flex_col())
                 .gap(sc(24.))

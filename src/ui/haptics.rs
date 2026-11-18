@@ -157,7 +157,7 @@ pub fn button(
         .bg(theme::ink(0.055 * h + 0.045 * p))
         .child(super::glass::sheen("transport-button-glass", 999., 0.92))
         // Hover brightens the glyph; press sinks it 7 % and it eases back on release.
-        .child(icon.el_scaled(size, color, 1.0 - 0.07 * p).opacity(0.8 + 0.2 * h - 0.1 * p))
+        .child(super::icons::swap(&key, icon, size, Rgba { a: color.a * (0.8 + 0.2 * h - 0.1 * p), ..color }, 1.0 - 0.07 * p))
         .on_click(cx.listener(move |this, ev, window, cx| {
             cx.stop_propagation();
             on_click(this, ev, window, cx);

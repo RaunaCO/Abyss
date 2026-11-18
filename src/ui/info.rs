@@ -402,7 +402,7 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .flex()
                         .flex_col()
-                        .child(super::glass::sheen("track-info-glass", 16., 0.7))
+                        .child(super::glass::sheen_rim("track-info-glass", 16., 0.7))
                         .child(
                             div()
                                 .pb(sc(12.))

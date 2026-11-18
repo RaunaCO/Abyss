@@ -40,8 +40,8 @@ NetEase and lyrics.ovh calls, including local music. With it off, local music
 uses embedded/LRC lyrics and service tracks use only TIDAL. Changing the setting
 clears displayed provider results, discards older background completions and
 stops the chain from starting further external providers. An already-started
-request may finish within its original deadline. The setting defaults remain
-unchanged. Remote lookups disclose title, artist and sometimes album/duration;
+request may finish within its original deadline. The setting is off by default
+(since 1.5.0); when no lyrics are found, the panel offers to turn it on. Remote lookups disclose title, artist and sometimes album/duration;
 see [privacy](PRIVACY.md).
 
 Missing results, including temporary network failures, are remembered for

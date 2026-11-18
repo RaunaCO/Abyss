@@ -141,7 +141,7 @@ locally with `scripts/release-notes.ps1`.
 Use `node scripts/check-i18n.cjs` for offline catalog and fixed-text checks.
 Use `node scripts/generate-brand.cjs` to regenerate the shared SVG, PNG and ICO.
 The Rust package remains `tide` for lockfile continuity; the binary target and
-Windows metadata are Abyss. Repository links keep the existing RaunaCO/TIDE URL.
+Windows metadata are Abyss. Repository links and the User-Agent point to RaunaCO/Abyss.
 Legacy diagnostic TIDE environment variables and DPAPI entropy are compatibility
 identifiers. They are deliberately retained, including those in `src/audio/`.
 During phase A, do not execute tests or modify audio sources. Format with

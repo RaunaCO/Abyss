@@ -118,6 +118,14 @@ impl Ratings {
         })
     }
 
+    /// Every rating as ("track" or "album", id, half stars), sorted, for exporting.
+    pub fn all(&self) -> Vec<(&'static str, u64, u8)> {
+        let mut out: Vec<_> =
+            self.tracks.iter().map(|(id, h)| ("track", *id, *h)).chain(self.albums.iter().map(|(id, h)| ("album", *id, *h))).collect();
+        out.sort();
+        out
+    }
+
     /// Half stars, 0..=10.
     pub fn get(&self, track: u64) -> u8 {
         self.tracks.get(&track).copied().unwrap_or(0)

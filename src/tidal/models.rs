@@ -37,7 +37,7 @@ pub fn share_url(kind: &str, id: &str) -> String {
     format!("https://tidal.com/browse/{kind}/{id}")
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ArtistRef {
     pub id: u64,
     pub name: String,
@@ -49,14 +49,16 @@ impl ArtistRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AlbumRef {
     pub id: u64,
     pub title: String,
     pub cover: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Serializable so the play queue survives a restart (`crate::queue_store`).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Track {
     pub id: u64,
     pub title: String,

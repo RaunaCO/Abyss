@@ -112,7 +112,7 @@ fn menu(view: &AppView) -> Vec<Entry> {
             label: crate::i18n::t("help"),
             entries: vec![
                 item(crate::i18n::t("check_for_updates"), "", |_, _, _| {
-                    let _ = open::that("https://github.com/RaunaCO/TIDE/releases");
+                    let _ = open::that("https://github.com/RaunaCO/Abyss/releases");
                 }),
                 item(crate::i18n::t("about.title"), "", |this, _, cx| {
                     this.settings_tab = super::settings::ABOUT_TAB;
@@ -120,7 +120,7 @@ fn menu(view: &AppView) -> Vec<Entry> {
                     this.navigate(Page::Settings, cx);
                 }),
                 item(crate::i18n::t("support"), "", |_, _, _| {
-                    let _ = open::that("https://github.com/RaunaCO/TIDE/issues");
+                    let _ = open::that("https://github.com/RaunaCO/Abyss/issues");
                 }),
                 Entry::Sep,
                 Entry::Sub {
@@ -151,6 +151,8 @@ fn entries_height_before(entries: &[Entry], idx: usize) -> f32 {
 }
 
 impl AppView {
+    /// The app menu has no visible button now (the logo no longer opens it).
+    #[allow(dead_code)]
     pub fn toggle_app_menu(&mut self, cx: &mut Context<Self>) {
         self.app_menu = if self.app_menu.is_some() { None } else { Some(Vec::new()) };
         cx.notify();
@@ -164,7 +166,7 @@ fn panel(depth: usize, width: f32, rows: Vec<AnyElement>) -> gpui::Div {
         .px(sc(PANEL_PAD))
         .flex()
         .flex_col()
-        .child(super::glass::sheen(("app-menu-glass", depth), 12., 0.6))
+        .child(super::glass::sheen_rim(("app-menu-glass", depth), 12., 0.6))
         .children(rows)
 }
 
@@ -207,7 +209,7 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         .px(sc(10.))
                         .flex()
                         .items_center()
-                        .rounded(sc(6.))
+                        .rounded(sc(theme::concentric(12., 1. + PANEL_PAD)))
                         .cursor_pointer()
                         .text_size(sc(13.))
                         .when(open, |d| d.bg(theme::menu_hover()))
@@ -241,7 +243,7 @@ pub fn overlay(view: &mut AppView, _window: &mut Window, cx: &mut Context<AppVie
                         .flex()
                         .items_center()
                         .gap(sc(18.))
-                        .rounded(sc(6.))
+                        .rounded(sc(theme::concentric(12., 1. + PANEL_PAD)))
                         .cursor_pointer()
                         .text_size(sc(13.))
                         .hover(|s| s.bg(theme::menu_hover()).pl(sc(14.)))

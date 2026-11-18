@@ -9,6 +9,8 @@
 | `%APPDATA%\abyss\recent.json` | Albums played in Abyss |
 | `%APPDATA%\abyss\history.json`, `ratings.json` | Legacy files, imported once per database and kept as they were |
 | `%APPDATA%\abyss\crash.log` | Last panic, if any |
+| `%APPDATA%\abyss\queue.json` | The play queue, the track and position, restored paused at the next start |
+| `%APPDATA%\abyss\settings.broken-<time>.json` | A `settings.json` that could not be read, kept aside before starting with defaults |
 | `%APPDATA%\abyss\local-library.json`, `local-folders.json` | Imported music metadata and watched folders |
 | `%APPDATA%\abyss\local-originals\` | One-time originals for restoring edited tags, including full audio copies |
 | `%APPDATA%\abyss\local-covers\` | Extracted and edited covers keyed by content |
@@ -74,6 +76,18 @@ before the import.
 | `accent` | `3407854` (`0x33FFEE`) | Accent colour as a 0xRRGGBB number (Ajustes → Pantalla → Color de acento). Abyss's own colour, independent of Windows; the light theme darkens it as needed for contrast. |
 | `client_id`, `client_secret` | TV client | OAuth client of the session. See [LEGAL.md](LEGAL.md). |
 
+### Portable mode
+
+When a folder named `data` sits next to `Abyss.exe`, Abyss keeps everything in it:
+`data\config` replaces `%APPDATA%\abyss` and `data\cache` replaces
+`%LOCALAPPDATA%\abyss`. Nothing is written to the user profile and no legacy
+`tide` settings are imported. Use it from a USB stick, on a shared PC, or to run a
+second copy next to an installed one (the *Abyss Preview* installer creates the
+folder). `ABYSS_CONFIG_DIR` / `ABYSS_CACHE_DIR` still take precedence.
+
+A `settings.json` saved with a UTF-8 BOM (Notepad) is read normally. A file that
+does not parse is copied to `settings.broken-<time>.json` first and Abyss says so.
+
 ## Environment variables
 
 | Variable | Effect |
@@ -82,10 +96,13 @@ before the import.
 | `RUST_LOG` | Log filter, default `Abyss=info,tide=info` (e.g. `Abyss=debug,tide=debug`) |
 | `ABYSS_DISCORD_ID` | Use the owner’s Abyss Discord application ID; `TIDE_DISCORD_ID` remains a fallback |
 | `TIDE_ZOOM` | Override UI zoom (e.g. `1.25`) |
-| `TIDE_PAGE` | Development: open on a page (`home`, `explore`, `genre`, `tracks`, `albums`, `albums-open`, `artists`, `playlists`, `mixes`, `settings`, `menu`, `quicksearch`, `playlist`, `album`, `nowplaying`, `nowplaying-lyrics`, `nowplaying-credits`, `nowplaying-queue`) |
+| `TIDE_PAGE` | Development: open on a page (`home`, `explore`, `genre`, `tracks`, `albums`, `albums-open`, `artists`, `playlists`, `mixes`, `settings`, `settings-<n>` (its n-th section), `menu`, `quicksearch`, `playlist`, `album`, `nowplaying`, `nowplaying-lyrics`, `nowplaying-credits`, `nowplaying-queue`) |
 | `TIDE_DEMO_PLAY`, `TIDE_DEMO_TRACK` | Development: start silent playback on Now Playing pages |
 | `TIDE_TILT=x,y` | Development: pin the cover light (pointer position, 0..1) for screenshots |
 | `TIDE_ICON_SHEET=1` | Development: show every icon at 14, 18 and 24 px over the app |
+| `TIDE_NP_FORCE=1` | Development: show Now Playing in the window as it is, without real full screen (portrait layouts) |
+| `TIDE_AUTO_ZOOM=<factor>` | Development: force the automatic scale for the window size (e.g. `1.5`) |
+| `TIDE_GLASS_FORCE=<text>` | Development: hold the glass surfaces whose id contains `<text>` in their hovered state |
 | `TIDE_LYRICS_UNFOLLOW=1` | Development: leave lyrics following after load (shows the floating "Sincronizar") |
 | `TIDE_SHOW_KNOBS=1` | Development: show slider knobs without hovering |
 | `TIDE_PERF` | Development: log frames per second, render time, busy animations and image cache usage (every 5 s) |
@@ -103,7 +120,16 @@ Abyss --probe [track id | search text]
 Prints what TIDAL offers for a track (codec, rate, depth, ReplayGain,
 credits, lyrics, home rows) and runs a download/decode/seek/resample test.
 Signed URLs are replaced by `<url>` in the manifest dump. See
-[AUDIO.md](AUDIO.md#checking-the-pipeline).
+[AUDIO.md](AUDIO.md#checking-the-pipeline). The seek test also goes back (to 30 s
+and 5 s), as dragging the progress bar to the left does.
+
+```
+Abyss --seekprobe [track id]
+```
+
+Plays a track (your first favourite by default) through the real audio engine at
+volume 0, in your quality and output settings, seeks forward and back, and prints
+the position twice a second and any engine error.
 
 ## Cargo features
 

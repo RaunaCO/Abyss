@@ -38,6 +38,11 @@ impl AppView {
             "discover" => self.navigate(Page::Discover, cx),
             "recent" => self.navigate(Page::Recent, cx),
             "settings" => self.navigate(Page::Settings, cx),
+            // "settings-<n>": Settings on its n-th section (0 = Audio).
+            name if name.starts_with("settings-") => {
+                self.settings_tab = name["settings-".len()..].parse().unwrap_or(0);
+                self.navigate(Page::Settings, cx)
+            }
             // TIDE_IMPORT=<file or folder>: import it as if dropped on the window.
             "import" => {
                 if let Some(p) = std::env::var_os("TIDE_IMPORT") {
@@ -45,6 +50,17 @@ impl AppView {
                 }
             }
             "menu" => self.app_menu = Some(vec![2, 7]),
+            // The sidebar unfolded, as when the pointer is over it.
+            "sidebar" => {
+                self.sb_hover = true;
+                cx.notify();
+            }
+            // The output-device menu, as opened from the volume icon.
+            "outputmenu" => {
+                self.devices = crate::audio::output::device_names();
+                self.menu = Some((gpui::point(gpui::px(900.), gpui::px(600.)), super::MenuTarget::Output));
+                cx.notify();
+            }
             "quicksearch" => {
                 self.search_input.update(cx, |i, cx| i.set_text("cynic", cx));
                 self.search_typed("cynic", cx);

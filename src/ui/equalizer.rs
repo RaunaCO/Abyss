@@ -928,6 +928,9 @@ impl AppView {
             .h(sc(GRAPH_HEIGHT))
             .rounded(sc(8.))
             .bg(theme::ink(0.03))
+            // An alpha edge reads as a well set into the panel, in both themes.
+            .border_1()
+            .border_color(theme::ink(0.07))
             .opacity(if s.eq_enabled { 1.0 } else { 0.5 })
             .child(plot)
             .child(db_labels)
@@ -1069,6 +1072,8 @@ impl AppView {
             .h(sc(GRAPH_HEIGHT))
             .rounded(sc(8.))
             .bg(theme::ink(0.03))
+            .border_1()
+            .border_color(theme::ink(0.07))
             .flex()
             .items_start()
             .child(scale);
@@ -1151,7 +1156,14 @@ impl AppView {
                     .on_click(cx.listener(|v, _, _, cx| v.eq_bands_flat(cx))),
             )
             .into_any_element();
-        let mut strip = div().id("eq-bars-scroll").px(sc(super::widgets::PANEL_PAD - 4.)).flex().gap(sc(2.)).overflow_x_scroll();
+        let strip_scroll = super::smooth::handle("eq-bars-scroll");
+        let mut strip = div()
+            .id("eq-bars-scroll")
+            .px(sc(super::widgets::PANEL_PAD - 4.))
+            .flex()
+            .gap(sc(2.))
+            .overflow_x_scroll()
+            .track_scroll(&strip_scroll);
         for (i, b) in bands.iter().enumerate() {
             let selected = self.eq_band_selected == Some(i);
             let slider = self.eq_vslider(KEY_BAND + i, (b.gain_db / BAR_RANGE_DB + 1.0) / 2.0, cx);
@@ -1167,6 +1179,8 @@ impl AppView {
                     .gap(sc(4.))
                     .rounded(sc(8.))
                     .cursor_pointer()
+                    // Masked edge: a band the strip cuts fades with its hidden part.
+                    .opacity(super::fx::edge_fade_x(&strip_scroll, i))
                     .bg(theme::ink(if selected { 0.09 } else { 0.0 }))
                     .on_click(cx.listener(move |this, _, _, cx| this.eq_band_select(i, cx)))
                     .child(small().child(format!("{:+.1}", b.gain_db)))

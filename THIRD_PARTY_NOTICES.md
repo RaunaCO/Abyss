@@ -592,9 +592,12 @@ Abyss is an unofficial client and is not affiliated with TIDAL.
 | symphonia-bundle-flac | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | symphonia-bundle-mp3 | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | symphonia-codec-aac | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
+| symphonia-codec-alac | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | symphonia-codec-pcm | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
+| symphonia-codec-vorbis | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | symphonia-core | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | symphonia-format-isomp4 | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
+| symphonia-format-ogg | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | symphonia-format-riff | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | symphonia-metadata | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | symphonia-utils-xiph | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |

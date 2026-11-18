@@ -374,10 +374,24 @@ pub fn remember_folders(new: &[PathBuf]) {
     }
 }
 
+/// Extensions the library indexes and the decoder plays (ALAC and AAC both use `.m4a`).
+const PLAYABLE: &[&str] = &["flac", "mp3", "wav", "m4a", "mp4", "aif", "aiff", "ogg", "oga"];
+
+/// Formats whose tag edits stay in the library index instead of the file, like WAV.
+/// AIFF and Ogg are newer here: their files are not rewritten until that path is tested.
+fn index_only(ext: &str) -> bool {
+    matches!(ext.to_ascii_lowercase().as_str(), "wav" | "aif" | "aiff" | "ogg" | "oga")
+}
+
+/// Music formats Abyss does not play yet (counted as skipped when importing folders).
+fn other_audio(path: &Path) -> bool {
+    path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+        matches!(s.to_ascii_lowercase().as_str(), "opus" | "wma" | "ape" | "wv" | "dsf" | "dff" | "mpc" | "mka" | "aac" | "ac3" | "tta")
+    })
+}
+
 fn supported(path: &Path) -> bool {
-    path.extension()
-        .and_then(|s| s.to_str())
-        .is_some_and(|s| matches!(s.to_ascii_lowercase().as_str(), "flac" | "mp3" | "wav" | "m4a" | "mp4"))
+    path.extension().and_then(|s| s.to_str()).is_some_and(|s| PLAYABLE.contains(&s.to_ascii_lowercase().as_str()))
 }
 
 fn linked(meta: &fs::Metadata) -> bool {
@@ -437,7 +451,9 @@ pub fn import(paths: Vec<PathBuf>, directories: bool, mut known: HashSet<PathBuf
                 Ok(_) => result.duplicates += 1,
                 Err(_) => result.rejected += 1,
             }
-        } else if !directories {
+        } else if !directories || other_audio(&path) {
+            // Inside folders, only music files Abyss cannot play are counted, so the
+            // summary says why an album did not appear (covers and notes are not).
             result.rejected += 1;
         }
     }
@@ -576,7 +592,7 @@ impl Edit {
         let path = track.local_path.as_ref().context(crate::i18n::t("local.unsupported_edit"))?;
         // WAV uses its index overrides; taggable formats use the actual file,
         // including fields absent from indexes created by older releases.
-        if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("wav")) {
+        if path.extension().and_then(|e| e.to_str()).is_some_and(index_only) {
             return Ok(Self::of(track));
         }
         let fresh = Entry::inspect(path.clone(), track.added.as_deref().unwrap_or(""))?.into_track();
@@ -667,8 +683,8 @@ pub fn edit(track: &Track, edit: Option<Edit>) -> Result<Track> {
     let entry = Entry::from_track(track)?;
     let path = &entry.path;
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-    let wav = ext == "wav";
-    anyhow::ensure!(matches!(ext.as_str(), "mp3" | "flac" | "m4a" | "mp4" | "wav"), crate::i18n::t("local.unsupported_edit"));
+    let wav = index_only(&ext);
+    anyhow::ensure!(PLAYABLE.contains(&ext.as_str()), crate::i18n::t("local.unsupported_edit"));
     let parse = |v: &str| -> Result<u32> {
         if v.trim().is_empty() {
             return Ok(0);
@@ -783,4 +799,175 @@ pub fn edit(track: &Track, edit: Option<Edit>) -> Result<Track> {
         }
     }
     Ok(updated.into_track())
+}
+
+// ------------------------------------------------------------------ search keys
+
+/// Text for matching: lower case, Latin accents removed and spaces collapsed, so
+/// "beyonce" finds "Beyoncé" and "sigur ros" finds "Sigur Rós".
+pub fn fold(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut space = true;
+    for c in text.chars().flat_map(char::to_lowercase) {
+        if c.is_whitespace() {
+            if !space {
+                out.push(' ');
+                space = true;
+            }
+            continue;
+        }
+        space = false;
+        let plain = match c {
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' | 'ǎ' => "a",
+            'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => "c",
+            'ď' | 'đ' | 'ð' => "d",
+            'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => "e",
+            'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
+            'ĥ' | 'ħ' => "h",
+            'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => "i",
+            'ĵ' => "j",
+            'ķ' => "k",
+            'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => "l",
+            'ñ' | 'ń' | 'ņ' | 'ň' => "n",
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' | 'ǒ' => "o",
+            'ŕ' | 'ŗ' | 'ř' => "r",
+            'ś' | 'ŝ' | 'ş' | 'š' | 'ș' => "s",
+            'ţ' | 'ť' | 'ŧ' | 'ț' => "t",
+            'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' | 'ǔ' => "u",
+            'ŵ' => "w",
+            'ý' | 'ÿ' | 'ŷ' => "y",
+            'ź' | 'ż' | 'ž' => "z",
+            'ß' => "ss",
+            'æ' => "ae",
+            'œ' => "oe",
+            'þ' => "th",
+            '’' | '‘' | '`' | '´' => "'",
+            '“' | '”' => "\"",
+            _ => {
+                out.push(c);
+                continue;
+            }
+        };
+        out.push_str(plain);
+    }
+    if out.ends_with(' ') {
+        out.pop();
+    }
+    out
+}
+
+/// One folded string per track for the search box: title, artists and album,
+/// joined by a line break so a query never matches across two fields.
+pub fn search_key(track: &Track) -> String {
+    let album = track.album.as_ref().map(|a| a.title.as_str()).unwrap_or("");
+    // Folded one by one: `fold` turns the line breaks into spaces.
+    [fold(&track.title), fold(&track.artist_names()), fold(album)].join("\n")
+}
+
+// ------------------------------------------------------------------ index writer
+
+/// Saves of `local-library.json` run on one background thread so a large library
+/// never freezes the window. Snapshots queued while a write runs are coalesced:
+/// only the newest is written.
+static INDEX_WRITER: std::sync::OnceLock<Mutex<std::sync::mpsc::Sender<Vec<Track>>>> = std::sync::OnceLock::new();
+/// Snapshots handed over and not written yet.
+static INDEX_PENDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static INDEX_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+/// Save the index in the background. Errors are reported by [`take_save_error`].
+pub fn save_async(tracks: Vec<Track>) {
+    use std::sync::atomic::Ordering;
+    let writer = INDEX_WRITER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<Track>>();
+        let spawned = std::thread::Builder::new().name("local-index".into()).spawn(move || {
+            while let Ok(first) = rx.recv() {
+                let (latest, taken) = newest(first, &rx);
+                if let Err(e) = save(&latest) {
+                    if let Ok(mut error) = INDEX_ERROR.lock() {
+                        *error = Some(format!("{e:#}"));
+                    }
+                }
+                INDEX_PENDING.fetch_sub(taken, Ordering::AcqRel);
+            }
+        });
+        if let Err(e) = spawned {
+            log::warn!("local index writer could not start ({e}); saving on the caller's thread");
+        }
+        Mutex::new(tx)
+    });
+    INDEX_PENDING.fetch_add(1, Ordering::AcqRel);
+    let unsent = match writer.lock() {
+        Ok(tx) => tx.send(tracks).err().map(|e| e.0),
+        Err(_) => Some(tracks),
+    };
+    // No writer thread: save here rather than lose the change.
+    if let Some(tracks) = unsent {
+        let result = save(&tracks);
+        INDEX_PENDING.fetch_sub(1, Ordering::AcqRel);
+        if let (Err(e), Ok(mut error)) = (result, INDEX_ERROR.lock()) {
+            *error = Some(format!("{e:#}"));
+        }
+    }
+}
+
+/// Take everything queued after `first`, keeping only the newest: (newest, how many).
+fn newest<T>(first: T, rx: &std::sync::mpsc::Receiver<T>) -> (T, usize) {
+    let mut latest = first;
+    let mut taken = 1;
+    while let Ok(next) = rx.try_recv() {
+        latest = next;
+        taken += 1;
+    }
+    (latest, taken)
+}
+
+/// The last background save error, once.
+pub fn take_save_error() -> Option<String> {
+    INDEX_ERROR.lock().ok()?.take()
+}
+
+/// Wait (up to `timeout`) until every queued save is on disk. Used when closing.
+pub fn flush_index(timeout: std::time::Duration) -> bool {
+    let end = std::time::Instant::now() + timeout;
+    while INDEX_PENDING.load(std::sync::atomic::Ordering::Acquire) > 0 {
+        if std::time::Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    true
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+
+    #[test]
+    fn fold_ignores_case_accents_and_extra_spaces() {
+        assert_eq!(fold("  Beyoncé   Knowles "), "beyonce knowles");
+        assert_eq!(fold("Sigur Rós"), "sigur ros");
+        assert_eq!(fold("Mötley Crüe"), "motley crue");
+        assert_eq!(fold("Straße"), "strasse");
+        assert_eq!(fold("Don’t"), "don't");
+        // Scripts without Latin accents are only lower-cased.
+        assert_eq!(fold("King Gnu キングヌー"), "king gnu キングヌー");
+    }
+
+    #[test]
+    fn search_keys_do_not_match_across_fields() {
+        let track = Track { title: "Hello".into(), artists: vec![ArtistRef { id: 1, name: "World".into() }], ..Default::default() };
+        let key = search_key(&track);
+        assert!(key.contains("hello") && key.contains("world"));
+        assert!(!key.contains("hello world"));
+    }
+
+    #[test]
+    fn the_writer_keeps_only_the_newest_snapshot() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for n in 2..=5 {
+            tx.send(n).unwrap();
+        }
+        assert_eq!(newest(1, &rx), (5, 5));
+        assert_eq!(newest(9, &rx), (9, 1));
+    }
 }

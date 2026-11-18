@@ -87,14 +87,22 @@ struct Style {
     trailing: Option<Icon>,
     /// Leave the menu open after the click (expanders).
     keep_open: bool,
+    /// The current choice: accent icon and label, and a check at the end.
+    selected: bool,
 }
 
 /// A vertical option of the menu.
 fn option(id: &str, icon: Icon, label: &str, st: Style, act: Act, cx: &mut Context<AppView>) -> AnyElement {
-    let Style { danger, trailing, keep_open } = st;
+    let Style { danger, trailing, keep_open, selected } = st;
     let key = format!("cmo-{id}");
     let (h, p) = (interact::hover(&key), interact::press(&key));
-    let color = if danger { theme::danger() } else { theme::text() };
+    let color = if danger {
+        theme::danger()
+    } else if selected {
+        theme::accent()
+    } else {
+        theme::text()
+    };
     let el = div()
         .id(SharedString::from(key.clone()))
         .mx(sc(6.))
@@ -103,13 +111,23 @@ fn option(id: &str, icon: Icon, label: &str, st: Style, act: Act, cx: &mut Conte
         .flex()
         .items_center()
         .gap(sc(10.))
-        .rounded(sc(7.))
+        // Concentric with the menu: its radius less border and the row's margin.
+        .rounded(sc(theme::concentric(12., 7.)))
         .cursor_pointer()
         .bg(if danger { super::fx::with_alpha(theme::danger(), 0.12 * h + 0.06 * p) } else { theme::ink(0.07 * h + 0.05 * p) })
-        .child(super::glass::sheen("option-glass", 7., if danger { 0.42 } else { 0.74 }))
-        .child(icon.el(15., if danger { theme::danger() } else { theme::text_secondary() }))
+        .child(super::glass::sheen("option-glass", theme::concentric(12., 7.), if danger { 0.42 } else { 0.74 }))
+        .child(icon.el(
+            15.,
+            if danger {
+                theme::danger()
+            } else if selected {
+                theme::accent()
+            } else {
+                theme::text_secondary()
+            },
+        ))
         .child(div().flex_1().min_w(sc(0.)).truncate().text_size(sc(13.)).text_color(color).child(label.to_string()))
-        .children(trailing.map(|t| t.el(12., theme::text_dim())))
+        .children(trailing.map(|t| t.el(if selected { 14. } else { 12. }, if selected { theme::accent() } else { theme::text_dim() })))
         .on_click(cx.listener(move |this, _, window, cx| {
             if !keep_open {
                 this.menu = None;
@@ -603,24 +621,60 @@ fn artist_menu(view: &mut AppView, ar: Artist, cx: &mut Context<AppView>) -> Vec
     out
 }
 
+/// Right-click on the volume icon: choose the device the sound plays on.
+fn output_menu(view: &mut AppView, cx: &mut Context<AppView>) -> Vec<AnyElement> {
+    let (current, exclusive, force) = {
+        let s = view.settings.lock();
+        (s.output_device.clone(), s.exclusive_mode, s.force_volume)
+    };
+    let playing_on = if view.snap.output.is_empty() { crate::i18n::t("system_default").to_string() } else { view.snap.output.to_string() };
+    let art = div()
+        .flex_none()
+        .size(sc(36.))
+        .rounded(sc(10.))
+        .bg(theme::ink(0.07))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(Icon::VolumeUp.el(17., theme::accent()))
+        .into_any_element();
+    let mut out = vec![header(art, crate::i18n::t("output.menu_title").to_string(), playing_on), sep()];
+    let devices = view.devices.clone();
+    for (i, device) in std::iter::once(None).chain(devices.into_iter().map(Some)).enumerate() {
+        let selected = device == current;
+        let label = device.clone().unwrap_or_else(|| crate::i18n::t("system_default").into());
+        out.push(option(
+            &format!("out-{i}"),
+            Icon::VolumeUp,
+            &label,
+            Style { selected, trailing: selected.then_some(Icon::Check), ..Default::default() },
+            act(move |v, _, cx| v.set_output(device.clone(), exclusive, force, cx)),
+            cx,
+        ));
+    }
+    out
+}
+
 /// The menu panel for `target`, or None for the other (plain) menus.
 pub fn panel(view: &mut AppView, target: &MenuTarget, cx: &mut Context<AppView>) -> Option<AnyElement> {
+    let width = if matches!(target, MenuTarget::Output) { 360.0 } else { W };
     let rows = match target.clone() {
         MenuTarget::Track(t) => track_menu(view, t, None, cx),
         MenuTarget::PlaylistTrack { uuid, index, track } => track_menu(view, track, Some((uuid, index)), cx),
         MenuTarget::Album(a) => album_menu(view, a, cx),
         MenuTarget::Artist(a) => artist_menu(view, a, cx),
+        MenuTarget::Output => output_menu(view, cx),
         _ => return None,
     };
     Some(
         super::widgets::floating_panel(12.)
             .id("menu")
             .occlude()
-            .w(sc(W))
+            .w(sc(width))
             .pb(sc(6.))
             .flex()
             .flex_col()
-            .child(super::glass::sheen("context-menu-glass", 12., 0.65))
+            .child(super::glass::sheen_rim("context-menu-glass", 12., 0.65))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.menu = None;
                 cx.notify();

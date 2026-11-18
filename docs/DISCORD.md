@@ -5,7 +5,9 @@ the track title, artist, album cover (album name on hover), a progress bar and
 an *Escuchar en TIDAL* button. The card is hidden while paused.
 
 ## Setup
-Abyss ships with its own Discord application ID, so Rich Presence works as soon as
+Rich Presence is off until you turn it on in Settings > Privacy (since 1.5.0;
+earlier versions had it on by default and are switched off once on upgrade).
+Abyss ships with its own Discord application ID, so once on it works as soon as
 Discord is open and "Display current activity" is enabled in its settings. To use
 your own application, enter its Application ID in Settings > Privacy, set
 `discord_client_id` in `settings.json`, or use `ABYSS_DISCORD_ID`. The legacy

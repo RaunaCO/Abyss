@@ -9,6 +9,72 @@ questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-18
+
+Highlights: interface polish (WCAG AA contrast for every text level, a volume fill that
+glides, a soft entrance when the track changes, allocation-free hover and press
+tracking), a play queue that survives restarts, AIFF / Ogg Vorbis / ALAC and local
+ReplayGain, privacy-first defaults, data export, a fix for seeking back in AAC streams and
+a set of reliability fixes for large libraries and unplugged drives.
+
+### Interface
+- **Contrast**: the dimmest text level (timestamps, counts, hints) now meets WCAG AA
+  (4.5:1) on every surface it sits on in both themes; it was as low as 3.8:1 on hovered
+  and pressed rows. The three text levels stay clearly distinct. A test checks every text
+  colour against every surface.
+- **Volume**: the fill glides to wheel, keyboard and mute changes (140 ms); dragging still
+  follows the pointer exactly.
+- **Track change**: the title, album and artist in the player bar fade and slide in once
+  per new track (instant with Windows' reduced animations).
+- Hover and press states are looked up without building a new string per element per
+  frame (they were, for every row, on every animation frame).
+
+### Added
+- Local files: **AIFF, Ogg Vorbis and ALAC** (`.m4a`) play. Their tag edits stay in the
+  index, like WAV. A folder import counts music files Abyss cannot play (Opus, WMA, APE,
+  WavPack, DSD...) as unsupported instead of skipping them silently.
+- **ReplayGain for local files**: with *Normalize volume* on, the track gain and peak tags
+  of local files are applied, as TIDAL's are. Not in bit-perfect exclusive mode.
+- The **play queue survives** closing Abyss, a crash or a restart (`queue.json`, saved at
+  most every 20 s and on exit). It comes back paused; play continues at the same track and
+  position. The audio device is not opened until you press play.
+- Settings > About: **Check for updates** (asks GitHub only when clicked), **Report a
+  problem**, **Open the data folder** and **Export my data** (listening history and ratings
+  as CSV, settings without the session, into a new folder in Documents).
+- **Portable mode**: a `data` folder next to `Abyss.exe` holds the settings and caches.
+- Uninstalling asks whether to delete the data too (No by default). An *Abyss Preview*
+  installer variant installs next to the normal one with its own data.
+
+### Changed
+- Privacy: **Discord Rich Presence and lyrics from other providers (LRCLIB, NetEase,
+  lyrics.ovh) are now off until you turn them on.** Settings files from 1.4.0 or earlier
+  are switched off once, with a notice on the next launch; turning them on again later is
+  kept. When a track has no lyrics, the panel offers *Turn on other providers*.
+
+### Fixed
+- Dragging the progress bar back (or any backward seek) in a single-file AAC stream
+  (TIDAL Low / High quality) stopped the track with "isomp4: packet out-of-bounds for a
+  non-seekable stream". The file is reopened from the bytes already downloaded and the
+  seek moves forward from there. `Abyss --seekprobe` reproduces it through the engine.
+- Playback no longer walks the whole queue when files stop opening (an unplugged USB drive,
+  a dropped network share, a run of damaged files): after 4 failures in a row it stops and
+  says why, instead of one error notice per track.
+- The local library index (`local-library.json`) is written on a background thread, newest
+  snapshot wins, and flushed on exit. Importing, removing or editing in a large library no
+  longer freezes the window while the whole index is serialised.
+- The saved queue is read off the UI thread at startup, so checking files on a sleeping
+  share or an unplugged drive cannot delay the first frame.
+- Local search ignores accents and extra spaces ("beyonce" finds "Beyoncé", "sigur ros"
+  finds "Sigur Rós") and uses keys folded once per library change instead of lower-casing
+  every track on each keystroke.
+- Audio engine messages (unrecognised format, file or output could not open, exclusive mode
+  unavailable) were always in Spanish; they follow the interface language now.
+- A `settings.json` saved with a BOM (Notepad) was ignored and later overwritten with the
+  defaults, losing the session and every setting. The BOM is accepted now, and a file
+  that cannot be read is kept as `settings.broken-<time>.json` with a notice.
+- Help > Check for updates and Support opened the old `RaunaCO/TIDE` repository; they
+  now open `RaunaCO/Abyss`. The User-Agent names the same repository.
+
 ## [1.4.0] - 2026-11-13
 
 ### Added

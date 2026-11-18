@@ -45,13 +45,25 @@ pub fn cover(url: Option<String>, size: f32, round: bool, cx: &mut Context<AppVi
         Some(i) => {
             // Fades in the first time it appears (paint-only, so it is smooth).
             let a = url.as_deref().map_or(1.0, images::fade_in);
-            img(i).size(sc(size)).flex_none().rounded(radius).object_fit(ObjectFit::Cover).opacity(a).into_any_element()
+            img(i)
+                .size(sc(size))
+                .flex_none()
+                .rounded(radius)
+                // An alpha edge: a dark cover keeps its outline on the dark page
+                // and a pale one on the light page, whatever its colours.
+                .border_1()
+                .border_color(theme::ink(0.09))
+                .object_fit(ObjectFit::Cover)
+                .opacity(a)
+                .into_any_element()
         }
         None => div()
             .size(sc(size))
             .flex_none()
             .rounded(radius)
             .bg(theme::surface())
+            .border_1()
+            .border_color(theme::ink(0.09))
             .flex()
             .items_center()
             .justify_center()
@@ -146,7 +158,7 @@ pub fn icon_button(
         .cursor_pointer()
         .bg(theme::ink(0.055 * h + 0.045 * p))
         .child(super::glass::sheen(SharedString::from(format!("glass-{key}")), 999., 0.62))
-        .child(Icon::el(icon, size, color).opacity(0.78 + 0.22 * h - 0.2 * p))
+        .child(super::icons::swap(&key, icon, size, Rgba { a: color.a * (0.78 + 0.22 * h - 0.2 * p), ..color }, 1.0))
         .on_click(cx.listener(move |this, ev, window, cx| {
             cx.stop_propagation();
             on_click(this, ev, window, cx)
@@ -225,7 +237,13 @@ pub fn widget_panel(id: impl Into<ElementId>) -> gpui::Div {
         .border_1()
         .border_color(theme::glass_rim(0.0))
         .shadow(theme::glass_shadow())
-        .child(super::glass::sheen(id, 17., 0.78))
+        .child(super::glass::sheen_rim(id, 18., 0.78))
+}
+
+/// A quiet surface for dense content (lists, forms, shelves): a faint fill and
+/// an alpha edge, no glass. Glass is kept for what is meant to catch the eye.
+pub fn flat_panel(_id: impl Into<ElementId>) -> gpui::Div {
+    div().relative().min_w(sc(0.)).rounded(sc(18.)).bg(theme::ink(0.04)).border_1().border_color(theme::ink(0.09))
 }
 
 pub fn pill(
@@ -249,9 +267,15 @@ pub fn pill(
         .px(sc(18.))
         .rounded(sc(18.))
         // Hover: lighter and lifted (shadow); press: sinks a little and dims.
-        .bg(if primary { interact::mix(theme::button(), theme::button_hover(), h).into() } else { theme::liquid_glass(h) })
+        .bg(if primary {
+            // Pressed: the button's colour multiplied down. Fading the whole pill
+            // instead would let whatever is behind it show through.
+            interact::mix(interact::mix(theme::button(), theme::button_hover(), h), theme::button_pressed(), p).into()
+        } else {
+            theme::liquid_glass(h * (1.0 - 0.7 * p))
+        })
         .when(!primary, |d| d.border_1().border_color(theme::glass_rim(h)))
-        .opacity(1.0 - 0.18 * p)
+        .when(!primary, |d| d.opacity(1.0 - 0.08 * p))
         .shadow(vec![gpui::BoxShadow {
             color: gpui::Hsla::from(super::fx::with_alpha(gpui::rgb(0x000000), 0.32 * h * (1.0 - p))),
             offset: gpui::point(sc(0.), sc(4. * h)),
@@ -262,7 +286,11 @@ pub fn pill(
         .text_size(sc(12.5))
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()
-        .child(super::glass::sheen(SharedString::from(format!("glass-{key}")), 17., if primary { 0.58 } else { 1.15 }))
+        .child(if primary {
+            super::glass::sheen(SharedString::from(format!("glass-{key}")), 18., 0.58).into_any_element()
+        } else {
+            super::glass::sheen_rim(SharedString::from(format!("glass-{key}")), 18., 1.15).into_any_element()
+        })
         .when_some(icon, |d, i| d.child(i.el(18., fg)))
         .child(label.into())
         .on_click(cx.listener(on_click));
@@ -405,7 +433,7 @@ pub fn card(key: SharedString, item: &Item, width: f32, detail: bool, view: &App
                 .child(cover(url, width, round, cx))
                 // Official card hover: gradient from clear to 70 % black, faded in.
                 .child(div().absolute().top(sc(0.)).left(sc(0.)).size_full().rounded(sc(if round { width / 2. } else { 4. })).bg(
-                    gpui::linear_gradient(
+                    theme::gradient(
                         180.,
                         gpui::linear_color_stop(gpui::rgba(0x00000000), 0.),
                         gpui::linear_color_stop(super::fx::with_alpha(gpui::rgb(0x000000), 0.55 * h), 1.),
@@ -1177,10 +1205,9 @@ pub fn shortcut(id: (&'static str, usize), item: &Item, width: f32, cx: &mut Con
         .overflow_hidden()
         .relative()
         .border_1()
-        .border_color(theme::glass_rim(sh))
+        .border_color(theme::ink(0.09 + 0.07 * sh))
         .cursor_pointer()
-        .bg(theme::liquid_glass(sh))
-        .child(super::glass::sheen(SharedString::from(format!("glass-{sk}")), 16., 0.9))
+        .bg(theme::ink(0.05 + 0.04 * sh))
         .shadow(vec![gpui::BoxShadow {
             color: gpui::Hsla::from(super::fx::with_alpha(gpui::rgb(0x000000), 0.3 * sh)),
             offset: gpui::point(sc(0.), sc(4. * sh)),
@@ -1196,10 +1223,11 @@ pub fn shortcut(id: (&'static str, usize), item: &Item, width: f32, cx: &mut Con
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(gpui::linear_gradient(
+                .bg(theme::gradient(
                     135.,
                     gpui::linear_color_stop(theme::accent(), 0.),
-                    gpui::linear_color_stop(interact::mix(theme::accent(), gpui::rgb(0x000000), 0.45), 1.),
+                    // The accent's own hue, darker in OKLCH (a blend with black greys it).
+                    gpui::linear_color_stop(theme::with_lightness(theme::accent(), theme::to_oklch(theme::accent()).0 * 0.55), 1.),
                 ))
                 .child(Icon::Heart.el(18., theme::text()))
                 .into_any_element(),
@@ -1219,12 +1247,7 @@ pub fn shortcut(id: (&'static str, usize), item: &Item, width: f32, cx: &mut Con
 }
 
 /// The grayscale Abyss mark, with identical presentation on every surface.
+/// Just the picture: its rounded corners are part of the image.
 pub fn brand_mark(size: f32) -> AnyElement {
-    div()
-        .size(sc(size))
-        .flex_none()
-        .bg(gpui::rgb(0xffffff))
-        .rounded(sc(size * 0.22))
-        .child(gpui::img(super::images::logo()).size_full())
-        .into_any_element()
+    div().size(sc(size)).flex_none().child(gpui::img(super::images::logo()).size_full()).into_any_element()
 }
