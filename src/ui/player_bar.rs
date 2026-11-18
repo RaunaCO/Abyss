@@ -11,6 +11,9 @@ use super::widgets::{cover, explicit_badge, fmt_time, icon_button};
 use super::{theme, AppView, Drag, MenuTarget, Page};
 use crate::config::Repeat;
 
+/// How long the volume fill glides on a big jump (mute / unmute).
+const VOLUME_JUMP: std::time::Duration = std::time::Duration::from_millis(78);
+
 pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>) -> AnyElement {
     // Width in logical px (after zoom): narrow windows or big zoom levels get a
     // more compact bar instead of controls running into each other.
@@ -133,8 +136,8 @@ pub fn render(view: &mut AppView, window: &mut Window, cx: &mut Context<AppView>
                                 }),
                         )
                         // A new track slides its title in, once per track (instant with reduced motion).
-                        .with_animation(("bar-track", track.id as usize), super::motion::animation(super::motion::CONTROL), |el, t| {
-                            el.opacity(0.35 + 0.65 * t).left(sc((1.0 - t) * 6.0))
+                        .with_animation(("bar-track", track.id as usize), super::motion::animation(super::motion::FAST), |el, t| {
+                            el.opacity(0.7 + 0.3 * t).left(sc((1.0 - t) * 3.0))
                         }),
                 )
                 .when(!local, |d| {
@@ -324,13 +327,12 @@ pub fn controls(view: &mut AppView, over_fullscreen: bool, width: f32, cx: &mut 
         );
 
     // --------------------------------------------------------- right
-    // The fill glides to wheel, keyboard and mute changes; a drag follows the pointer exactly.
+    // Small steps (wheel, drag) land at once so the fill never trails the input;
+    // only big jumps (mute, unmute) glide, briefly.
     let vol_target = if view.muted { 0.0 } else { view.volume };
-    let vol = if view.drag == Some(Drag::Volume) {
-        super::interact::follow("volume-fill", vol_target, 0.0)
-    } else {
-        super::interact::follow("volume-fill", vol_target, super::motion::seconds(super::motion::FAST))
-    };
+    let jump = (super::interact::get("volume-fill") - vol_target).abs() > 0.08;
+    let vol_dur = if jump && view.drag != Some(Drag::Volume) { super::motion::seconds(VOLUME_JUMP) } else { 0.0 };
+    let vol = super::interact::follow("volume-fill", vol_target, vol_dur);
     let show_pct = view.drag == Some(Drag::Volume) || view.volume_hint_until.is_some_and(|t| std::time::Instant::now() < t);
     let e2 = entity.clone();
     let volume = div()
