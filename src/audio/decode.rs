@@ -197,6 +197,9 @@ pub struct Resampler2 {
     chunk: usize,
     /// Output frames still to drop (the filter's delay), so tracks stay gapless.
     skip: usize,
+    ratio: f64,
+    input_frames: usize,
+    output_frames: usize,
 }
 
 impl Resampler2 {
@@ -211,11 +214,20 @@ impl Resampler2 {
         let chunk = 1024;
         let inner = SincFixedIn::<f32>::new(to as f64 / from as f64, 1.0, params, chunk, 2).map_err(|e| anyhow!("resampler: {e}"))?;
         let skip = inner.output_delay();
-        Ok(Self { inner, pending: [Vec::new(), Vec::new()], chunk, skip })
+        Ok(Self {
+            inner,
+            pending: [Vec::new(), Vec::new()],
+            chunk,
+            skip,
+            ratio: to as f64 / from as f64,
+            input_frames: 0,
+            output_frames: 0,
+        })
     }
 
     /// Feed interleaved stereo; returns whatever output is ready.
     pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        self.input_frames += input.len() / 2;
         for f in input.as_chunks::<2>().0 {
             self.pending[0].push(f[0]);
             self.pending[1].push(f[1]);
@@ -237,6 +249,9 @@ impl Resampler2 {
             out.drain(..n);
             self.skip -= n / 2;
         }
+        let expected = (self.input_frames as f64 * self.ratio).round() as usize;
+        out.truncate(expected.saturating_sub(self.output_frames) * 2);
+        self.output_frames += out.len() / 2;
         out
     }
 
@@ -263,5 +278,23 @@ fn interleave(chans: &[Vec<f32>], out: &mut Vec<f32>) {
     for i in 0..n {
         out.push(chans[0][i]);
         out.push(chans[1][i]);
+    }
+}
+
+#[cfg(test)]
+mod resampler_tests {
+    use super::Resampler2;
+
+    #[test]
+    fn flushing_returns_the_track_length_without_padding() -> anyhow::Result<()> {
+        for (from, to) in [(44_100, 48_000), (48_000, 44_100), (96_000, 44_100)] {
+            for frames in [113, 1024, 17_823] {
+                let mut resampler = Resampler2::new(from, to)?;
+                let input = vec![0.0; frames * 2];
+                let samples = input.chunks(1_874).map(|chunk| resampler.process(chunk).len()).sum::<usize>() + resampler.finish().len();
+                assert_eq!(samples / 2, (frames as f64 * to as f64 / from as f64).round() as usize);
+            }
+        }
+        Ok(())
     }
 }

@@ -314,7 +314,7 @@ impl<A: Api> Engine<A> {
             match self.api.session(&token) {
                 Ok((name, key)) => {
                     if let Err(error) = queue::set_account(&self.dir, &name) {
-                        log::warn!("Last.fm account: {error:#}");
+                        return fail(self, format!("{error:#}"));
                     }
                     return self.update(|s| {
                         s.phase = Phase::Idle;

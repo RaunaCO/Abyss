@@ -5,7 +5,10 @@ pub mod lyrics;
 pub mod models;
 pub mod probe;
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -32,6 +35,7 @@ pub struct PkceLogin {
     pub url: String,
     verifier: String,
     unique_key: String,
+    epoch: u64,
 }
 
 fn now() -> u64 {
@@ -45,6 +49,7 @@ pub struct DeviceCode {
     pub verification_uri: String,
     pub expires_in: u64,
     pub interval: u64,
+    epoch: u64,
 }
 
 pub enum PollResult {
@@ -59,6 +64,7 @@ pub struct Tidal {
     /// Held while refreshing the session so parallel requests that all find
     /// the token expired refresh it once, not once each.
     refresh_lock: Arc<Mutex<()>>,
+    session_epoch: Arc<AtomicU64>,
 }
 
 impl Tidal {
@@ -71,7 +77,7 @@ impl Tidal {
             .pool_max_idle_per_host(8)
             .build()
             .expect("http client");
-        Self { http, settings, refresh_lock: Arc::new(Mutex::new(())) }
+        Self { http, settings, refresh_lock: Arc::new(Mutex::new(())), session_epoch: Arc::new(AtomicU64::new(0)) }
     }
 
     /// Clone the TIDAL client for a background job and its nested/paged calls.
@@ -85,7 +91,17 @@ impl Tidal {
 
     // ------------------------------------------------------------- login
 
-    pub fn start_device_login(&self) -> Result<DeviceCode> {
+    pub fn begin_session_attempt(&self) -> u64 {
+        let _settings = self.settings.lock();
+        self.session_epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
+    }
+
+    fn require_session_epoch(&self, expected: u64) -> Result<()> {
+        anyhow::ensure!(self.session_epoch.load(Ordering::Relaxed) == expected, "TIDAL session changed");
+        Ok(())
+    }
+
+    pub fn start_device_login(&self, epoch: u64) -> Result<DeviceCode> {
         let client_id = crate::config::DEVICE_CLIENT_ID.to_string();
         let v: Value = self
             .http
@@ -106,6 +122,7 @@ impl Tidal {
             verification_uri: if uri.starts_with("http") { uri } else { format!("https://{uri}") },
             expires_in: v["expiresIn"].as_u64().unwrap_or(300),
             interval: v["interval"].as_u64().unwrap_or(2).max(1),
+            epoch,
         })
     }
 
@@ -136,7 +153,7 @@ impl Tidal {
         )
         .map(|u| u.to_string())
         .unwrap_or_default();
-        PkceLogin { url, verifier, unique_key }
+        PkceLogin { url, verifier, unique_key, epoch: self.begin_session_attempt() }
     }
 
     pub fn finish_pkce_login(&self, login: &PkceLogin, pasted: &str) -> Result<()> {
@@ -165,13 +182,8 @@ impl Tidal {
             let msg = v.get("error_description").or_else(|| v.get("error")).and_then(Value::as_str).unwrap_or("");
             bail!(crate::i18n::text("tidal_rejected_sign_in", &[format!("{}", status), msg.to_string()]));
         }
-        {
-            let mut s = self.settings.lock();
-            s.client_id = PKCE_CLIENT_ID.into();
-            s.client_secret = PKCE_CLIENT_SECRET.into();
-        }
-        self.store_tokens(&v);
-        self.load_session()?;
+        self.store_tokens(login.epoch, &v, Some((PKCE_CLIENT_ID, PKCE_CLIENT_SECRET)))?;
+        self.load_session_at(login.epoch)?;
         Ok(())
     }
 
@@ -191,13 +203,8 @@ impl Tidal {
         let status = resp.status();
         let v: Value = resp.json().unwrap_or(Value::Null);
         if status.is_success() {
-            {
-                let mut s = self.settings.lock();
-                s.client_id = id.into();
-                s.client_secret = secret.into();
-            }
-            self.store_tokens(&v);
-            self.load_session()?;
+            self.store_tokens(code.epoch, &v, Some((id, secret)))?;
+            self.load_session_at(code.epoch)?;
             return Ok(PollResult::Done);
         }
         match v.get("error").and_then(Value::as_str) {
@@ -207,8 +214,13 @@ impl Tidal {
         }
     }
 
-    fn store_tokens(&self, v: &Value) {
+    fn store_tokens(&self, epoch: u64, v: &Value, client: Option<(&str, &str)>) -> Result<()> {
         let mut s = self.settings.lock();
+        self.require_session_epoch(epoch)?;
+        if let Some((id, secret)) = client {
+            s.client_id = id.into();
+            s.client_secret = secret.into();
+        }
         if let Some(t) = v.get("access_token").and_then(Value::as_str) {
             s.access_token = Some(t.into());
         }
@@ -228,12 +240,13 @@ impl Tidal {
             }
         }
         s.save();
+        Ok(())
     }
 
     fn refresh(&self) -> Result<()> {
-        let (id, secret, refresh) = {
+        let (id, secret, refresh, epoch) = {
             let s = self.settings.lock();
-            (s.client_id.clone(), s.client_secret.clone(), s.refresh_token.clone())
+            (s.client_id.clone(), s.client_secret.clone(), s.refresh_token.clone(), self.session_epoch.load(Ordering::Relaxed))
         };
         let refresh = refresh.ok_or_else(|| anyhow!(crate::i18n::t("not_signed_in")))?;
         let v: Value = self
@@ -250,8 +263,7 @@ impl Tidal {
             .error_for_status()
             .context(crate::i18n::t("session.refreshing"))?
             .json()?;
-        self.store_tokens(&v);
-        Ok(())
+        self.store_tokens(epoch, &v, None)
     }
 
     fn token(&self) -> Result<String> {
@@ -277,9 +289,15 @@ impl Tidal {
 
     /// Fill user id, country and name from the current session.
     pub fn load_session(&self) -> Result<()> {
+        self.load_session_at(self.session_epoch.load(Ordering::Relaxed))
+    }
+
+    fn load_session_at(&self, epoch: u64) -> Result<()> {
+        self.require_session_epoch(epoch)?;
         let v = self.get_json(&format!("{API_URL}/sessions"), &[])?;
         {
             let mut s = self.settings.lock();
+            self.require_session_epoch(epoch)?;
             if let Some(id) = v.get("userId").and_then(Value::as_u64) {
                 s.user_id = Some(id);
             }
@@ -290,6 +308,7 @@ impl Tidal {
         if let Ok(uid) = self.user_id() {
             if let Ok(u) = self.get(&format!("/users/{uid}"), &[]) {
                 let mut s = self.settings.lock();
+                self.require_session_epoch(epoch)?;
                 let first = u.get("firstName").and_then(Value::as_str).unwrap_or("");
                 let name =
                     if first.is_empty() { u.get("username").and_then(Value::as_str).unwrap_or("").to_string() } else { first.to_string() };
@@ -300,12 +319,15 @@ impl Tidal {
                 s.user_email = u.get("email").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_string);
             }
         }
-        self.settings.lock().save();
+        let settings = self.settings.lock();
+        self.require_session_epoch(epoch)?;
+        settings.save();
         Ok(())
     }
 
     pub fn sign_out(&self) {
         let mut s = self.settings.lock();
+        self.session_epoch.fetch_add(1, Ordering::Relaxed);
         s.access_token = None;
         s.refresh_token = None;
         s.user_id = None;
@@ -472,13 +494,9 @@ impl Tidal {
             .map(|a| a.iter().filter_map(Track::parse).collect())
             .unwrap_or_default();
         let albums = |filter: Option<&str>| -> Vec<Album> {
-            let mut q = vec![("limit", "50".to_string())];
-            if let Some(f) = filter {
-                q.push(("filter", f.to_string()));
-            }
-            self.get(&format!("/artists/{id}/albums"), &q)
+            let q = filter.map(|f| ("filter", f.to_string())).into_iter().collect::<Vec<_>>();
+            self.paged(&format!("/artists/{id}/albums"), &q, 500)
                 .ok()
-                .and_then(|v| v.get("items").and_then(Value::as_array).cloned())
                 .map(|a| a.iter().filter_map(Album::parse).collect())
                 .unwrap_or_default()
         };
@@ -1091,7 +1109,10 @@ fn parse_lrc(text: &str) -> Vec<(f64, String)> {
         .next_back()
         .unwrap_or(0.)
         / 1000.;
+    const MAX_SYNCED_LINES: usize = 10_000;
+    const MAX_EXPANDED_BYTES: usize = 2 * 1024 * 1024;
     let mut out = Vec::new();
+    let mut expanded = 0usize;
     for line in text.trim_start_matches('\u{feff}').lines() {
         let mut rest = line.trim();
         let mut stamps = Vec::new();
@@ -1102,12 +1123,18 @@ fn parse_lrc(text: &str) -> Vec<(f64, String)> {
             if !sec.is_finite() || !(0.0..60.0).contains(&sec) {
                 break;
             }
+            if out.len() + stamps.len() >= MAX_SYNCED_LINES {
+                return Vec::new();
+            }
             stamps.push((m as f64 * 60. + sec + offset).max(0.));
             rest = after;
         }
-        for at in stamps {
-            out.push((at, rest.trim().to_string()));
+        let lyric = rest.trim();
+        expanded = expanded.saturating_add(lyric.len().saturating_mul(stamps.len()));
+        if expanded > MAX_EXPANDED_BYTES {
+            return Vec::new();
         }
+        out.extend(stamps.into_iter().map(|at| (at, lyric.to_owned())));
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out

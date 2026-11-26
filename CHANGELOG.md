@@ -7,7 +7,71 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
-## [Unreleased]
+## [1.7.0]
+
+- The desktop interface is now Iced + wgpu (DirectX 12 on Windows), and the only
+  one: the GPUI interface, its `ui-gpui` feature and the `gpui` dependency are
+  removed (its code stays in the git history up to 1.6). Known differences are
+  listed in docs/MIGRATION-ICED.md.
+- Album colours come from the cover truthfully: a one-hue cover (sepia, peach)
+  keeps its own tones instead of inventing green, muted covers are not
+  over-saturated, and greys beside warm colours no longer turn olive or brown.
+- The album banner, the player bar and the full-screen background flow like a
+  liquid: a slow current of uneven pace that folds onto itself. It runs at 30 fps
+  with the window focused (20 for the slower banners) and 10 behind other windows.
+- Liquid glass reaches the controls: back/forward and the tools share capsules,
+  the selected sidebar section sits in a glass lens, Play is tinted with the
+  cover's colour, only controls react to the pointer, a faint rainbow runs along
+  glass edges and the page fades under the top bar when scrolled.
+- Menus grow from the pointer and fade out, the play button sinks while held,
+  interrupted animations continue from where they are, keyboard navigation is
+  instant, tooltips wait 450 ms and reduced motion keeps fades.
+- The volume shows its percentage while it changes, and context menus never
+  cover the player bar.
+- Saving tags to MP3, FLAC and M4A files works on Windows: replacing the locked
+  file failed with "access denied".
+- Library no longer re-sorts when unrelated requests finish, keeps virtualizing
+  rows around an expanded album and can retry a failed page in place.
+- Navigation fade, panel and sidebar transitions, and loading animations are back.
+- If the window cannot start (for example, no usable GPU), Abyss shows an error
+  dialog and writes startup.log instead of closing silently.
+- Accented capitals in list headers are no longer clipped.
+- Long titles end in "…" instead of running over their neighbours.
+- The sidebar, album/playlist/artist headers, track rows, Home and Settings match
+  the GPUI layout again (inset rail with playlists, glass header with labelled
+  actions, hover-only "more", quality radios and status chips).
+- Home no longer has tabs: Staff picks and Uploads live in Mixes & new releases.
+- Text is as crisp as in GPUI: glyph coverage gets DirectWrite's gamma and contrast
+  correction (vendored cryoglyph). Covers are drawn at whole device pixels.
+- Liquid glass: headers, the featured card, the player bar, menus, the unfolded
+  album, Replay and tooltips refract the page's cover (lens bending at the rim,
+  colour dispersion, a rim light that follows the pointer); the cover also washes
+  the top of the page.
+- Motion matches GPUI: hover and press fades everywhere, icon scale on hover and
+  press, the sidebar unfolds continuously with fading labels, switches slide, menus
+  and dialogs fade in, the side panel slides, the heart pops.
+- Spacing matches GPUI across pages, panels, menus, dialogs, the library bar,
+  settings and the rebuilt Replay dashboard.
+- Hover fades in (rows also grow an accent strip), and page and panel motion runs
+  on vsync, with the page sliding in from the side it comes from.
+
+## [1.6.0]
+
+- The sidebar queue starts at the top when all tracks fit and scrolls only when
+  the rows overflow the panel.
+- Synchronized lyrics keep a steady size in the sidebar and fullscreen. The
+  next line gradually comes into focus while the other inactive lines stay soft.
+- Panels show centred animated dots while loading.
+- Queue edits survive turning shuffle off, and restored queues keep their
+  resume position on the intended track.
+- Volume and mute work after a fallback to shared audio output, and the
+  exclusive output follows source format changes between tracks.
+- Decoder replies from earlier seeks are discarded. ReplayGain follows the
+  current settings, and resampling avoids padding the ends of tracks.
+- Late TIDAL responses cannot restore a signed-out session. Legacy profile
+  migration failures allow Abyss to open with the existing profile.
+- Settings and recent albums are saved atomically. A damaged legacy history or
+  ratings file no longer blocks new entries.
 
 ## [1.5.0] - 2026-11-18
 

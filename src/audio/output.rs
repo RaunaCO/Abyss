@@ -88,7 +88,7 @@ impl OutShared {
 pub struct Output {
     pub producer: rtrb::Producer<f32>,
     pub rate: u32,
-    pub exclusive: bool,
+    pub exclusive_source_bits: Option<u32>,
     /// Human readable description, e.g. "WASAPI exclusive · 24-bit 96 kHz".
     pub description: String,
     _keep: Keep,
@@ -274,7 +274,7 @@ pub fn open_shared(device: Option<&str>, shared: Arc<OutShared>) -> Result<Outpu
     Ok(Output {
         producer,
         rate,
-        exclusive: false,
+        exclusive_source_bits: None,
         description: format!("{name} · compartido {} kHz", fmt_khz(rate)),
         _keep: Keep::Cpal(stream),
     })
@@ -423,7 +423,7 @@ pub fn open_exclusive(device: Option<&str>, rate: u32, source_bits: u32, shared:
         Ok(Ok(description)) => Ok(Output {
             producer,
             rate,
-            exclusive: true,
+            exclusive_source_bits: Some(source_bits),
             description,
             _keep: Keep::Exclusive(ExclusiveHandle { stop, thread: Some(thread) }),
         }),

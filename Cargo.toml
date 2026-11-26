@@ -1,8 +1,8 @@
 [package]
 name = "tide"
-version = "1.5.0"
+version = "1.7.0"
 edition = "2021"
-description = "Abyss, an unofficial native TIDAL desktop client written in Rust with GPUI"
+description = "Abyss, an unofficial native TIDAL desktop client written in Rust with Iced and wgpu"
 license = "MIT"
 default-run = "Abyss"
 
@@ -11,7 +11,12 @@ name = "Abyss"
 path = "src/main.rs"
 
 [dependencies]
-gpui = "0.2.2"
+# The interface: Iced 0.14 on wgpu 27 (the wgpu release iced_wgpu 0.14 is built on).
+iced = { version = "=0.14.0", default-features = false, features = ["wgpu", "image", "svg", "advanced", "canvas", "thread-pool", "web-colors"], optional = true }
+wgpu = { version = "=27.0.1", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
+# Native file and folder pickers.
+rfd = { version = "0.15", optional = true }
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
@@ -45,8 +50,11 @@ pinyin = "0.11.0"
 lindera = { version = "6.2.0", default-features = false, features = ["embed-ipadic"], optional = true }
 
 [features]
-default = ["kanji-romaji"]
+# Iced is the desktop interface (GPUI, the original one, was retired in 1.7;
+# see docs/MIGRATION-ICED.md).
+default = ["kanji-romaji", "ui-iced"]
 kanji-romaji = ["dep:lindera"]
+ui-iced = ["dep:iced", "dep:wgpu", "dep:bytemuck", "dep:rfd"]
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.15"
@@ -63,3 +71,7 @@ opt-level = 2
 
 [build-dependencies]
 embed-resource = "3"
+
+# Iced's glyph renderer with GPUI's text alpha correction (vendor/cryoglyph/src/shader.wgsl).
+[patch.crates-io]
+cryoglyph = { path = "vendor/cryoglyph" }

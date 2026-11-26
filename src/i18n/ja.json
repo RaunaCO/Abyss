@@ -356,7 +356,9 @@
   "security_and_session": "セキュリティとセッション",
   "app.version": "Abyss {0}",
   "unofficial_tidal_client_built_with_rust_and_gpui": "RustとGPUIで開発したTIDAL非公式クライアント",
+  "unofficial_tidal_client_built_with_rust_and_iced": "RustとIcedで開発したTIDAL非公式クライアント",
   "apache_2_0_interface": "Apache-2.0: インターフェース",
+  "mit_apache_2_0_interface": "MIT / Apache-2.0: インターフェース",
   "mpl_2_0_flac_and_aac_decoding": "MPL-2.0: FLACとAACのデコード",
   "mit_sinc_resampling": "MIT: sincリサンプリング",
   "apache_2_0_mit_audio_output": "Apache-2.0 / MIT: オーディオ出力",
@@ -618,6 +620,8 @@
   "local.restored": "元のメタデータを復元しました",
   "local.saved": "メタデータを保存しました",
   "local.working": "処理中…",
+  "local.import": "インポート",
+  "local.no_folders": "監視中のフォルダーはありません。フォルダーを追加すると、Abyss は起動時に新しい音楽を探します。",
   "local.watched_folders": "監視中のフォルダー",
   "local.unwatch": "監視を停止",
   "local.operation_failed": "操作を完了できませんでした: {0}",
@@ -747,5 +751,11 @@
   "audio.no_audio_track": "対応する音声トラックがファイルにありません",
   "audio.exclusive_unavailable": "排他モードを使用できません（{0}）。共有モードを使用します。",
   "audio.output_failed": "オーディオ出力を開けませんでした: {0}",
-  "playback.stopped_after_errors": "{0} 曲続けて再生できなかったため、再生を停止しました。USB ドライブやネットワークフォルダーにある場合は、接続を確認してください。"
+  "playback.stopped_after_errors": "{0} 曲続けて再生できなかったため、再生を停止しました。USB ドライブやネットワークフォルダーにある場合は、接続を確認してください。",
+  "choose": "選択",
+  "clear_queue": "キューを消去",
+  "close": "閉じる",
+  "stream": "ストリーム",
+  "local.rescan": "フォルダーの新しいファイルを探す",
+  "local.tracks_count": "ライブラリに{0}曲"
 }

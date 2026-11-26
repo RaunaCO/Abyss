@@ -1,14 +1,18 @@
 # Dependencies and licences
 
 Abyss's own code is MIT ([LICENSE](../LICENSE)). The table lists the direct
-dependencies. The summary below covers the full graph compiled for
-`x86_64-pc-windows-msvc`: 565 crates, from `cargo metadata`, 2026-11-07.
+dependencies. The summary below covers the normal dependencies of the Iced
+binary for `x86_64-pc-windows-msvc`, from `cargo tree` and `cargo metadata`,
+2026-11-22 (436 crates).
 
 ## Direct dependencies
 
 | Crate | Purpose | Licence |
 | --- | --- | --- |
-| `gpui` 0.2 | UI framework (Zed) | Apache-2.0 |
+| `iced` =0.14.0 (feature `ui-iced`, default) | UI framework | MIT |
+| `wgpu` =27.0.1 (feature `ui-iced`) | Lyrics blur and backdrop shaders | MIT OR Apache-2.0 |
+| `bytemuck` (feature `ui-iced`) | Vertex and uniform data | Zlib OR Apache-2.0 OR MIT |
+| `rfd` 0.15 (feature `ui-iced`) | File and folder pickers | MIT |
 | `reqwest` 0.12 (rustls, gzip, blocking, json) | HTTP | MIT OR Apache-2.0 |
 | `serde`, `serde_json` | Settings and API JSON | MIT OR Apache-2.0 |
 | `rusqlite` with bundled SQLite | Local Replay history and ratings | MIT (Rust bindings), public domain (SQLite) |
@@ -36,21 +40,23 @@ application dependency. The lockfile was refreshed offline for 0.10.1.
 
 | Licence | Crates |
 | --- | --- |
-| MIT and/or Apache-2.0 (various spellings) | ~460 |
-| MIT only | 114 |
-| Apache-2.0 only (incl. `gpui*`, `cpal`) | 17 |
+| MIT and/or Apache-2.0 (various spellings) | 244 |
+| MIT only | 95 |
+| Apache-2.0 only (incl. `cpal`) | 7 |
 | Unicode-3.0 | 18 (+2 combined) |
-| MPL-2.0 (`symphonia*`, `option-ext`) | 11 |
-| BSD-3-Clause / BSD-2-Clause | 12 |
-| Zlib / ISC / Unlicense-or-MIT / CC0 / 0BSD combos | ~30 |
+| MPL-2.0 (`symphonia*`, `option-ext`) | 14 |
+| BSD-3-Clause / BSD-2-Clause only | 13 |
+| BSL-1.0 / Zlib / ISC / CC0 and other permissive combinations | 41 |
 | `ring` (Apache-2.0 AND ISC), `webpki-roots` (CDLA-Permissive-2.0) | 2 |
 
-No GPL, LGPL or AGPL crate is compiled. `kakasi` (GPL-3.0) was evaluated and
+`self_cell` offers Apache-2.0 OR GPL-2.0-only and is used under Apache-2.0.
+No other GPL, LGPL or AGPL crate is compiled. `kakasi` (GPL-3.0) was evaluated and
 rejected for romaji.
 
 Regenerate with:
 
 ```bash
+cargo tree --locked -e normal --prefix none --target x86_64-pc-windows-msvc --format "{p}"
 cargo metadata --format-version 1 --filter-platform x86_64-pc-windows-msvc
 ```
 
@@ -60,7 +66,7 @@ cargo metadata --format-version 1 --filter-platform x86_64-pc-windows-msvc
 | --- | --- |
 | `assets/fonts/Inter-*.ttf` | SIL Open Font License 1.1 (`assets/fonts/Inter-LICENSE.txt`) |
 | IPADIC dictionary (inside the binary) | NAIST / ICOT terms (`assets/licenses/IPADIC-COPYING.txt`) |
-| Icons (`src/ui/icons.rs`) | Original Abyss icon family (MIT, with the project) since 0.9.1 |
+| Icons (`src/art.rs`) | Original Abyss icon family (MIT, with the project) since 0.9.1 |
 | `assets/logo.png`, `assets/icon.ico` | Original Abyss artwork (MIT, with the project) |
 
 ## Obligations when distributing binaries

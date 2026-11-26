@@ -5,7 +5,7 @@
 - Windows 10/11, Rust stable with the MSVC toolchain.
 - Network access for the first build: `lindera-ipadic` downloads the IPADIC
   dictionary in its build script. Alternatively build with
-  `--no-default-features`.
+  `--no-default-features --features ui-iced`.
 - Optional: Python + Pillow to regenerate the logo (`python assets/make_logo.py`).
 
 ## Build and run

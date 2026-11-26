@@ -14,6 +14,10 @@ vault/
 graphify-out/
 docs/GRAPH.md
 .graphifyignore
+# Internal hand-off notes between assistants (local paths and session notes)
+docs/HANDOFF-*.md
+docs/PLAN-*.md
+docs/PHASE-*.md
 
 # Release artifacts (built by scripts/package.ps1)
 /dist

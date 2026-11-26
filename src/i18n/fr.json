@@ -356,7 +356,9 @@
   "security_and_session": "Sécurité et session",
   "app.version": "Abyss {0}",
   "unofficial_tidal_client_built_with_rust_and_gpui": "Client TIDAL non officiel, créé avec Rust et GPUI",
+  "unofficial_tidal_client_built_with_rust_and_iced": "Client TIDAL non officiel, créé avec Rust et Iced",
   "apache_2_0_interface": "Apache-2.0 : interface",
+  "mit_apache_2_0_interface": "MIT / Apache-2.0 : interface",
   "mpl_2_0_flac_and_aac_decoding": "MPL-2.0 : décodage FLAC et AAC",
   "mit_sinc_resampling": "MIT : rééchantillonnage sinc",
   "apache_2_0_mit_audio_output": "Apache-2.0 / MIT : sortie audio",
@@ -618,6 +620,8 @@
   "local.restored": "Métadonnées originales restaurées",
   "local.saved": "Métadonnées enregistrées",
   "local.working": "Traitement…",
+  "local.import": "Importer",
+  "local.no_folders": "Aucun dossier surveillé. Ajoutez un dossier pour qu’Abyss y cherche de la nouvelle musique au démarrage.",
   "local.watched_folders": "Dossiers surveillés",
   "local.unwatch": "Arrêter la surveillance",
   "local.operation_failed": "Impossible de terminer l’opération : {0}",
@@ -747,5 +751,11 @@
   "audio.no_audio_track": "Le fichier ne contient aucune piste audio compatible",
   "audio.exclusive_unavailable": "Le mode exclusif n’est pas disponible ({0}) ; utilisation du mode partagé.",
   "audio.output_failed": "Impossible d’ouvrir la sortie audio : {0}",
-  "playback.stopped_after_errors": "{0} titres d’affilée n’ont pas pu être lus, la lecture s’est arrêtée. S’ils sont sur une clé USB ou un dossier réseau, vérifiez qu’il est connecté."
+  "playback.stopped_after_errors": "{0} titres d’affilée n’ont pas pu être lus, la lecture s’est arrêtée. S’ils sont sur une clé USB ou un dossier réseau, vérifiez qu’il est connecté.",
+  "choose": "Choisir",
+  "clear_queue": "Vider la file",
+  "close": "Fermer",
+  "stream": "Flux",
+  "local.rescan": "Chercher de nouveaux fichiers dans les dossiers",
+  "local.tracks_count": "{0} titres dans la bibliothèque"
 }

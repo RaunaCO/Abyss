@@ -16,7 +16,7 @@
 //! window grows to [`AHEAD_SLOW`] segments.
 //!
 //! Single progressive files (`StreamSource::Single`) are downloaded whole into
-//! one contiguous buffer, allocated once from the Content-Length.
+//! one contiguous buffer, grown as bytes arrive.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -60,13 +60,21 @@ fn is_expired(e: &str) -> bool {
 /// Fetches one URL completely. A trait so the window can be tested offline.
 pub trait Fetch: Send + Sync {
     fn get(&self, url: &str) -> Result<Vec<u8>, String>;
+
+    fn get_with_timeout(&self, url: &str, _timeout: Duration) -> Result<Vec<u8>, String> {
+        self.get(url)
+    }
 }
 
 struct HttpFetch(Client);
 
 impl Fetch for HttpFetch {
     fn get(&self, url: &str) -> Result<Vec<u8>, String> {
-        let resp = self.0.get(url).timeout(Duration::from_secs(60)).send().map_err(|e| e.without_url().to_string())?;
+        self.get_with_timeout(url, Duration::from_secs(60))
+    }
+
+    fn get_with_timeout(&self, url: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+        let resp = self.0.get(url).timeout(timeout.min(Duration::from_secs(60))).send().map_err(|e| e.without_url().to_string())?;
         if !resp.status().is_success() {
             return Err(format!("download failed ({})", resp.status()));
         }
@@ -316,15 +324,17 @@ impl Buffer {
         self.begin(seg);
     }
 
-    fn append(&self, generation: u64, chunk: &[u8]) {
+    fn append(&self, generation: u64, chunk: &[u8]) -> Result<(), String> {
         let mut s = self.state.lock();
         if s.generation == generation {
             if let Store::Bytes(d) = &mut s.store {
+                d.try_reserve(chunk.len()).map_err(|error| error.to_string())?;
                 d.extend_from_slice(chunk);
             }
         }
         drop(s);
         self.ready.notify_all();
+        Ok(())
     }
 
     fn finish(&self, generation: u64, error: Option<String>) {
@@ -467,19 +477,36 @@ fn segment_worker(b: Arc<Buffer>, generation: u64, from_seg: usize, pieces: usiz
 fn get_piece(b: &Buffer, generation: u64, from_seg: usize, i: usize) -> Result<Vec<u8>, String> {
     let (mut tries, mut renewals) = (0u32, 0u32);
     let deadline = Instant::now() + b.retry_delay * RETRY_SPAN;
+    let mut last_error = "segment retry deadline elapsed".to_owned();
     loop {
+        if !b.live(generation) {
+            return Err("download cancelled".into());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(last_error);
+        }
         let url = b.url_for(from_seg, i).ok_or("segment out of range")?;
-        let err = match b.fetcher.get(&url) {
-            Ok(v) => return Ok(v),
+        let mut err = match b.fetcher.get_with_timeout(&url, remaining) {
+            Ok(v) if b.live(generation) => return Ok(v),
+            Ok(_) => return Err("download cancelled".into()),
             Err(e) => e,
         };
         if !b.live(generation) {
             return Err(err);
         }
         if is_expired(&err) && renewals < 2 {
+            if b.renew.is_none() {
+                return Err("stream link expired".into());
+            }
             renewals += 1;
-            b.renew_urls()?;
-            continue;
+            match b.renew_urls() {
+                Ok(()) => {
+                    last_error = err;
+                    continue;
+                }
+                Err(error) => err = error,
+            }
         }
         tries += 1;
         let client_error = err.contains("download failed (4");
@@ -489,7 +516,17 @@ fn get_piece(b: &Buffer, generation: u64, from_seg: usize, i: usize) -> Result<V
         if tries == 1 || tries % 5 == 0 {
             log::warn!("retrying download (attempt {tries}): {err}");
         }
-        std::thread::sleep((b.retry_delay * 2u32.pow((tries - 1).min(4))).min(b.retry_delay * RETRY_MAX_STEP));
+        last_error = err;
+        let delay = (b.retry_delay * 2u32.pow((tries - 1).min(4))).min(b.retry_delay * RETRY_MAX_STEP);
+        let until = (Instant::now() + delay).min(deadline);
+        let mut state = b.state.lock();
+        while state.generation == generation && !b.cancelled.load(Ordering::Acquire) {
+            let remaining = until.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            b.ready.wait_for(&mut state, remaining);
+        }
     }
 }
 
@@ -533,6 +570,9 @@ fn start_with(
 fn fetch(http: &Client, url: &str, buf: &Buffer, generation: u64) -> Result<(), String> {
     let mut tries = 0;
     loop {
+        if !buf.live(generation) {
+            return Ok(());
+        }
         tries += 1;
         let start_len = buf.state.lock().store.len() as usize;
         let attempt = (|| -> Result<(), String> {
@@ -541,12 +581,7 @@ fn fetch(http: &Client, url: &str, buf: &Buffer, generation: u64) -> Result<(), 
                 return Err(format!("download failed ({})", resp.status()));
             }
             if let Some(len) = resp.content_length() {
-                let mut s = buf.state.lock();
-                s.total = Some(len);
-                // One exact allocation instead of repeated doubling.
-                if let Store::Bytes(d) = &mut s.store {
-                    d.reserve_exact((len as usize).saturating_sub(d.len()));
-                }
+                buf.state.lock().total = Some(len);
             }
             let mut chunk = vec![0u8; 64 * 1024];
             loop {
@@ -557,7 +592,7 @@ fn fetch(http: &Client, url: &str, buf: &Buffer, generation: u64) -> Result<(), 
                 if n == 0 {
                     return Ok(());
                 }
-                buf.append(generation, &chunk[..n]);
+                buf.append(generation, &chunk[..n])?;
             }
         })();
         match attempt {

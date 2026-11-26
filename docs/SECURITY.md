@@ -112,8 +112,12 @@ TIDAL's public app credentials, not user secrets.
 
 ## Dependencies
 
-`cargo audit` (RustSec database, 2026-11-07): **0 vulnerabilities**,
-18 "unmaintained" warnings. All of them are transitive, through `gpui` (font
+`cargo audit --no-fetch` (RustSec database of 2026-11-11, run 2026-11-22):
+**0 vulnerabilities**, 19 warnings. One is "unsound": RUSTSEC-2026-0253 in `lru`
+0.16, which Iced's text renderer (`cryoglyph`) requires. It needs `LruCache::pop`
+and a key whose `Drop` panics; `cryoglyph` only calls `pop_lru` and its keys have
+no `Drop`, so that path is not reached. The rest are "unmaintained", for crates
+of both interfaces in the lockfile: transitive, through `gpui` (font
 shaping: `rustybuzz`, `ttf-parser`, …), through `souvlaki` (`zbus`/`zvariant`,
 Linux-only and not compiled on Windows) or through `async-std`/`instant`/`paste`.
 None is directly actionable in Abyss without upstream releases.

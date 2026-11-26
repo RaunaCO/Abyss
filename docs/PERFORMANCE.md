@@ -4,6 +4,9 @@ Measurements, how they were taken, and what was changed. Numbers come from
 one machine (Windows 11, AMD Radeon RX 6800 XT) and are indicative, not
 benchmarks to compare across machines.
 
+The figures below were taken with the GPUI interface. Those of the Iced interface,
+the default since the migration, are in [MIGRATION-ICED.md](MIGRATION-ICED.md).
+
 ## How to measure
 
 - `TIDE_PERF=1`: logs frames per second, average and maximum render time each

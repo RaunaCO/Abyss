@@ -16,9 +16,9 @@ concurrency:
 jobs:
   ci:
     name: ci
-    # Abyss is Windows only (GPUI on Windows, WASAPI, DPAPI). See docs/DEVELOPMENT.md.
+    # Abyss is Windows only (WASAPI, DPAPI). See docs/DEVELOPMENT.md.
     runs-on: windows-latest
-    # A cold build (GPUI and the IPADIC dictionary download) is slow; cached runs are quick.
+    # A cold build (both interfaces and the IPADIC dictionary download) is slow; cached runs are quick.
     timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
@@ -41,6 +41,7 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
 
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:

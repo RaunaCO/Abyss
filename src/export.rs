@@ -18,8 +18,8 @@ use crate::history::Entry;
 
 /// Write the export into a new folder inside `parent` and return its path.
 pub fn export_all(parent: &Path, settings: &Settings) -> Result<PathBuf> {
-    let history = crate::history::load().unwrap_or_default();
-    let ratings = crate::ratings::Ratings::load().unwrap_or_default();
+    let history = crate::history::load()?;
+    let ratings = crate::ratings::Ratings::load()?;
     let stamp = {
         let offset = crate::history::local_offset();
         let now = crate::history::unix_now() as i64 + offset;
@@ -33,8 +33,10 @@ pub fn export_all(parent: &Path, settings: &Settings) -> Result<PathBuf> {
     std::fs::write(dir.join("ratings.csv"), ratings_csv(&ratings.all(), &history))?;
     std::fs::write(dir.join("settings.json"), settings_json(settings)?)?;
     let queue = crate::config::config_dir().join("queue.json");
-    if queue.is_file() {
-        let _ = std::fs::copy(queue, dir.join("queue.json"));
+    match std::fs::copy(queue, dir.join("queue.json")) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("could not export the queue"),
     }
     Ok(dir)
 }
