@@ -55,6 +55,12 @@ pub fn system_language() -> String {
     "en".into()
 }
 
+/// Code of the language in use ("en", "es"...).
+#[allow(dead_code)] // No interface reads it at present.
+pub fn current() -> &'static str {
+    LANGUAGES[CURRENT.load(Ordering::Relaxed).min(LANGUAGES.len() - 1)].0
+}
+
 pub fn set_language(preference: Option<&str>) {
     let system = system_language();
     CURRENT.store(language_index(preference.unwrap_or(&system)).unwrap_or(0), Ordering::Relaxed);

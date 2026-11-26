@@ -95,6 +95,7 @@ does not parse is copied to `settings.broken-<time>.json` first and Abyss says s
 | `ABYSS_LASTFM_API_KEY`, `ABYSS_LASTFM_API_SECRET` | **Build time**: Last.fm application credentials compiled into the binary. Without them, Connect says Last.fm is not available in this build. |
 | `RUST_LOG` | Log filter, default `Abyss=info,tide=info` (e.g. `Abyss=debug,tide=debug`) |
 | `ABYSS_DISCORD_ID` | Use the owner’s Abyss Discord application ID; `TIDE_DISCORD_ID` remains a fallback |
+| `WGPU_BACKEND` | Graphics backend of the Iced interface (`dx12` unless set; e.g. `vulkan`) |
 | `TIDE_ZOOM` | Override UI zoom (e.g. `1.25`) |
 | `TIDE_PAGE` | Development: open on a page (`home`, `explore`, `genre`, `tracks`, `albums`, `albums-open`, `artists`, `playlists`, `mixes`, `settings`, `settings-<n>` (its n-th section), `menu`, `quicksearch`, `playlist`, `album`, `nowplaying`, `nowplaying-lyrics`, `nowplaying-credits`, `nowplaying-queue`) |
 | `TIDE_DEMO_PLAY`, `TIDE_DEMO_TRACK` | Development: start silent playback on Now Playing pages |
@@ -135,4 +136,5 @@ the position twice a second and any engine error.
 
 | Feature | Default | Effect |
 | --- | --- | --- |
-| `kanji-romaji` | on | Embeds the IPADIC dictionary (~46 MiB of the 71 MiB binary) for kanji readings. Without it, kana are still romanized and kanji pass through unchanged. |
+| `ui-iced` | on | The Iced + wgpu interface. |
+| `kanji-romaji` | on | Embeds the IPADIC dictionary (~46 MiB of the binary) for kanji readings. Without it, kana are still romanized and kanji pass through unchanged. |

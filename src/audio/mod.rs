@@ -35,6 +35,7 @@ pub struct OutputPrefs {
     pub normalize: bool,
 }
 
+#[derive(Clone)]
 pub enum Source {
     Stream(StreamInfo),
     Local(std::path::PathBuf),
@@ -85,6 +86,8 @@ pub struct Snapshot {
     pub source: Option<(u32, u32)>,
     pub output: String,
     pub output_rate: u32,
+    #[cfg(feature = "ui-iced")]
+    pub output_exclusive: bool,
     /// Downloaded fraction of the playing track (0..1).
     pub downloaded: f32,
 }
@@ -105,6 +108,7 @@ struct Mark {
     duration: f64,
     source: Option<(u32, u32)>,
     buffer: Option<Arc<Buffer>>,
+    playback_source: Source,
 }
 
 #[derive(Default)]
@@ -112,6 +116,8 @@ struct EngineView {
     marks: VecDeque<Mark>,
     output: String,
     output_rate: u32,
+    #[cfg(feature = "ui-iced")]
+    output_exclusive: bool,
     buffering: bool,
     /// Key of the track that should be shown while nothing is audible yet.
     loading: Option<u64>,
@@ -167,8 +173,15 @@ impl Player {
             v.marks.pop_front();
         }
         let rate = v.output_rate.max(1) as f64;
-        let mut snap =
-            Snapshot { paused, buffering: v.buffering, output: v.output.clone(), output_rate: v.output_rate, ..Default::default() };
+        let mut snap = Snapshot {
+            paused,
+            buffering: v.buffering,
+            output: v.output.clone(),
+            output_rate: v.output_rate,
+            #[cfg(feature = "ui-iced")]
+            output_exclusive: v.output_exclusive,
+            ..Default::default()
+        };
         if let Some(m) = v.marks.front() {
             let elapsed = played.saturating_sub(m.start_frame) as f64 / rate;
             snap.key = Some(m.key);
@@ -212,8 +225,8 @@ enum DecMsg {
 }
 
 struct Worker {
-    rx: Receiver<DecMsg>,
-    seek_tx: Sender<f64>,
+    rx: Receiver<(u64, DecMsg)>,
+    seek_tx: Sender<(u64, f64)>,
     buffer: Option<Arc<Buffer>>,
 }
 
@@ -259,8 +272,8 @@ fn spawn_worker(http: &Client, source: Source) -> Worker {
         }
         Source::Local(path) => (DecodeInput::Local(path), None),
     };
-    let (tx, rx) = mpsc::sync_channel::<DecMsg>(24);
-    let (seek_tx, seek_rx) = mpsc::channel::<f64>();
+    let (tx, rx) = mpsc::sync_channel(24);
+    let (seek_tx, seek_rx) = mpsc::channel();
     std::thread::Builder::new().name("decode".into()).spawn(move || decode_loop(input, tx, seek_rx)).expect("spawn decoder");
     Worker { rx, seek_tx, buffer }
 }
@@ -327,61 +340,61 @@ fn skip_to(d: &mut Decoder, t: f64) -> f64 {
     done as f64 / 2.0 / d.sample_rate.max(1) as f64
 }
 
-fn decode_loop(input: DecodeInput, tx: SyncSender<DecMsg>, seek_rx: Receiver<f64>) {
+fn decode_loop(input: DecodeInput, tx: SyncSender<(u64, DecMsg)>, seek_rx: Receiver<(u64, f64)>) {
+    let mut generation = 0;
     let mut dec = match input.open() {
         Ok(d) => d,
         Err(e) => {
             if !input.cancelled() {
-                let _ = tx.send(DecMsg::Error(format!("{e:#}")));
+                let _ = tx.send((generation, DecMsg::Error(format!("{e:#}"))));
             }
             return;
         }
     };
-    if tx.send(DecMsg::Format { rate: dec.sample_rate, bits: dec.bits_per_sample, duration: dec.duration }).is_err() {
+    if tx.send((generation, DecMsg::Format { rate: dec.sample_rate, bits: dec.bits_per_sample, duration: dec.duration })).is_err() {
         return;
     }
+    let mut target = None;
     loop {
-        // Take only the newest seek request.
-        let mut target = None;
-        while let Ok(t) = seek_rx.try_recv() {
-            target = Some(t);
+        // Finish the newest request and stamp every message with its generation.
+        while let Ok(request) = seek_rx.try_recv() {
+            target = Some(request);
         }
-        if let Some(t) = target {
-            let reached = match input.seek(&mut dec, t) {
-                Ok(at) => at,
-                Err(e) => {
-                    let _ = tx.send(DecMsg::Error(format!("{e:#}")));
-                    return;
+        if let Some((requested, position)) = target.take() {
+            generation = requested;
+            match input.seek(&mut dec, position) {
+                Ok(reached) => {
+                    if tx.send((generation, DecMsg::Seeked(reached))).is_err() {
+                        return;
+                    }
                 }
-            };
-            if tx.send(DecMsg::Seeked(reached)).is_err() {
-                return;
+                Err(error) => {
+                    if tx.send((generation, DecMsg::Error(format!("{error:#}")))).is_err() {
+                        return;
+                    }
+                    let Ok(request) = seek_rx.recv() else { return };
+                    target = Some(request);
+                    continue;
+                }
             }
         }
         match dec.next_chunk() {
             Ok(Some(chunk)) => {
-                if tx.send(DecMsg::Chunk(chunk)).is_err() {
+                if tx.send((generation, DecMsg::Chunk(chunk))).is_err() {
                     return;
                 }
             }
             Ok(None) => {
-                if tx.send(DecMsg::End).is_err() {
+                if tx.send((generation, DecMsg::End)).is_err() {
                     return;
                 }
                 // Stay alive: the user may still seek back into this track.
-                match seek_rx.recv() {
-                    Ok(t) => {
-                        let reached = input.seek(&mut dec, t).unwrap_or(0.0);
-                        if tx.send(DecMsg::Seeked(reached)).is_err() {
-                            return;
-                        }
-                    }
-                    Err(_) => return,
-                }
+                let Ok(request) = seek_rx.recv() else { return };
+                target = Some(request);
             }
             Err(e) => {
                 if !input.cancelled() {
-                    let _ = tx.send(DecMsg::Error(format!("{e:#}")));
+                    let _ = tx.send((generation, DecMsg::Error(format!("{e:#}"))));
                 }
                 return;
             }
@@ -398,7 +411,7 @@ struct Track {
     bits: u32,
     duration: f64,
     resampler: Option<Resampler2>,
-    /// Waiting for `Seeked`; chunks before it are stale.
+    generation: u64,
     seeking: bool,
     /// Seconds into the track where the next pushed sample belongs.
     start_offset: f64,
@@ -406,8 +419,32 @@ struct Track {
     ended: bool,
     /// A chunk waiting for the output device to (re)open.
     held: Option<Vec<f32>>,
-    /// Loudness normalisation gain applied to every sample.
-    norm: f32,
+    /// Cached ReplayGain, read only when normalization is enabled.
+    normal_gain: Option<f32>,
+    source: Source,
+}
+
+impl Track {
+    fn request_seek(&mut self, position: f64) {
+        self.generation = self.generation.wrapping_add(1);
+        let _ = self.worker.seek_tx.send((self.generation, position));
+        self.seeking = true;
+        self.ended = false;
+        self.marked = false;
+        self.resampler = None;
+        self.held = None;
+    }
+
+    fn normalization_gain(&mut self) -> f32 {
+        let source = &self.source;
+        *self.normal_gain.get_or_insert_with(|| {
+            let (gain, peak) = match source {
+                Source::Stream(info) => (info.replay_gain, info.peak),
+                Source::Local(path) => local_replay_gain(path),
+            };
+            normalisation(gain, peak)
+        })
+    }
 }
 
 enum OutState {
@@ -501,8 +538,7 @@ impl Engine {
                 self.out_shared.paused.store(paused, Ordering::Relaxed);
                 let mut t = self.make_track(key, source);
                 if start > 0.5 {
-                    let _ = t.worker.seek_tx.send(start);
-                    t.seeking = true;
+                    t.request_seek(start);
                 }
                 self.cur = Some(t);
                 let mut v = self.view.lock();
@@ -530,25 +566,16 @@ impl Engine {
             }
             Cmd::Volume(v) => {
                 self.volume = v;
-                let exclusive_fixed = self.prefs.exclusive && self.prefs.force_volume;
-                self.out_shared.set_gain(if exclusive_fixed { 1.0 } else { gain_for(v) });
+                self.out_shared.set_gain(gain_for(v));
             }
             Cmd::Output(prefs) => {
                 self.prefs = prefs;
-                let exclusive_fixed = self.prefs.exclusive && self.prefs.force_volume;
-                self.out_shared.set_gain(if exclusive_fixed { 1.0 } else { gain_for(self.volume) });
+                self.out_shared.set_gain(gain_for(self.volume));
                 // Re-open at the current position.
                 let pos = self.position_of_current();
-                self.out = None;
-                if let Some(mut t) = self.cur.take() {
-                    self.reset_timeline();
-                    t.resampler = None;
-                    t.marked = false;
-                    t.ended = false;
-                    let _ = t.worker.seek_tx.send(pos);
-                    t.seeking = true;
-                    self.drain_stale(&mut t);
-                    self.cur = Some(t);
+                self.close_output();
+                if self.cur.is_some() {
+                    self.seek(pos);
                 } else {
                     self.reset_timeline();
                 }
@@ -556,38 +583,22 @@ impl Engine {
         }
     }
 
-    /// Linear gain for loudness normalisation (1.0 = untouched).
-    fn norm_gain(&self, replay_gain: Option<f32>, peak: Option<f32>) -> f32 {
-        let bit_perfect = self.prefs.exclusive && self.prefs.force_volume;
-        if !self.prefs.normalize || bit_perfect {
-            return 1.0;
-        }
-        normalisation(replay_gain, peak)
-    }
-
     fn make_track(&self, key: u64, source: Source) -> Track {
-        let (norm, bits) = match &source {
-            Source::Stream(info) => (self.norm_gain(info.replay_gain, info.peak), info.bit_depth.unwrap_or(16)),
-            Source::Local(path) => {
-                // Only read the tags when they would be used.
-                let norm = if self.prefs.normalize {
-                    let (gain, peak) = local_replay_gain(path);
-                    self.norm_gain(gain, peak)
-                } else {
-                    1.0
-                };
-                (norm, 16)
-            }
+        let bits = match &source {
+            Source::Stream(info) => info.bit_depth.unwrap_or(16),
+            Source::Local(_) => 16,
         };
-        let worker = spawn_worker(&self.http, source);
+        let worker = spawn_worker(&self.http, source.clone());
         Track {
-            norm,
+            source,
+            normal_gain: None,
             key,
             bits,
             worker,
             rate: None,
             duration: 0.0,
             resampler: None,
+            generation: 0,
             seeking: false,
             start_offset: 0.0,
             marked: false,
@@ -641,67 +652,52 @@ impl Engine {
 
     fn seek(&mut self, secs: f64) {
         let Some(mut t) = self.cur.take() else { return };
-        // If decoding already moved on to the next track, seek in the one
-        // that is audible instead.
-        let audible = self.snapshot_key();
-        if audible.is_some() && audible != Some(t.key) {
-            // Rare: within the last ~300 ms of a track. Just restart the next track.
-            self.cur = Some(t);
-            return;
+        let played = self.out_shared.played.load(Ordering::Acquire);
+        let audible = self.view.lock().marks.iter().rev().find(|m| m.start_frame <= played).cloned();
+        if let Some(mark) = &audible {
+            if mark.key != t.key {
+                let previous = self.make_track(mark.key, mark.playback_source.clone());
+                t.request_seek(0.0);
+                self.next = Some(t);
+                t = previous;
+            }
         }
-        let hint = self.view.lock().marks.front().map(|m| (m.duration, m.source));
+        let hint = audible.map(|m| (m.duration, m.source));
         self.flush_output();
         self.reset_timeline();
         if let Some((dur, src)) = hint {
             self.view.lock().seek_hint = Some((secs.max(0.0), dur, src));
         }
-        let _ = t.worker.seek_tx.send(secs.max(0.0));
-        t.seeking = true;
-        t.ended = false;
-        t.marked = false;
-        t.resampler = None;
-        self.drain_stale(&mut t);
+        t.request_seek(secs.max(0.0));
         self.view.lock().loading = Some(t.key);
         self.view.lock().buffering = true;
         self.cur = Some(t);
     }
 
-    fn snapshot_key(&self) -> Option<u64> {
-        let played = self.out_shared.played.load(Ordering::Acquire);
-        let v = self.view.lock();
-        v.marks.iter().rev().find(|m| m.start_frame <= played).map(|m| m.key)
-    }
-
-    /// Throw away chunks the worker produced before the seek.
-    fn drain_stale(&self, t: &mut Track) {
-        while let Ok(msg) = t.worker.rx.try_recv() {
-            match msg {
-                DecMsg::Format { rate, bits, duration } => {
-                    t.rate = Some(rate);
-                    t.bits = bits.unwrap_or(t.bits);
-                    t.duration = duration.unwrap_or(t.duration);
-                }
-                DecMsg::Seeked(at) => {
-                    t.seeking = false;
-                    t.start_offset = at;
-                    break;
-                }
-                _ => {}
+    fn close_output(&mut self) {
+        {
+            let mut view = self.view.lock();
+            view.output.clear();
+            view.output_rate = 0;
+            #[cfg(feature = "ui-iced")]
+            {
+                view.output_exclusive = false;
             }
         }
+        self.out = None;
     }
 
     fn ensure_output(&mut self, rate: u32, bits: u32) -> OutState {
         let wanted_exclusive = self.prefs.exclusive;
         if let Some(o) = &self.out {
-            if !wanted_exclusive || o.rate == rate || !o.exclusive {
+            if !wanted_exclusive || o.exclusive_source_bits.is_none() || (o.rate == rate && o.exclusive_source_bits == Some(bits)) {
                 return OutState::Ready;
             }
             // Exclusive mode at a different rate: wait for the ring to drain.
             if self.out_shared.played.load(Ordering::Acquire) < self.pushed {
                 return OutState::Wait;
             }
-            self.out = None;
+            self.close_output();
         }
         let opened = if wanted_exclusive {
             let gain = !self.prefs.force_volume;
@@ -720,6 +716,10 @@ impl Engine {
                 let mut v = self.view.lock();
                 v.output = o.description.clone();
                 v.output_rate = o.rate;
+                #[cfg(feature = "ui-iced")]
+                {
+                    v.output_exclusive = o.exclusive_source_bits.is_some();
+                }
                 // Marks refer to the old output's timeline.
                 let played = self.pushed;
                 for m in v.marks.iter_mut() {
@@ -788,8 +788,17 @@ impl Engine {
         }
 
         let held = t.held.take();
-        let msg = match held.map(|h| Ok(DecMsg::Chunk(h))).unwrap_or_else(|| t.worker.rx.try_recv()) {
-            Ok(m) => m,
+        let msg = match held.map(|h| Ok((t.generation, DecMsg::Chunk(h)))).unwrap_or_else(|| t.worker.rx.try_recv()) {
+            Ok((generation, message)) => {
+                if generation != t.generation
+                    && !matches!(message, DecMsg::Format { .. })
+                    && !(t.rate.is_none() && matches!(message, DecMsg::Error(_)))
+                {
+                    self.cur = Some(t);
+                    return true;
+                }
+                message
+            }
             Err(TryRecvError::Empty) => {
                 self.view.lock().buffering = !t.marked || self.out_shared.played.load(Ordering::Acquire) >= self.pushed;
                 self.cur = Some(t);
@@ -841,9 +850,13 @@ impl Engine {
                     }
                 }
                 let mut samples = samples;
-                if t.norm != 1.0 {
-                    for s in &mut samples {
-                        *s *= t.norm;
+                let bit_perfect = self.prefs.force_volume && self.out.as_ref().is_some_and(|o| o.exclusive_source_bits.is_some());
+                if self.prefs.normalize && !bit_perfect {
+                    let gain = t.normalization_gain();
+                    if gain != 1.0 {
+                        for sample in &mut samples {
+                            *sample *= gain;
+                        }
                     }
                 }
                 let data = match &mut t.resampler {
@@ -859,6 +872,7 @@ impl Engine {
                         duration: if t.duration > 0.0 { t.duration } else { 0.0 },
                         source: Some((t.bits, rate)),
                         buffer: t.worker.buffer.clone(),
+                        playback_source: t.source.clone(),
                     };
                     let mut v = self.view.lock();
                     v.marks.push_back(mark);

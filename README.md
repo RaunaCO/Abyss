@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.png" width="120" alt="Abyss logo"></p>
+﻿<p align="center"><img src="assets/logo.png" width="120" alt="Abyss logo"></p>
 
 <h1 align="center">Abyss</h1>
 
@@ -27,7 +27,7 @@ Hi-Res audio, bit-perfect output and a calm interface. One small Windows app. No
 | | |
 |---|---|
 | **Sound first** | Hi-Res FLAC up to 24-bit / 192 kHz, sinc resampling, gapless queue, ReplayGain and WASAPI exclusive (bit-perfect) output. |
-| **Light and quick** | One native binary. Idle on a cover-heavy page uses about 0.4% of one CPU core and draws 0 frames per second. |
+| **Light and quick** | One native binary. Idle uses under 0.5% of one CPU core. |
 | **Your music, together** | TIDAL favourites and your local files live in one Library: tracks, albums and artists, with tag and artwork editing. |
 | **Lyrics that follow you** | Synced lyrics from several open providers, with romanization for Japanese, Chinese and Korean. |
 | **Yours to read** | Free and open source (MIT). No telemetry. Tokens are encrypted on your PC. |
@@ -35,14 +35,15 @@ Hi-Res audio, bit-perfect output and a calm interface. One small Windows app. No
 
 ## Performance goals and measurements
 
-Measured on Windows release builds with isolated profiles (method and raw numbers in
-[docs/PERFORMANCE.md](docs/PERFORMANCE.md)). Goals are what the project aims to keep.
+Measured on the Iced release build with an isolated profile of 1,503 local tracks (method
+and raw numbers in [docs/MIGRATION-ICED.md](docs/MIGRATION-ICED.md); figures of the earlier
+GPUI interface, retired in 1.7, are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md)). Goals are what the project aims to keep.
 
 | Measure | Goal | Measured |
 |---|---|---|
-| Idle CPU (Home, covers cached) | under 1% of one core | 0.4% at 0 frames per second |
-| Fullscreen with animated background | under 10% of one core | 4.8% |
-| Peak memory (fullscreen, 24-bit / 192 kHz file) | under 800 MB | 132.5 MB working set |
+| Idle CPU (Library) | under 1% of one core | 0.1% to 0.5% |
+| Fullscreen with animated background | under 10% of one core | 5.7% |
+| Memory (fullscreen, local FLAC) | under 800 MB | 188 MB working set |
 | Memory growth | bounded | byte-limited image caches, bounded audio buffer |
 
 Streaming, very large libraries and long sessions still need separate measurements.
@@ -138,7 +139,7 @@ identifiers and the non-public endpoints). It is not legal advice.
 - **Languages**: English, Spanish, Portuguese, French, German and Japanese. Follows the system by default; change it in Settings > Appearance.
 - **System**: Windows media controls (SMTC), Inter font bundled.
 
-Current version: **1.5.0** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
+Current development version: **1.7.0** (see [CHANGELOG.md](CHANGELOG.md)). Abyss is free and open
 source (MIT); it is not sold and must not be bundled with a paid offering.
 
 ## Getting started
@@ -164,8 +165,13 @@ authorise it in your browser. Tokens are stored in
 account ([docs/SECURITY.md](docs/SECURITY.md)). Abyss sends no telemetry. Every
 host it contacts is listed in [docs/PRIVACY.md](docs/PRIVACY.md).
 
-Build without the ~46 MiB Japanese dictionary (71 → 25 MiB binary) (kanji stay unromanized):
-`cargo build --release --no-default-features`.
+Build without the ~46 MiB Japanese dictionary (82 → 36 MiB binary) (kanji stay unromanized):
+`cargo build --release --no-default-features --features ui-iced`.
+
+The interface is Iced on wgpu (DirectX 12; set `WGPU_BACKEND` to choose another). Abyss
+started on GPUI; from 1.7 Iced is the only interface (the port, its differences and its
+measurements are in [docs/MIGRATION-ICED.md](docs/MIGRATION-ICED.md); the GPUI code remains in
+the git history up to v1.6).
 
 ## Keyboard & mouse
 

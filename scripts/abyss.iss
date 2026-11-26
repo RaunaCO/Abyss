@@ -1,6 +1,6 @@
 ﻿; Inno Setup 6 script for Abyss (per-user install, no administrator rights).
 ; Build the portable package first (scripts\package.ps1), then:
-;   iscc /DVersion=1.5.0 scripts\abyss.iss
+;   iscc /DVersion=1.7.0 scripts\abyss.iss
 ; Output: dist\Abyss-<version>-win-x64-setup.exe (unsigned).
 ;
 ; Uninstalling removes the program files and shortcuts. It then asks whether to
@@ -11,13 +11,13 @@
 ; UsePreviousAppDir=no selects the new Abyss program folder on upgrade.
 ;
 ; Preview build, installed next to the normal one without touching it:
-;   iscc /DVersion=1.5.0 /DPreview /DSourceDir=<package folder> scripts\abyss.iss
+;   iscc /DVersion=1.7.0 /DPreview /DSourceDir=<package folder> scripts\abyss.iss
 ; It has its own AppId, folder and shortcuts ("Abyss Preview") and an empty
 ; `data` folder next to Abyss.exe, so it runs in portable mode: its settings and
 ; caches stay in that folder and never reach %APPDATA%\abyss.
 
 #ifndef Version
-  #define Version "1.5.0"
+  #define Version "1.7.0"
 #endif
 #define Package "Abyss-" + Version + "-win-x64"
 #ifndef SourceDir

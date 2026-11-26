@@ -52,12 +52,13 @@ new lookup when the view is reopened or the track is selected again. Search
 again clears the current miss immediately, including its persisted copy.
 Metadata edits invalidate the displayed results. A plain result is not a miss.
 
-Both sidebar and fullscreen select the active line 150 ms early, interpolate
-its emphasis over 340 ms and blend toward the next measured layout position
-during the last 350 ms before its activation. Scroll position follows with
-time-based exponential interpolation, including wrapped lines. Clicking a line
-seeks and resumes following; manual scrolling pauses it. The Windows reduced
-animation preference disables lyric interpolation and glow transitions.
+In the sidebar and fullscreen, synchronized lines keep the same text size.
+The active line is sharp, the next line gradually comes into focus before
+its cue, and the other inactive lines are softly blurred. The scroll starts
+moving toward the next line 350 ms before its cue and follows the measured
+layout, including wrapped lines. Clicking a line seeks and resumes following.
+Manual scrolling pauses it. With Windows' reduced animation preference,
+focus switches immediately at each cue.
 
 Sources: [LRCLIB API](https://lrclib.net/docs/api.md),
 [Lofty source](https://github.com/Serial-ATA/lofty-rs/tree/0.25.5).

@@ -206,7 +206,7 @@ impl Default for Settings {
             discord: false,
             np_blur: true,
             light_theme: false,
-            accent: crate::ui::theme::DEFAULT_ACCENT,
+            accent: crate::shared::DEFAULT_ACCENT,
             lib_last: "tracks".into(),
             lib_grid: Default::default(),
             user_email: None,
@@ -268,6 +268,8 @@ pub fn portable_dir() -> Option<PathBuf> {
     .clone()
 }
 
+static LEGACY_PROFILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 pub fn config_dir() -> PathBuf {
     // Tests and side-by-side runs can use their own settings, ratings and
     // recents instead of the user's.
@@ -277,7 +279,7 @@ pub fn config_dir() -> PathBuf {
     if let Some(dir) = portable_dir() {
         return dir.join("config");
     }
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("abyss")
+    LEGACY_PROFILE.get().cloned().unwrap_or_else(|| dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("abyss"))
 }
 
 pub fn cache_dir() -> PathBuf {
@@ -292,7 +294,7 @@ pub fn cache_dir() -> PathBuf {
 
 /// Run before loading any stores or installing the panic hook. Stage the entire
 /// tree, then publish it with one directory rename. Existing Abyss data wins.
-/// Originals and incomplete copies are retained, including on failure.
+/// If copying fails, keep using the legacy profile and retry on the next launch.
 pub fn prepare_config() -> std::io::Result<()> {
     if std::env::var_os("ABYSS_CONFIG_DIR").or_else(|| std::env::var_os("TIDE_CONFIG_DIR")).is_some() || portable_dir().is_some() {
         return Ok(());
@@ -304,15 +306,21 @@ pub fn prepare_config() -> std::io::Result<()> {
     let base = destination.parent().unwrap();
     let source = [base.join("tide"), base.join("tidal-gpui")].into_iter().find(|p| p.is_dir());
     let Some(source) = source else { return Ok(()) };
-    let staging = base.join(format!(".abyss-import-{}-{:016x}", std::process::id(), rand::random::<u64>()));
-    std::fs::create_dir(&staging)?;
-    copy_config_tree(&source, &staging)?;
-    match std::fs::rename(&staging, &destination) {
-        Ok(()) => Ok(()),
-        // A concurrent startup may have finished its own copy first.
-        Err(_) if destination.is_dir() => Ok(()),
-        Err(error) => Err(error),
+    let migrate = || -> std::io::Result<()> {
+        let staging = tempfile::Builder::new().prefix(".abyss-import-").tempdir_in(base)?;
+        copy_config_tree(&source, staging.path())?;
+        match std::fs::rename(staging.path(), &destination) {
+            Ok(()) => Ok(()),
+            // A concurrent startup may have finished its own copy first.
+            Err(_) if destination.is_dir() => Ok(()),
+            Err(error) => Err(error),
+        }
+    };
+    if let Err(error) = migrate() {
+        let _ = LEGACY_PROFILE.set(source);
+        return Err(error);
     }
+    Ok(())
 }
 
 fn copy_config_tree(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
@@ -498,12 +506,9 @@ impl Settings {
     }
 
     pub fn save(&self) {
-        let dir = config_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        let tmp = dir.join("settings.json.tmp");
         if let Some(json) = self.to_disk_json() {
-            if std::fs::write(&tmp, json).is_ok() {
-                let _ = std::fs::rename(&tmp, settings_path());
+            if let Err(error) = crate::storage::atomic_write(&settings_path(), &json) {
+                log::warn!("could not save Abyss settings: {error}");
             }
         }
     }

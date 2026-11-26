@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     name: build
-    # Abyss is Windows only (GPUI on Windows, WASAPI, DPAPI).
+    # Abyss is Windows only (WASAPI, DPAPI).
     runs-on: windows-latest
     timeout-minutes: 90
     permissions:

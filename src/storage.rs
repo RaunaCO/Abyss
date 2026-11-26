@@ -8,6 +8,17 @@ use serde::de::DeserializeOwned;
 
 pub const FILE: &str = "listening.sqlite3";
 
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = path.parent().ok_or_else(|| std::io::Error::other("missing parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    let mut pending = tempfile::NamedTempFile::new_in(parent)?;
+    pending.write_all(bytes)?;
+    pending.as_file().sync_all()?;
+    pending.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
 pub fn transaction<T>(dir: &Path, f: impl FnOnce(&Transaction<'_>) -> Result<T>) -> Result<T> {
     std::fs::create_dir_all(dir).context(crate::i18n::t("storage.create_data_folder"))?;
     let mut connection = Connection::open(dir.join(FILE)).context(crate::i18n::t("open_listening_database"))?;
@@ -27,7 +38,14 @@ pub fn import_json<T: DeserializeOwned>(tx: &Transaction<'_>, dir: &Path, name: 
         return Ok(());
     }
     match std::fs::read(dir.join(name)) {
-        Ok(bytes) => import(serde_json::from_slice(&bytes).with_context(|| crate::i18n::text("read_previous", &[name.to_string()]))?)?,
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(value) => import(value)?,
+            Err(error) => {
+                // Leave the marker unset so a repaired source can still be imported.
+                log::debug!("could not read legacy {name}: {error}");
+                return Ok(());
+            }
+        },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error).with_context(|| crate::i18n::text("open_previous", &[name.to_string()])),
     }

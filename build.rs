@@ -1,5 +1,5 @@
 fn main() {
-    // Window / taskbar / Explorer icon (gpui loads icon resource 1) and the
+    // Window / taskbar / Explorer icon (resource 1) and the
     // version information Explorer shows, generated from Cargo.toml so the
     // two never disagree.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
@@ -11,8 +11,15 @@ fn main() {
         let numeric = parts.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
         let icon = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("assets").join("icon.ico");
         let icon = icon.display().to_string().replace('\\', "\\\\");
+        // The application manifest (per-monitor DPI, common controls 6): Iced does not embed one.
+        println!("cargo:rerun-if-changed=assets/abyss.manifest");
+        let manifest = {
+            let path = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("assets").join("abyss.manifest");
+            format!("1 24 \"{}\"", path.display().to_string().replace('\\', "\\\\"))
+        };
         let rc = format!(
             r#"1 ICON "{icon}"
+{manifest}
 
 1 VERSIONINFO
 FILEVERSION {numeric}

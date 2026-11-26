@@ -356,7 +356,9 @@
   "security_and_session": "Sicherheit und Sitzung",
   "app.version": "Abyss {0}",
   "unofficial_tidal_client_built_with_rust_and_gpui": "Inoffizieller TIDAL-Client, entwickelt mit Rust und GPUI",
+  "unofficial_tidal_client_built_with_rust_and_iced": "Inoffizieller TIDAL-Client, entwickelt mit Rust und Iced",
   "apache_2_0_interface": "Apache-2.0: Oberfläche",
+  "mit_apache_2_0_interface": "MIT / Apache-2.0: Oberfläche",
   "mpl_2_0_flac_and_aac_decoding": "MPL-2.0: FLAC- und AAC-Dekodierung",
   "mit_sinc_resampling": "MIT: Sinc-Resampling",
   "apache_2_0_mit_audio_output": "Apache-2.0 / MIT: Audioausgabe",
@@ -618,6 +620,8 @@
   "local.restored": "Originalmetadaten wiederhergestellt",
   "local.saved": "Metadaten gespeichert",
   "local.working": "Wird verarbeitet…",
+  "local.import": "Importieren",
+  "local.no_folders": "Keine überwachten Ordner. Füge einen Ordner hinzu, damit Abyss ihn beim Start nach neuer Musik durchsucht.",
   "local.watched_folders": "Überwachte Ordner",
   "local.unwatch": "Überwachung beenden",
   "local.operation_failed": "Vorgang konnte nicht abgeschlossen werden: {0}",
@@ -747,5 +751,11 @@
   "audio.no_audio_track": "Die Datei enthält keine unterstützte Audiospur",
   "audio.exclusive_unavailable": "Der exklusive Modus ist nicht verfügbar ({0}); der gemeinsame Modus wird verwendet.",
   "audio.output_failed": "Die Audioausgabe konnte nicht geöffnet werden: {0}",
-  "playback.stopped_after_errors": "{0} Titel hintereinander konnten nicht abgespielt werden, die Wiedergabe wurde gestoppt. Wenn sie auf einem USB-Laufwerk oder in einem Netzwerkordner liegen, prüfe die Verbindung."
+  "playback.stopped_after_errors": "{0} Titel hintereinander konnten nicht abgespielt werden, die Wiedergabe wurde gestoppt. Wenn sie auf einem USB-Laufwerk oder in einem Netzwerkordner liegen, prüfe die Verbindung.",
+  "choose": "Auswählen",
+  "clear_queue": "Warteschlange leeren",
+  "close": "Schließen",
+  "stream": "Stream",
+  "local.rescan": "In den Ordnern nach neuen Dateien suchen",
+  "local.tracks_count": "{0} Titel in der Bibliothek"
 }

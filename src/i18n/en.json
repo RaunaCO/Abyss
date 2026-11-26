@@ -356,7 +356,9 @@
   "security_and_session": "Security and session",
   "app.version": "Abyss {0}",
   "unofficial_tidal_client_built_with_rust_and_gpui": "Unofficial TIDAL client, built with Rust and GPUI",
+  "unofficial_tidal_client_built_with_rust_and_iced": "Unofficial TIDAL client, built with Rust and Iced",
   "apache_2_0_interface": "Apache-2.0: interface",
+  "mit_apache_2_0_interface": "MIT / Apache-2.0: interface",
   "mpl_2_0_flac_and_aac_decoding": "MPL-2.0: FLAC and AAC decoding",
   "mit_sinc_resampling": "MIT: sinc resampling",
   "apache_2_0_mit_audio_output": "Apache-2.0 / MIT: audio output",
@@ -618,6 +620,8 @@
   "local.restored": "Original metadata restored",
   "local.saved": "Metadata saved",
   "local.working": "Working…",
+  "local.import": "Import",
+  "local.no_folders": "No watched folders. Add a folder and Abyss looks for new music in it at startup.",
   "local.watched_folders": "Watched folders",
   "local.unwatch": "Stop watching",
   "local.operation_failed": "Could not complete the operation: {0}",
@@ -747,5 +751,11 @@
   "audio.no_audio_track": "The file has no supported audio track",
   "audio.exclusive_unavailable": "Exclusive mode is not available ({0}); using shared mode.",
   "audio.output_failed": "Could not open the audio output: {0}",
-  "playback.stopped_after_errors": "{0} tracks in a row could not play, so playback stopped. If they are on a USB drive or a network folder, check that it is connected."
+  "playback.stopped_after_errors": "{0} tracks in a row could not play, so playback stopped. If they are on a USB drive or a network folder, check that it is connected.",
+  "choose": "Choose",
+  "clear_queue": "Clear queue",
+  "close": "Close",
+  "stream": "Stream",
+  "local.rescan": "Look for new files in the folders",
+  "local.tracks_count": "{0} tracks in the library"
 }

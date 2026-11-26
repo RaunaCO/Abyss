@@ -1,12 +1,12 @@
 # Architecture
 
 Abyss is one Rust binary (`src/main.rs`), about 16.8 k lines in 42 source files.
-The UI runs on GPUI's single UI thread. Network and decoding run on
+The UI (Iced on wgpu; the original GPUI interface was retired in 1.7, see [MIGRATION-ICED.md](MIGRATION-ICED.md)) runs on a single UI thread. Network and decoding run on
 background threads.
 
 ```mermaid
 flowchart LR
-    subgraph UI["UI thread (GPUI)"]
+    subgraph UI["UI thread (Iced)"]
         AV[AppView<br/>src/ui/mod.rs]
         Pages[pages / widgets / now_playing / settings ...]
         IMG[images.rs<br/>cover cache]
@@ -119,8 +119,8 @@ sequenceDiagram
 
 | Thread | Created by | Work |
 | --- | --- | --- |
-| UI | GPUI | Layout, paint, event handling. Never blocks on I/O. |
-| GPUI background executor | `cx.background_executor()` | All `Tidal` calls, image download/decoding/resampling |
+| UI | Iced / winit | Update, layout, paint, event handling. Never blocks on I/O. |
+| Background jobs | `App::fetch` / `blocking` | All `Tidal` calls, imports, image download/decoding/resampling |
 | Audio engine | `audio::Player` | Queue, gapless hand-over, seeking, resampling |
 | Decode worker (per track) | engine | symphonia decoding |
 | Downloader(s) | `stream::start` | HTTP downloads of the file / DASH segments |
@@ -129,8 +129,10 @@ sequenceDiagram
 | `image-cache-prune` | `Images::init` | One-off disk cache trim |
 
 ## Conventions
-- All UI sizes go through `sc()` so zoom applies everywhere.
-- Never block the UI thread: use `fetch()` or `cx.spawn` + background executor.
+- All UI sizes are design pixels: Iced's scale factor applies the zoom (GPUI reference: `sc()`).
+- Never block the UI thread: use `App::fetch` or `Task::perform(blocking(..))`.
+- Keep the widget tree's shape stable (`widgets::layered`): Iced drops widget state when it changes.
+- Do not send a message per frame: each one rebuilds the view. Shader widgets request their own redraws.
 - Animate paint-only properties (colour, opacity, shadow). Layout snaps to
   whole pixels, so animating sizes stutters.
 - `settings.lock()` must not be held twice in one expression (parking_lot

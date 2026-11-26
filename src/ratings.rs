@@ -44,16 +44,18 @@ mod tests {
     }
 
     #[test]
-    fn malformed_source_survives_and_failed_change_does_not_update_stars() -> Result<()> {
+    fn malformed_source_survives_and_new_ratings_can_be_saved() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("ratings.json");
         std::fs::write(&file, "{\"tracks\":")?;
         let mut ratings = Ratings::default();
-        assert!(ratings.set_at(dir.path(), "track", 1, 7).is_err());
-        assert_eq!(ratings.get(1), 0);
+        ratings.set_at(dir.path(), "track", 1, 7)?;
+        assert_eq!(ratings.get(1), 7);
         assert_eq!(std::fs::read_to_string(&file)?, "{\"tracks\":");
-        std::fs::write(file, r#"{"1":8}"#)?;
-        assert_eq!(Ratings::load_at(dir.path())?.get(1), 8);
+        std::fs::write(file, r#"{"1":8,"2":9}"#)?;
+        let ratings = Ratings::load_at(dir.path())?;
+        assert_eq!(ratings.get(1), 7);
+        assert_eq!(ratings.get(2), 9);
         Ok(())
     }
 }

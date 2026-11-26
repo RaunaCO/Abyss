@@ -9,7 +9,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::Write as _,
+    io::{Read as _, Write as _},
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -553,6 +553,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_locked_file_can_be_replaced_by_its_edited_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("track.flac");
+        std::fs::write(&path, b"before").unwrap();
+        // As `edit` has it: the verbatim path of an imported file.
+        let path = path.canonicalize().unwrap();
+        let held = super::exclusive_file(&path).unwrap();
+        let mut temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        std::io::Write::write_all(&mut temp, b"after").unwrap();
+        super::replace_held(temp, &path).unwrap();
+        drop(held);
+        assert_eq!(std::fs::read(&path).unwrap(), b"after");
+    }
+
+    #[test]
     fn numbers_from_tags() {
         assert_eq!(number("3/12"), 3);
         assert_eq!(number(" 07 "), 7);
@@ -646,6 +661,14 @@ fn exclusive_file(path: &Path) -> Result<fs::File> {
         options.share_mode(4);
     }
     options.open(path).context(crate::i18n::t("local.write_blocked"))
+}
+
+/// Put `temp` in `path`'s place while `exclusive_file` still holds `path`.
+/// `NamedTempFile::persist` cannot: `MoveFileExW` refuses an open target with
+/// "access denied". `fs::rename` then retries with a POSIX rename, which replaces it.
+fn replace_held(temp: tempfile::NamedTempFile, path: &Path) -> std::io::Result<()> {
+    let temp = temp.into_temp_path();
+    fs::rename(&temp, path)
 }
 
 fn original(entry: &Entry, source: Option<&mut fs::File>) -> Result<()> {
@@ -761,14 +784,16 @@ pub fn edit(track: &Track, edit: Option<Edit>) -> Result<Track> {
         updated.path = path.clone();
         updated.primary_metadata(&verified);
         if edit.is_none() && verified.primary_tag().is_none() {
-            updated.title = entry.title.clone();
+            updated.title = decode::inspect_file(temp.path())?.title.unwrap_or_else(|| {
+                path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| crate::i18n::t("audio_file").into())
+            });
         }
         if edit.as_ref().and_then(|e| e.cover.as_ref()).is_some_and(|p| !p.as_os_str().is_empty()) {
             anyhow::ensure!(updated.cover.is_some(), crate::i18n::t("local.invalid_cover"));
         }
         fs::set_permissions(temp.path(), source.metadata()?.permissions())?;
         original(&entry, Some(&mut source))?;
-        temp.persist(path).map_err(|e| e.error).context(crate::i18n::t("local.write_blocked"))?;
+        replace_held(temp, path).context(crate::i18n::t("local.write_blocked"))?;
     }
     if wav {
         if let Some(e) = edit {
@@ -785,8 +810,10 @@ pub fn edit(track: &Track, edit: Option<Edit>) -> Result<Track> {
                 updated.cover = if cover.as_os_str().is_empty() {
                     None
                 } else {
-                    let data = fs::read(&cover)?;
-                    anyhow::ensure!(data.len() <= 16 * 1024 * 1024, crate::i18n::t("local.invalid_cover"));
+                    const MAX_COVER: u64 = 16 * 1024 * 1024;
+                    let mut data = Vec::new();
+                    fs::File::open(&cover)?.take(MAX_COVER + 1).read_to_end(&mut data)?;
+                    anyhow::ensure!(data.len() as u64 <= MAX_COVER, crate::i18n::t("local.invalid_cover"));
                     let format = image::guess_format(&data)?;
                     let ext = match format {
                         image::ImageFormat::Png => "png",

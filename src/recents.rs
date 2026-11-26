@@ -27,9 +27,10 @@ pub fn load() -> Vec<RecentAlbum> {
 }
 
 fn save(list: &[RecentAlbum]) {
-    if let Ok(json) = serde_json::to_string(list) {
-        let _ = std::fs::create_dir_all(config_dir());
-        let _ = std::fs::write(path(), json);
+    if let Ok(json) = serde_json::to_vec(list) {
+        if let Err(error) = crate::storage::atomic_write(&path(), &json) {
+            log::warn!("could not save recent albums: {error}");
+        }
     }
 }
 

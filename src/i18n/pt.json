@@ -356,7 +356,9 @@
   "security_and_session": "Segurança e sessão",
   "app.version": "Abyss {0}",
   "unofficial_tidal_client_built_with_rust_and_gpui": "Cliente não oficial do TIDAL, feito com Rust e GPUI",
+  "unofficial_tidal_client_built_with_rust_and_iced": "Cliente não oficial do TIDAL, feito com Rust e Iced",
   "apache_2_0_interface": "Apache-2.0: interface",
+  "mit_apache_2_0_interface": "MIT / Apache-2.0: interface",
   "mpl_2_0_flac_and_aac_decoding": "MPL-2.0: decodificação FLAC e AAC",
   "mit_sinc_resampling": "MIT: reamostragem sinc",
   "apache_2_0_mit_audio_output": "Apache-2.0 / MIT: saída de áudio",
@@ -618,6 +620,8 @@
   "local.restored": "Metadados originais restaurados",
   "local.saved": "Metadados salvos",
   "local.working": "Processando…",
+  "local.import": "Importar",
+  "local.no_folders": "Nenhuma pasta monitorada. Adicione uma pasta para que o Abyss procure músicas novas nela ao iniciar.",
   "local.watched_folders": "Pastas monitoradas",
   "local.unwatch": "Parar de monitorar",
   "local.operation_failed": "Não foi possível concluir a operação: {0}",
@@ -747,5 +751,11 @@
   "audio.no_audio_track": "O arquivo não contém uma faixa de áudio compatível",
   "audio.exclusive_unavailable": "O modo exclusivo não está disponível ({0}); usando o modo compartilhado.",
   "audio.output_failed": "Não foi possível abrir a saída de áudio: {0}",
-  "playback.stopped_after_errors": "{0} faixas seguidas não puderam ser reproduzidas e a reprodução parou. Se estiverem num disco USB ou numa pasta de rede, verifique se está conectado."
+  "playback.stopped_after_errors": "{0} faixas seguidas não puderam ser reproduzidas e a reprodução parou. Se estiverem num disco USB ou numa pasta de rede, verifique se está conectado.",
+  "choose": "Escolher",
+  "clear_queue": "Limpar fila",
+  "close": "Fechar",
+  "stream": "Transmissão",
+  "local.rescan": "Procurar novos arquivos nas pastas",
+  "local.tracks_count": "{0} faixas na biblioteca"
 }

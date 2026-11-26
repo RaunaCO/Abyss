@@ -155,7 +155,7 @@ weak-copyleft licences. There is no GPL/AGPL code. Obligations that apply to
   `assets/licenses/IPADIC-COPYING.txt` and must ship with binaries.
 - **MPL-2.0** (`symphonia*`, `option-ext`): binary distributors must tell
   recipients where the MPL-covered source can be obtained.
-- **Apache-2.0** crates (e.g. `gpui`, `cpal`): include their licence and any
+- **Apache-2.0** crates (e.g. `cpal`): include their licence and any
   `NOTICE` files with binaries.
 - **Inter** font: SIL OFL 1.1, licence in `assets/fonts/Inter-LICENSE.txt`.
 - `kakasi` was deliberately not used because it is GPL-3.0.
@@ -165,7 +165,7 @@ weak-copyleft licences. There is no GPL/AGPL code. Obligations that apply to
 `lindera-ipadic` downloads the dictionary while building, from
 `https://Lindera.dev/...`, and checks it against an MD5 hash. Building
 therefore needs network access and trusts that host. Use
-`--no-default-features` to build without it.
+`--no-default-features --features ui-iced` to build without it.
 
 ## Questions for a lawyer
 

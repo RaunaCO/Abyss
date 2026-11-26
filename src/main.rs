@@ -1,13 +1,20 @@
-//! Abyss: an unofficial native TIDAL client in Rust + GPUI.
+//! Abyss: an unofficial native TIDAL client in Rust, with an Iced interface on wgpu.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// Engine parts the retired GPUI interface used and Iced does not (yet) are kept.
+#[allow(dead_code)]
+mod art;
+#[allow(dead_code)]
 mod audio;
+#[allow(dead_code)]
 mod config;
 mod discord;
 mod export;
 mod history;
 mod i18n;
+#[cfg(feature = "ui-iced")]
+mod iced_ui;
 mod local;
 mod queue_store;
 mod ratings;
@@ -15,12 +22,15 @@ mod recents;
 mod romanize;
 mod scrobble;
 mod secure;
+#[allow(dead_code)]
+mod shared;
 mod storage;
+#[allow(dead_code)]
 mod tidal;
-mod ui;
 mod updates;
 
-use gpui::{prelude::*, px, size, App, Application, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions};
+#[cfg(not(feature = "ui-iced"))]
+compile_error!("Abyss needs its interface: build with the default `ui-iced` feature");
 
 /// Crash reports must not carry signed links or tokens: query strings of URLs
 /// and anything after "Bearer " are replaced.
@@ -52,8 +62,7 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("Abyss=info,tide=info")).init();
     i18n::set_language(None);
     if let Err(error) = config::prepare_config() {
-        eprintln!("{}", i18n::text("migration.failed", &[error.to_string()]));
-        return;
+        log::warn!("{}", i18n::text("migration.failed", &[error.to_string()]));
     }
     // A panic inside a window callback aborts the process without a trace; keep the message.
     std::panic::set_hook(Box::new(|info| {
@@ -276,40 +285,30 @@ fn main() {
 
     i18n::set_language(config::Settings::load().language.as_deref());
 
-    Application::new().with_assets(ui::icons::Assets).run(|cx: &mut App| {
-        // Bundled Inter (SIL Open Font License, assets/fonts/Inter-LICENSE.txt).
-        let fonts: Vec<std::borrow::Cow<'static, [u8]>> = vec![
-            std::borrow::Cow::Borrowed(include_bytes!("../assets/fonts/Inter-Regular.ttf")),
-            std::borrow::Cow::Borrowed(include_bytes!("../assets/fonts/Inter-Medium.ttf")),
-            std::borrow::Cow::Borrowed(include_bytes!("../assets/fonts/Inter-SemiBold.ttf")),
-            std::borrow::Cow::Borrowed(include_bytes!("../assets/fonts/Inter-Bold.ttf")),
-        ];
-        if let Err(e) = cx.text_system().add_fonts(fonts) {
-            log::warn!("could not load Inter: {e:#}");
+    #[cfg(feature = "ui-iced")]
+    {
+        // DirectX 12 unless the user chose: on an RX 6800 XT, Vulkan (wgpu's first choice)
+        // took about 29 s of CPU in the driver at each start and five times the video
+        // memory (docs/MIGRATION-ICED.md). Iced only takes the backend from this variable.
+        #[cfg(windows)]
+        if std::env::var_os("WGPU_BACKEND").is_none() {
+            std::env::set_var("WGPU_BACKEND", "dx12");
         }
-        cx.bind_keys(ui::input::bindings());
-        cx.bind_keys(ui::bindings());
-        let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from(crate::i18n::t("app.name"))),
-                    appears_transparent: true,
-                    ..Default::default()
-                }),
-                window_min_size: Some(size(px(960.), px(600.))),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| ui::AppView::new(window, cx)),
-        )
-        .expect("open window");
-        cx.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-        cx.activate(true);
-    });
+        if let Err(error) = iced_ui::run() {
+            log::error!("the interface could not start: {error}");
+            let report = redact(&format!("Abyss could not start its window: {error}\n"));
+            let dir = config::config_dir();
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(dir.join("startup.log"), &report);
+            eprintln!("{report}");
+            // The Windows build has no console, so without this the failure is invisible.
+            let _ = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("Abyss")
+                .set_description(report.trim())
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+            std::process::exit(1);
+        }
+    }
 }
