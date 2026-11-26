@@ -42,6 +42,13 @@ pub fn reduced() -> bool {
     crate::shared::lyrics::reduced_motion()
 }
 
+/// For tests of the animations themselves: motion on, whatever the machine's
+/// setting (CI runners report reduced motion, and then everything jumps to its end).
+#[cfg(test)]
+pub fn full_motion_for_tests() {
+    std::env::set_var("ABYSS_REDUCED_MOTION", "0");
+}
+
 /// Whether the window has the focus (kept by the window events).
 static FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
@@ -228,6 +235,7 @@ mod tests {
 
     #[test]
     fn anim_retargets_from_where_it_is() {
+        full_motion_for_tests();
         let t0 = Instant::now();
         let mut a = Anim::still(0.0);
         a.go(1.0, CONTROL, t0);

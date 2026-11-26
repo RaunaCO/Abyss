@@ -873,6 +873,7 @@ mod tests {
 
     #[test]
     fn hover_glides_with_gpuis_timings() {
+        motion::full_motion_for_tests();
         let t0 = Instant::now();
         let mut s = State {
             hover: Anim::still(0.0),
@@ -894,6 +895,7 @@ mod tests {
 
     #[test]
     fn a_springy_button_sinks_while_held_and_springs_back_from_there() {
+        motion::full_motion_for_tests();
         let t0 = Instant::now();
         let mut s = State {
             hover: Anim::still(0.0),
