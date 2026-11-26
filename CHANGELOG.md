@@ -7,6 +7,16 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
+## [1.7.1]
+
+- Star ratings for tracks and albums are reliable: a click rates on the press
+  itself (it no longer had to be released over the same 5 px half star), the
+  stars accept clicks a few pixels around them, and the new value shows at once.
+- Ratings are never lost: besides the database, every save refreshes a mirror
+  file that is read if the database cannot be opened, and a change the
+  database refuses (busy, locked) waits in a journal that is retried every
+  10 s and at start until it is stored.
+
 ## [1.7.0]
 
 - The desktop interface is now Iced + wgpu (DirectX 12 on Windows), and the only

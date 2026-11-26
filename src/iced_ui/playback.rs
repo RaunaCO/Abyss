@@ -560,6 +560,16 @@ impl App {
     pub(super) fn tick(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
         self.save_queue(false);
+        // Ratings the database refused (busy, unavailable) wait in a journal:
+        // try again every 10 s, never on every tick (a busy database blocks up to 750 ms).
+        if self.ratings.has_pending() {
+            static LAST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_none_or(|at| at.elapsed() >= Duration::from_secs(10)) {
+                *last = Some(Instant::now());
+                self.ratings.retry_pending();
+            }
+        }
         // Media keys / system media widget.
         let actions = self.media.as_mut().map(|m| m.poll()).unwrap_or_default();
         for a in actions {
@@ -895,10 +905,11 @@ impl App {
     }
 
     pub fn set_rating(&mut self, track: u64, halves: u8) {
+        // The stars show the new value whatever happens; only when neither the
+        // database nor the journal could keep it is there something to say.
         if let Err(error) = self.ratings.set(track, halves) {
             log::warn!("No se pudo guardar la valoración de pista: {error:#}");
             self.notify_toast(crate::i18n::t("could_not_save_the_track_rating"));
-            return;
         }
         self.apply_sorts();
     }
@@ -907,7 +918,6 @@ impl App {
         if let Err(error) = self.ratings.set_album(album, halves) {
             log::warn!("No se pudo guardar la valoración de álbum: {error:#}");
             self.notify_toast(crate::i18n::t("could_not_save_the_album_rating"));
-            return;
         }
         self.apply_sorts();
     }

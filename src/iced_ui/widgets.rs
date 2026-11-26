@@ -682,13 +682,39 @@ struct Stars {
 #[derive(Default)]
 struct StarInteraction {
     preview: Option<u8>,
-    pressed: Option<u8>,
 }
 
+/// Extra room around the stars that still counts as aiming at them (they are
+/// only 10-17 px tall): above and below, and on each side.
+const STAR_SLOP: (f32, f32) = (5.0, 3.0);
+
 impl Stars {
+    /// The half-star value under the pointer, within the stars and a little
+    /// slop around them (the slop clamps to the first and last half).
     fn target(&self, cursor: iced::mouse::Cursor, bounds: iced::Rectangle, viewport: &iced::Rectangle) -> Option<u8> {
-        let point = cursor.position_over(bounds).filter(|p| viewport.contains(*p))?;
-        Some((((point.x - bounds.x) / (self.size * 0.5)).floor() as u8 + 1).min(10))
+        let area = iced::Rectangle {
+            x: bounds.x - STAR_SLOP.1,
+            y: bounds.y - STAR_SLOP.0,
+            width: bounds.width + 2.0 * STAR_SLOP.1,
+            height: bounds.height + 2.0 * STAR_SLOP.0,
+        };
+        let point = cursor.position_over(area).filter(|p| viewport.contains(*p))?;
+        Some(half_at(point.x - bounds.x, self.size))
+    }
+}
+
+/// Half stars (1..=10) at `x` px from the left edge of stars `size` px wide.
+fn half_at(x: f32, size: f32) -> u8 {
+    ((x.max(0.0) / (size * 0.5)).floor() as u8 + 1).clamp(1, 10)
+}
+
+/// The new rating for a click on `target` while `current` is set: the same
+/// value clears it, anything else sets it.
+fn rating_after_click(current: u8, target: u8) -> u8 {
+    if target == current {
+        0
+    } else {
+        target
     }
 }
 
@@ -732,19 +758,12 @@ impl iced::advanced::Widget<Message, iced::Theme, iced::Renderer> for Stars {
             state.preview = target;
             shell.request_redraw();
         }
-        match event {
-            iced::Event::Mouse(Event::ButtonPressed(Button::Left)) if target.is_some() => {
-                state.pressed = target;
-                shell.capture_event();
-            }
-            iced::Event::Mouse(Event::ButtonReleased(Button::Left)) => {
-                if let Some(pressed) = state.pressed.take().filter(|pressed| Some(*pressed) == target) {
-                    let value = if pressed == self.value { 0 } else { pressed };
-                    shell.publish(if self.album { Message::SetAlbumRating(self.id, value) } else { Message::SetRating(self.id, value) });
-                    shell.capture_event();
-                }
-            }
-            _ => {}
+        // Rated on the press itself: no need to release over the same half
+        // (a 5 px target), and the row under it never sees the click.
+        if let (iced::Event::Mouse(Event::ButtonPressed(Button::Left)), Some(target)) = (event, target) {
+            let value = rating_after_click(self.value, target);
+            shell.publish(if self.album { Message::SetAlbumRating(self.id, value) } else { Message::SetRating(self.id, value) });
+            shell.capture_event();
         }
     }
 
@@ -974,5 +993,28 @@ mod layer_tests {
             tree.diff(next.as_widget());
             assert!(field(&mut tree).unwrap().is_focused(), "focus lost with layers {shown:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod star_tests {
+    use super::{half_at, rating_after_click};
+
+    #[test]
+    fn each_star_has_two_halves_and_the_edges_clamp() {
+        assert_eq!(half_at(0.0, 13.0), 1);
+        assert_eq!(half_at(6.4, 13.0), 1);
+        assert_eq!(half_at(6.6, 13.0), 2);
+        assert_eq!(half_at(64.9, 13.0), 10);
+        // In the slop beyond either end: the first or the last half.
+        assert_eq!(half_at(-3.0, 13.0), 1);
+        assert_eq!(half_at(70.0, 13.0), 10);
+    }
+
+    #[test]
+    fn clicking_the_current_value_clears_it_and_any_other_sets_it() {
+        assert_eq!(rating_after_click(0, 7), 7);
+        assert_eq!(rating_after_click(7, 7), 0);
+        assert_eq!(rating_after_click(7, 4), 4);
     }
 }
