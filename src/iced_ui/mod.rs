@@ -1197,6 +1197,10 @@ impl App {
                 _ => {}
             }
         }
+        // A selected track row takes the arrows, Home / End, Enter and Escape.
+        if let Some(task) = self.row_key(&key, mods) {
+            return task;
+        }
         match key.as_ref() {
             Key::Named(Named::Space) if !ctrl => self.toggle_play(),
             Key::Named(Named::ArrowLeft) if mods.alt() => self.go_back(),

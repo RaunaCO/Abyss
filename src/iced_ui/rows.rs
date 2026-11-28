@@ -161,8 +161,6 @@ impl App {
     /// (Home / End to the ends), Enter plays from it, Escape clears it. `None`
     /// when the key is not for the list (no selection on this page, a
     /// modifier held, a field or a floating surface has the keyboard).
-    // Called from `on_key_inner` once rendimiento wires it (team/requests.md).
-    #[allow(dead_code)]
     pub(super) fn row_key(&mut self, key: &iced::keyboard::Key, mods: iced::keyboard::Modifiers) -> Option<Task<Message>> {
         use iced::keyboard::{key::Named, Key};
         if mods.command() || mods.alt() || self.menu.is_some() || self.dialog.is_some() || self.search_open || self.now_playing_open {
