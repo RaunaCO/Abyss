@@ -1,7 +1,7 @@
-//! Offscreen renders of panel states `page_shots` does not reach: hovered
+//! Offscreen renders of catalogue and library panel states `page_shots` does not reach: hovered
 //! tooltips (drawn through their overlay), selected / playing / hovered
 //! track rows, menus at the window's edges, long texts and narrow widths.
-//! `cargo test --bin Abyss -- --include-ignored panel_shots` (same
+//! `cargo test --bin Abyss -- --include-ignored catalog_shots` (same
 //! environment as `page_shots`; PNGs go to `ABYSS_SHOT_DIR`).
 
 use super::super::*;
@@ -79,7 +79,7 @@ fn ink_in(px: &[u8], w: u32, r: Rectangle) -> usize {
 /// under its button, and stays inside the window at the right edge.
 #[test]
 #[ignore = "requires a wgpu adapter; writes PNGs for review"]
-fn panel_shots_tooltips() {
+fn catalog_shots_tooltips() {
     let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut renderer = renderer_new();
     let size = Size::new(360.0, 120.0);
@@ -262,7 +262,7 @@ fn library_row_y(app: &App, pos: usize) -> f32 {
 /// (accent) nor as the hover (a wash without a ring).
 #[test]
 #[ignore = "requires an isolated profile and a wgpu adapter; writes PNGs for review"]
-fn panel_shots_row_states() {
+fn catalog_shots_row_states() {
     assert!(std::env::var_os("ABYSS_CONFIG_DIR").is_some() && std::env::var_os("ABYSS_CACHE_DIR").is_some());
     let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut renderer = renderer_new();
@@ -300,7 +300,7 @@ fn panel_shots_row_states() {
 /// the player bar, without scrolling when they fit.
 #[test]
 #[ignore = "requires an isolated profile and a wgpu adapter; writes PNGs for review"]
-fn panel_shots_menu_edges() {
+fn catalog_shots_menu_edges() {
     assert!(std::env::var_os("ABYSS_CONFIG_DIR").is_some() && std::env::var_os("ABYSS_CACHE_DIR").is_some());
     let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut renderer = renderer_new();
@@ -324,6 +324,56 @@ fn panel_shots_menu_edges() {
                 save(&format!("{tag}-{name}"), size, &settle_with(&mut app, &mut renderer, size, None));
             }
             app.menu = None;
+        }
+    }
+    theme::set_light(false);
+}
+
+/// The login screen and the four welcome steps, plus a catalogue page that
+/// failed to load (centred where its dots were), in both themes.
+#[test]
+#[ignore = "requires an isolated profile and a wgpu adapter; writes PNGs for review"]
+fn catalog_shots_session_and_states() {
+    assert!(std::env::var_os("ABYSS_CONFIG_DIR").is_some() && std::env::var_os("ABYSS_CACHE_DIR").is_some());
+    let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut renderer = renderer_new();
+    let mut app = fixture();
+    for size in sizes() {
+        app.viewport = size;
+        for light in [false, true] {
+            theme::set_light(light);
+            let tag = format!("{}-{}x{}", if light { "light" } else { "dark" }, size.width, size.height);
+            app.signed_in = false;
+            app.page = crate::shared::Page::Home;
+            app.welcome_step = None;
+            save(&format!("{tag}-login"), size, &settle_with(&mut app, &mut renderer, size, None));
+            for step in 0..4 {
+                app.welcome_step = Some(step);
+                save(&format!("{tag}-welcome-{step}"), size, &settle_with(&mut app, &mut renderer, size, None));
+            }
+            app.welcome_step = None;
+            app.signed_in = true;
+            app.albums.insert(999, Load::Failed("HTTP 503: the service is unavailable".into()));
+            drop(app.update(Message::Navigate(crate::shared::Page::Album(999))));
+            app.page_at = Instant::now() - Duration::from_secs(2);
+            save(&format!("{tag}-failed-album"), size, &settle_with(&mut app, &mut renderer, size, None));
+            drop(app.update(Message::Navigate(crate::shared::Page::MyTracks)));
+            // Quick search while "aurorab" loads: "aurora"'s results stay, dimmed.
+            app.search.insert(
+                "aurora".into(),
+                Load::Ready(crate::tidal::SearchResults {
+                    top: None,
+                    tracks: app.lib_tracks[..5].to_vec(),
+                    albums: Vec::new(),
+                    artists: Vec::new(),
+                    playlists: Vec::new(),
+                }),
+            );
+            app.search_open = true;
+            app.search_query = "aurorab".into();
+            save(&format!("{tag}-search-stale"), size, &settle_with(&mut app, &mut renderer, size, None));
+            app.search_open = false;
+            app.search_query.clear();
         }
     }
     theme::set_light(false);

@@ -537,8 +537,23 @@ fn title_sized<'a>(t: impl text::IntoFragment<'a>, sub: Option<String>, size: f3
 fn load_state<'a, T>(l: Option<&Load<T>>) -> Option<Element<'a, Message>> {
     match l {
         Some(Load::Ready(_)) => None,
-        Some(Load::Failed(e)) => Some(page_error(e, Message::RetryPage)),
+        // The failure takes the place of the dots, centred in the same band:
+        // nothing jumps when the loading turns into an error.
+        Some(Load::Failed(e)) => Some(container(page_error(e, Message::RetryPage)).center(Length::Fill).height(240).into()),
         _ => Some(container(widgets::loading_dots()).width(Length::Fill).height(240).center(Length::Fill).into()),
+    }
+}
+
+/// A catalogue page that is not ready: its failure (with Retry) centred in
+/// the view, where the page's loading dots were, so the error does not jump
+/// to the top when the loading fails.
+fn whole_page_state<'a, T>(app: &App, l: Option<&Load<T>>) -> Element<'a, Message> {
+    match l {
+        Some(Load::Failed(e)) => {
+            let h = (page_area(app).height - PAGE_TOP - 32.0).max(240.0);
+            container(page_error(e, Message::RetryPage)).center(Length::Fill).height(h).into()
+        }
+        other => load_state(other).unwrap_or_else(loading),
     }
 }
 
@@ -1228,7 +1243,7 @@ fn disc_heading<'a>(disc: u32, later: bool) -> Element<'a, Message> {
 }
 
 fn album_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
-    let Some(Load::Ready((album, tracks))) = app.albums.get(&id) else { return load_state(app.albums.get(&id)).unwrap_or_else(loading) };
+    let Some(Load::Ready((album, tracks))) = app.albums.get(&id) else { return whole_page_state(app, app.albums.get(&id)) };
     let total: u64 = tracks.iter().map(|t| t.duration as u64).sum();
     let count = if tracks.len() == 1 {
         crate::i18n::t("1_track").to_string()
@@ -1321,7 +1336,7 @@ fn album_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
 }
 
 fn artist_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
-    let Some(Load::Ready(a)) = app.artists.get(&id) else { return load_state(app.artists.get(&id)).unwrap_or_else(loading) };
+    let Some(Load::Ready(a)) = app.artists.get(&id) else { return whole_page_state(app, app.artists.get(&id)) };
     let tracks = &a.top_tracks;
     let follows = app.fav_artist_ids.contains(&id);
     let local = crate::local::is_local_id(id);
@@ -1401,7 +1416,7 @@ fn artist_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
 
 fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Message> {
     let Some(Load::Ready((pl, tracks))) = app.playlists.get(uuid) else {
-        return load_state(app.playlists.get(uuid)).unwrap_or_else(loading);
+        return whole_page_state(app, app.playlists.get(uuid));
     };
     let total: u64 = tracks.iter().map(|t| t.duration as u64).sum();
     let own = app.is_own_playlist(uuid);
@@ -1464,7 +1479,7 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
 }
 
 fn mix_page<'a>(app: &'a App, id: &str, width: f32) -> Element<'a, Message> {
-    let Some(Load::Ready((mix, tracks))) = app.mixes.get(id) else { return load_state(app.mixes.get(id)).unwrap_or_else(loading) };
+    let Some(Load::Ready((mix, tracks))) = app.mixes.get(id) else { return whole_page_state(app, app.mixes.get(id)) };
     let metrics = Head::of(app, width);
     let head = header(
         widgets::cover_rounded(mix.image.clone(), metrics.cover(), scale::R_MD),
@@ -1801,8 +1816,9 @@ fn loading_block<'a>() -> Element<'a, Message> {
     container(widgets::loading_dots()).width(Length::Fill).height(320).center(Length::Fill).into()
 }
 
+/// A Library section that failed to load, where its loading dots were ([`loading_block`]).
 fn library_failed(error: &str) -> Element<'_, Message> {
-    page_error(error, Message::RetryPage)
+    container(page_error(error, Message::RetryPage)).center(Length::Fill).height(320).into()
 }
 
 fn page_error<'a>(error: &str, retry: Message) -> Element<'a, Message> {
@@ -2610,5 +2626,5 @@ mod library_layout_tests {
 mod shots;
 
 #[cfg(test)]
-#[path = "panel_shots.rs"]
-mod panel_shots;
+#[path = "catalog_shots.rs"]
+mod catalog_shots;

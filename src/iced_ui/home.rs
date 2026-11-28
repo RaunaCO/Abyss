@@ -285,10 +285,32 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
     let hint = |label: String, color: iced::Color| -> Element<'_, Message> {
         container(text(label).size(theme::TYPE_LABEL).color(color)).padding(14).into()
     };
-    let entry = |url: Option<String>, round: bool, title: String, sub: String, msg: Message| -> Element<'_, Message> {
-        let names =
-            column![line(title, 12.0, theme::text()).font(widgets::semibold()), line(sub, 10.5, theme::text_secondary())].spacing(2);
-        let body = row![cover(url, 36.0, round), container(names).width(Length::Fill).clip(true)].spacing(10).align_y(Alignment::Center);
+    let q = app.search_query.trim();
+    // While a new query loads, the results of the longest earlier query that
+    // has them stay, dimmed, instead of flashing the loading dots on every
+    // keystroke (the dots only when there is nothing to show yet).
+    let (found, stale) = match app.search.get(q) {
+        Some(Load::Ready(r)) => (Some(r), false),
+        Some(Load::Failed(_)) => (None, false),
+        _ => {
+            let earlier = q.char_indices().map(|(i, _)| &q[..i]).filter(|p| !p.trim().is_empty()).rev().find_map(|p| {
+                match app.search.get(p.trim()) {
+                    Some(Load::Ready(r)) => Some(r),
+                    _ => None,
+                }
+            });
+            (earlier, true)
+        }
+    };
+    let dim = if stale { 0.5 } else { 1.0 };
+    let entry = move |url: Option<String>, round: bool, title: String, sub: String, msg: Message| -> Element<'_, Message> {
+        let names = column![
+            line(title, widgets::scale::TYPE_LABEL, theme::with_alpha(theme::text(), dim)).font(widgets::semibold()),
+            line(sub, widgets::scale::TYPE_CAPTION, theme::with_alpha(theme::text_secondary(), dim))
+        ]
+        .spacing(2);
+        let art = widgets::cover_at_opacity(url, 36.0, round, dim);
+        let body = row![art, container(names).width(Length::Fill).clip(true)].spacing(10).align_y(Alignment::Center);
         widgets::soft(
             button(container(body).height(54).align_y(alignment::Vertical::Center)).width(Length::Fill).padding([0, 10]).on_press(msg),
             9.0,
@@ -296,7 +318,6 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
     };
     let album_sub = |artists: String| crate::i18n::text("album.detail", &[artists]);
 
-    let q = app.search_query.trim();
     let mut list: Vec<Element<'_, Message>> = Vec::new();
     let mut footer = None;
     if q.is_empty() {
@@ -315,8 +336,8 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
             );
         }
     } else {
-        match app.search.get(q) {
-            Some(Load::Ready(found)) => {
+        match (found, app.search.get(q)) {
+            (Some(found), _) => {
                 if let Some(top) = &found.top {
                     let (title, sub, url, round) = item_text(top);
                     let sub = match top {
@@ -355,7 +376,7 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
                     list.push(hint(crate::i18n::t("no_results").into(), theme::text_dim()));
                 }
             }
-            Some(Load::Failed(reason)) => list.push(hint(reason.clone(), theme::danger())),
+            (None, Some(Load::Failed(reason))) => list.push(hint(reason.clone(), theme::danger())),
             _ => list.push(container(widgets::loading_dots()).height(48).center(Length::Fill).into()),
         }
         let short = if q.chars().count() > 26 { format!("{}\u{2026}", q.chars().take(25).collect::<String>()) } else { q.to_string() };
