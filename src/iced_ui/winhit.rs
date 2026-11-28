@@ -64,8 +64,8 @@ pub struct Mark {
 #[derive(Clone, Debug, Default)]
 pub struct Map {
     pub marks: Vec<Mark>,
-    /// Something modal is open (menu, dialog, search results…): the first
-    /// click anywhere must reach Iced to dismiss it, so no caption.
+    /// Something modal is open (menu, dialog…): the first click anywhere
+    /// must reach Iced to dismiss it, so no caption.
     pub blocked: bool,
     /// The window is full screen: no caption and no resize borders.
     pub fullscreen: bool,

@@ -183,9 +183,11 @@ pub fn hole<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message
 
 /// The whole view, publishing its caption surfaces each time it is drawn.
 pub fn hit_map<'a>(app: &App, view: Element<'a, Message>) -> Element<'a, Message> {
-    // While something modal is open the first click anywhere must reach Iced
-    // (it closes the menu, the dialog or the search results).
-    let blocked = app.menu.is_some() || app.dialog.is_some() || app.cover_view.is_some() || app.info_panel.is_some() || app.search_open;
+    // A menu, a dialog, the info panel and the cover view close on a click
+    // anywhere (a scrim over the whole window): that first click must reach
+    // Iced, not move the window. The quick-search results have no scrim over
+    // the bar, so the bar still moves the window (and the results with it).
+    let blocked = app.menu.is_some() || app.dialog.is_some() || app.cover_view.is_some() || app.info_panel.is_some();
     super::winhit::root(view, blocked, app.fullscreen)
 }
 
