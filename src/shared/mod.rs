@@ -1,6 +1,7 @@
 //! State and calculations shared by every interface (GPUI reference and Iced).
 //! Nothing here depends on a UI toolkit.
 
+pub mod activity;
 pub mod eqgraph;
 pub mod eqmeter;
 pub mod lyrics;

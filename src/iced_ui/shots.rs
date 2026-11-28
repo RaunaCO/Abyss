@@ -71,6 +71,25 @@ pub(super) fn settle(app: &App, renderer: &mut Renderer, size: Size) -> Vec<u8> 
     draw(app, renderer, &mut tree, size)
 }
 
+/// Follow the playing cover's colours as the Tick does on screen (the harness
+/// has no Tick, so the ambient tint and palette would stay at the accent):
+/// wait for the cover's colours to be derived, then end the cross-fade.
+pub(super) fn settle_colors(app: &mut App) {
+    for _ in 0..50 {
+        app.track_colors();
+        let url = app.now.as_ref().and_then(|n| n.track.cover(640));
+        if url.as_deref().is_none_or(|u| images::color(u).is_some() && images::palette(u).len() >= 3) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    app.track_colors();
+    app.ambient.from = app.ambient.to;
+    app.ambient.at = Instant::now() - motion::AMBIENT;
+    app.palette.from = app.palette.to.clone();
+    app.palette.at = Instant::now() - motion::AMBIENT;
+}
+
 pub(super) fn renderer_new() -> Renderer {
     // The bundled Inter weights, as `run` gives them to the application.
     static FONTS_LOADED: std::sync::Once = std::sync::Once::new();
@@ -277,6 +296,9 @@ fn page_shots() {
             theme::set_light(light);
             prep(app);
             app.page_at = Instant::now() - Duration::from_secs(2);
+            // Load the covers, take the playing one's colours, then the final frame.
+            let _ = settle(app, &mut renderer, size);
+            settle_colors(app);
             let pixels = settle(app, &mut renderer, size);
             save(&full, size, &pixels);
         }

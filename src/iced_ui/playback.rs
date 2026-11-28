@@ -334,6 +334,7 @@ impl App {
         self.player.send(Cmd::Seek(secs));
         self.snap.position = secs;
         self.snap_at = Instant::now();
+        self.seek_hold = Some((secs, Instant::now()));
         Task::none()
     }
 
@@ -652,7 +653,22 @@ impl App {
                 }
             }
         }
-        if self.drag != Some(super::Drag::Progress) {
+        // A seek just sent: the engine may still report where it was (it can
+        // sit up to 200 ms flushing the output), and the thumb would jump back
+        // for a tick. Keep the target until the engine is there (or 1.5 s).
+        let held = self.seek_hold.is_some_and(|(target, at)| {
+            let since = at.elapsed().as_secs_f64();
+            since < 1.5 && snap.key == self.snap.key && (snap.position - target).abs() > 1.0 + since
+        });
+        if !held {
+            self.seek_hold = None;
+        }
+        if held {
+            let (position, at) = (self.snap.position, self.snap_at);
+            self.snap = snap;
+            self.snap.position = position;
+            self.snap_at = at;
+        } else if self.drag != Some(super::Drag::Progress) {
             // The engine's playback clock is the reference: the shown position
             // is extrapolated from its latest reading until the next one.
             self.snap = snap;
@@ -703,6 +719,9 @@ impl App {
         }
         self.step_spin();
         self.track_colors();
+        self.trim_caches();
+        // Ambient motion never rests while music plays (see `shared::activity`).
+        crate::shared::activity::set_playing(self.now.is_some() && !self.snap.paused && !self.ended);
         Task::batch(tasks)
     }
 
