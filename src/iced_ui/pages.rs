@@ -879,7 +879,7 @@ fn page_body(app: &App, width: f32) -> Element<'_, Message> {
 fn home(app: &App, width: f32) -> Element<'_, Message> {
     // GPUI has no tabs here: Staff picks and Uploads are sections of
     // "Mixes & new releases" (see `discover`).
-    let mut c = column![title_sized(crate::i18n::t("home"), None, 36.0, 20.0)];
+    let mut c = column![title_sized(crate::i18n::t("home"), None, scale::TYPE_DISPLAY, 20.0)];
     let data = Some(&app.home);
     match data {
         Some(Load::Ready(rows)) => c = c.push(super::home::view(app, rows, width)),
@@ -1034,17 +1034,64 @@ fn head_pad(width: f32) -> f32 {
     }
 }
 
-pub(super) fn catalog_cover_size(width: f32) -> f32 {
-    (if width < 480.0 { width * 0.43 } else { width * 0.21 }).clamp(42.0, 200.0)
+/// The metrics of a catalogue header: from the column's width and, in a short
+/// window (under 720 design px, e.g. 1366x768 at 125 % or 960x600), a compact
+/// variant (smaller cover and title, tighter insides) so the first tracks show
+/// under the header instead of a whole screen of header.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Head {
+    width: f32,
+    short: bool,
 }
 
-fn head_row_h(width: f32) -> f32 {
-    catalog_cover_size(width).max(HEAD_INFO)
-}
+impl Head {
+    pub(super) fn of(app: &App, width: f32) -> Self {
+        Self { width, short: app.viewport.height < 720.0 }
+    }
 
-/// Height of [`header`] at `width`.
-pub(super) fn header_h(width: f32) -> f32 {
-    HEAD_TOP + 2.0 * head_pad(width) + head_row_h(width) + 18.0 + 13.0 + HEAD_ACTIONS + HEAD_BOTTOM
+    fn pad(self) -> f32 {
+        if self.short {
+            head_pad(self.width).min(16.0)
+        } else {
+            head_pad(self.width)
+        }
+    }
+
+    /// The cover's side.
+    pub(super) fn cover(self) -> f32 {
+        let max = if self.short { 148.0 } else { 200.0 };
+        (if self.width < 480.0 { self.width * 0.43 } else { self.width * 0.21 }).clamp(42.0, max)
+    }
+
+    /// Height of the cover row: the cover, or the details beside it if taller.
+    fn row_h(self) -> f32 {
+        self.cover().max(if self.short { 152.0 } else { HEAD_INFO })
+    }
+
+    /// Space between the cover row and the rule over the actions.
+    fn gap(self) -> f32 {
+        if self.short {
+            12.0
+        } else {
+            18.0
+        }
+    }
+
+    /// The title's size and line height (at most three lines).
+    fn title(self) -> (f32, f32) {
+        if self.width < 480.0 {
+            (28.0, 32.0)
+        } else if self.short {
+            (34.0, 40.0)
+        } else {
+            (scale::TYPE_DISPLAY, 46.0)
+        }
+    }
+
+    /// Height of the whole header: the tracks below it are virtualised from it.
+    pub(super) fn h(self) -> f32 {
+        HEAD_TOP + 2.0 * self.pad() + self.row_h() + self.gap() + 13.0 + HEAD_ACTIONS + HEAD_BOTTOM
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1053,13 +1100,13 @@ fn header<'a>(
     kind: String,
     name: String,
     details: Element<'a, Message>,
-    width: f32,
+    head: Head,
     primary: Vec<Element<'a, Message>>,
     secondary: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let row_h = head_row_h(width);
+    let row_h = head.row_h();
     // GPUI: 40 px on a 46 px line (28 on 32 when the header stacks), at most three lines.
-    let (size, lead) = if width < 480.0 { (28.0, 32.0) } else { (40.0, 46.0) };
+    let (size, lead) = head.title();
     let title = text(name)
         .size(size)
         .line_height(text::LineHeight::Absolute(lead.into()))
@@ -1071,7 +1118,7 @@ fn header<'a>(
         container(title).max_height(3.0 * lead).clip(true),
         details,
     ]
-    .spacing(8);
+    .spacing(if head.short { 6 } else { 8 });
     let top = row![art, container(info).width(Length::Fill).height(row_h).align_y(alignment::Vertical::Center).clip(true)]
         .spacing(18)
         .align_y(Alignment::Center)
@@ -1085,10 +1132,10 @@ fn header<'a>(
     ]
     .align_y(Alignment::Center)
     .height(HEAD_ACTIONS);
-    let inner = column![top, column![rule, Space::new().height(12), bottom]].spacing(18);
-    let surface = container(inner).padding(head_pad(width)).width(Length::Fill);
+    let inner = column![top, column![rule, Space::new().height(12), bottom]].spacing(head.gap());
+    let surface = container(inner).padding(head.pad()).width(Length::Fill);
     let surface = super::liquid_glass::glass(surface, super::liquid_glass::PANEL_R).shadow(theme::popover_shadow());
-    container(surface).padding(Padding { top: HEAD_TOP, bottom: HEAD_BOTTOM, ..Default::default() }).height(header_h(width)).into()
+    container(surface).padding(Padding { top: HEAD_TOP, bottom: HEAD_BOTTOM, ..Default::default() }).height(head.h()).into()
 }
 
 /// A labelled action under a header: icon with a small caption (GPUI's `action`).
@@ -1229,19 +1276,19 @@ fn album_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
         secondary.push(head_action(Icon::Link, crate::i18n::t("share"), false, Message::CopyLink(share_url("album", &id.to_string()))));
     }
     secondary.push(head_action(Icon::More, crate::i18n::t("more"), false, Message::OpenMenu(MenuTarget::Album(album.clone()))));
-    let size = catalog_cover_size(width);
-    let art = mouse_area(widgets::cover_rounded(album.cover(640), size, 12.0))
+    let metrics = Head::of(app, width);
+    let art = mouse_area(widgets::cover_rounded(album.cover(640), metrics.cover(), scale::R_MD))
         .on_press(Message::OpenCover(album.cover(1280).unwrap_or_default()));
     let head = header(
         art.into(),
         (if local { crate::i18n::t("local_album") } else { crate::i18n::t("album") }).to_string(),
         album.title.clone(),
         details.into(),
-        width,
+        metrics,
         play_pills(app, !tracks.is_empty()),
         secondary,
     );
-    let head_h = header_h(width);
+    let head_h = metrics.h();
     let style = RowStyle::new(false, false, true).fit(width);
     let list = if tracks.is_empty() {
         widgets::notice(Icon::Album, crate::i18n::t("this_album_has_no_available_tracks"))
@@ -1306,16 +1353,17 @@ fn artist_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
         1 => crate::i18n::t("1_featured_track").to_string(),
         n => crate::i18n::text("featured_tracks", &[n.to_string()]),
     };
+    let metrics = Head::of(app, width);
     let head = header(
-        cover(a.artist.picture(640), catalog_cover_size(width), true),
+        cover(a.artist.picture(640), metrics.cover(), true),
         crate::i18n::t("artist").into(),
         a.artist.name.clone(),
         text(featured).size(theme::TYPE_LABEL).color(theme::text_secondary()).into(),
-        width,
+        metrics,
         primary,
         secondary,
     );
-    let head_h = header_h(width);
+    let head_h = metrics.h();
     let mut c = column![head];
     if !tracks.is_empty() {
         let style = RowStyle::new(true, true, false).fit(width);
@@ -1388,12 +1436,13 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
     }
     secondary.push(head_action(Icon::Link, crate::i18n::t("share"), false, Message::CopyLink(share_url("playlist", uuid))));
     secondary.push(head_action(Icon::More, crate::i18n::t("more"), false, Message::OpenMenu(MenuTarget::AddToPlaylist(tracks.clone()))));
+    let metrics = Head::of(app, width);
     let head = header(
-        widgets::cover_rounded(pl.cover(640), catalog_cover_size(width), 12.0),
+        widgets::cover_rounded(pl.cover(640), metrics.cover(), scale::R_MD),
         crate::i18n::t("playlist").into(),
         pl.title.clone(),
         details.into(),
-        width,
+        metrics,
         play_pills(app, !tracks.is_empty()),
         secondary,
     );
@@ -1404,7 +1453,7 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
     };
     let style = RowStyle { date: true, bpm, rating, ..RowStyle::new(true, true, false) }.fit(width);
     let u = uuid.to_string();
-    let list = track_list(app, tracks, Some(&shown), header_h(width) + FILTER_H, style, move |i, t| {
+    let list = track_list(app, tracks, Some(&shown), metrics.h() + FILTER_H, style, move |i, t| {
         if own {
             MenuTarget::PlaylistTrack { uuid: u.clone(), index: i, track: t.clone() }
         } else {
@@ -1416,17 +1465,18 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
 
 fn mix_page<'a>(app: &'a App, id: &str, width: f32) -> Element<'a, Message> {
     let Some(Load::Ready((mix, tracks))) = app.mixes.get(id) else { return load_state(app.mixes.get(id)).unwrap_or_else(loading) };
+    let metrics = Head::of(app, width);
     let head = header(
-        widgets::cover_rounded(mix.image.clone(), catalog_cover_size(width), 12.0),
+        widgets::cover_rounded(mix.image.clone(), metrics.cover(), scale::R_MD),
         crate::i18n::t("mix").into(),
         mix.title.clone(),
         text(mix.subtitle.clone()).size(theme::TYPE_LABEL).color(theme::text_secondary()).into(),
-        width,
+        metrics,
         play_pills(app, !tracks.is_empty()),
         Vec::new(),
     );
     let style = RowStyle::new(true, true, false).fit(width);
-    column![head, track_list(app, tracks, None, header_h(width), style, |_, t| MenuTarget::Track(t.clone()))].into()
+    column![head, track_list(app, tracks, None, metrics.h(), style, |_, t| MenuTarget::Track(t.clone()))].into()
 }
 
 fn search_page<'a>(app: &'a App, q: &str, width: f32) -> Element<'a, Message> {
@@ -1822,7 +1872,11 @@ fn inline_track<'a>(app: &App, i: usize, track: &Track, source: &Source, multi_d
             border: Border { radius: 6.0.into(), ..Default::default() },
             ..Default::default()
         });
-    let title = line(track.display_title(), 13.0, if current { theme::accent() } else { theme::text() });
+    let title = line(track.display_title(), scale::TYPE_SMALL, if current { theme::accent() } else { theme::text() }).font(if current {
+        widgets::semibold()
+    } else {
+        widgets::medium()
+    });
     // Ratings give way to the title in the narrowest layout; a rated track
     // shows its stars, the like shows once given.
     let rated = app.ratings.get(track.id) > 0;
@@ -1850,8 +1904,8 @@ fn inline_track<'a>(app: &App, i: usize, track: &Track, source: &Source, multi_d
         .height(Length::Fill)
         .align_y(Alignment::Center);
     let base = container(base).height(41).padding([0, 10]).style(move |_| container::Style {
-        background: current.then(|| theme::accent_dim().into()),
-        border: Border { radius: 6.0.into(), ..Default::default() },
+        background: current.then(|| super::rows::tone::playing_fill().into()),
+        border: Border { radius: scale::R_SM.into(), ..Default::default() },
         ..Default::default()
     });
     let hover_stars: Option<Element<'a, Message>> = room_for_stars.then(|| {
@@ -1869,7 +1923,9 @@ fn inline_track<'a>(app: &App, i: usize, track: &Track, source: &Source, multi_d
         .height(Length::Fill)
         .align_y(Alignment::Center);
     let overlay = container(overlay).width(Length::Fill).height(41).padding([0, 10]);
-    let body = super::wash::wash(iced::widget::hover(base, overlay), theme::hover(), 6.0).press(theme::active()).strip(theme::accent());
+    let body = super::wash::wash(iced::widget::hover(base, overlay), super::rows::tone::hover(), scale::R_SM)
+        .press(super::rows::tone::press())
+        .strip(super::rows::tone::strip());
     let body = column![body, rule()];
     mouse_area(body)
         .on_double_click(play)

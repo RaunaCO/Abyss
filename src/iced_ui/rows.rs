@@ -110,7 +110,7 @@ pub enum RowMsg {
     /// A click on row `.0` (track id `.1`) of the page's list selects it.
     Select(usize, u64),
     /// A right click: select the row, then open its menu.
-    Menu(usize, u64, MenuTarget),
+    Menu(usize, u64, Box<MenuTarget>),
 }
 
 /// The selected row of the page's track list: the one clicked last (or
@@ -211,7 +211,7 @@ impl App {
             RowMsg::Select(ix, id) => select(self.page.clone(), ix, id),
             RowMsg::Menu(ix, id, menu) => {
                 select(self.page.clone(), ix, id);
-                return Task::done(Message::OpenMenu(menu));
+                return Task::done(Message::OpenMenu(*menu));
             }
             RowMsg::Grab(uuid, from) => {
                 let id = self.page_tracks().get(from).map_or(0, |t| t.id);
@@ -276,12 +276,12 @@ fn cell<'a>(content: impl Into<Element<'a, Message>>, width: impl Into<Length>) 
     container(content).width(width).clip(true).into()
 }
 
-//// Colours of a track row's states (art-audit.md §4): playing is the accent
+/// Colours of a track row's states (art-audit.md §4): playing is the accent
 /// (title, moving bars, a faint accent tint), selected is neutral (a soft fill
 /// and a ring), so both read at once on the same row and neither looks like
 /// the hover wash.
 // TODO(theme): row state tokens; move to theme.rs with arte's.
-mod tone {
+pub(super) mod tone {
     use super::theme;
     use iced::Color;
 
@@ -418,7 +418,8 @@ pub fn track_row<'a>(app: &App, ix: usize, track: &Track, style: RowStyle, sourc
         r = r.push(container(number).center(NUM));
         let glyph = if playing && app.is_playing() { Icon::Pause } else { Icon::Play };
         let hover = container(icon_box(glyph, 15.0, NUM, theme::text(), play.clone())).center(NUM).style(move |_| container::Style {
-            background: Some(theme::ink(if playing { 0.12 } else { 0.08 }).into()),
+            // Opaque: it covers the number (or the playing bars) under it.
+            background: Some(if playing { theme::active() } else { theme::hover() }.into()),
             border: Border { radius: scale::R_SM.into(), ..Default::default() },
             ..Default::default()
         });
@@ -517,7 +518,7 @@ pub fn track_row<'a>(app: &App, ix: usize, track: &Track, style: RowStyle, sourc
     let area = mouse_area(container(washed).padding([2, 0]))
         .on_double_click(play)
         .on_middle_press(Message::AddToQueue(track.clone(), false))
-        .on_right_press(Message::Row(RowMsg::Menu(ix, track.id, menu)));
+        .on_right_press(Message::Row(RowMsg::Menu(ix, track.id, Box::new(menu))));
     let area = match own {
         Some(uuid) => {
             let area = area.on_press(Message::Row(RowMsg::Grab(uuid, ix)));
