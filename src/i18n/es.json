@@ -757,5 +757,13 @@
   "close": "Cerrar",
   "stream": "Transmisión",
   "local.rescan": "Buscar archivos nuevos en las carpetas",
-  "local.tracks_count": "{0} pistas en la biblioteca"
+  "local.tracks_count": "{0} pistas en la biblioteca",
+  "lossless.group": "Calidad sin pérdida",
+  "lossless.title": "Streams sin pérdida y Hi-Res",
+  "lossless.desc": "TIDAL solo envía FLAC a las sesiones iniciadas en la web. Inicia sesión allí y pega la dirección de la página en la que termina TIDAL (puede decir que no se puede abrir).",
+  "lossless.start": "Iniciar sesión en la web",
+  "lossless.paste": "Pega la dirección final (empieza por https://tidal.com/android/login/auth)",
+  "lossless.finish": "Confirmar",
+  "lossless.done": "Sesión sin pérdida activa: las pistas nuevas suenan en FLAC",
+  "lossless.failed": "El inicio de sesión web falló"
 }

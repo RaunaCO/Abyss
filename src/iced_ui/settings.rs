@@ -857,10 +857,37 @@ fn account(app: &App) -> Element<'_, Message> {
         setting(crate::i18n::t("account"), None, small_button(crate::i18n::t("sign_in_to_tidal"), true, Message::StartLogin))
     };
     let more = vec![link("notification_settings"), link("change_password"), session];
+    // Lossless: TIDAL serves FLAC only to sessions signed in on the web (Android client).
+    let mut lossless = vec![setting(
+        crate::i18n::t("lossless.title"),
+        Some(crate::i18n::t("lossless.desc").to_string()),
+        small_button(crate::i18n::t("lossless.start"), true, Message::LosslessStart),
+    )];
+    if app.lossless_login.is_some() {
+        let field = text_input(crate::i18n::t("lossless.paste"), &app.lossless_paste)
+            .on_input(Message::LosslessPaste)
+            .on_submit(Message::LosslessFinish)
+            .padding([8, 10])
+            .size(13)
+            .width(Length::Fill);
+        lossless.push(
+            row![field, small_button(crate::i18n::t("lossless.finish"), true, Message::LosslessFinish)]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .padding([10.0, ROW_X])
+                .into(),
+        );
+    }
+    match &app.lossless_status {
+        Some(Ok(())) => lossless.push(setting(crate::i18n::t("lossless.done"), None, Space::new().into())),
+        Some(Err(e)) => lossless.push(setting(crate::i18n::t("lossless.failed"), Some(e.clone()), Space::new().into())),
+        None => {}
+    }
     column![
         group(Icon::Artist, crate::i18n::t("profile"), "", vec![profile_card]),
         group(Icon::Edit, crate::i18n::t("personal_details"), crate::i18n::t("your_tidal_account_information"), personal),
         group(Icon::Settings, crate::i18n::t("subscription"), "", subscription),
+        group(Icon::Settings, crate::i18n::t("lossless.group"), "", lossless),
         group(Icon::SignOut, crate::i18n::t("security_and_session"), "", more),
     ]
     .spacing(GROUP_GAP)

@@ -514,6 +514,33 @@ impl App {
 
             // ------------------------------------------------ session
             Message::StartLogin => self.start_login(),
+            Message::LosslessStart => {
+                let login = self.tidal.start_pkce_login();
+                let _ = open::that(&login.url);
+                self.lossless_login = Some(login);
+                self.lossless_paste.clear();
+                self.lossless_status = None;
+                Task::none()
+            }
+            Message::LosslessPaste(text) => {
+                self.lossless_paste = text;
+                Task::none()
+            }
+            Message::LosslessFinish => {
+                let Some(login) = self.lossless_login.clone() else { return Task::none() };
+                let pasted = self.lossless_paste.clone();
+                self.fetch(
+                    move |t| t.finish_pkce_login(&login, &pasted),
+                    |app, r| {
+                        app.lossless_status = Some(r.map_err(|e| format!("{e:#}")));
+                        if app.lossless_status.as_ref().is_some_and(Result::is_ok) {
+                            app.lossless_login = None;
+                            app.lossless_paste.clear();
+                        }
+                        Task::none()
+                    },
+                )
+            }
             Message::CancelLogin => {
                 self.login = super::LoginState::Idle;
                 Task::none()

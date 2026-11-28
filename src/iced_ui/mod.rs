@@ -189,6 +189,11 @@ pub struct App {
     pub settings: Arc<Mutex<Settings>>,
     pub signed_in: bool,
     pub login: LoginState,
+    /// The web sign-in that gives this account lossless streams (Settings > Account):
+    /// the pending login, what was pasted, and the last outcome.
+    pub lossless_login: Option<crate::tidal::PkceLogin>,
+    pub lossless_paste: String,
+    pub lossless_status: Option<Result<(), String>>,
     pub login_busy: bool,
     pub welcome_step: Option<usize>,
 
@@ -582,6 +587,10 @@ pub enum Message {
 
     // Session.
     StartLogin,
+    /// Open TIDAL's web sign-in for lossless streams.
+    LosslessStart,
+    LosslessPaste(String),
+    LosslessFinish,
     CancelLogin,
     WelcomeNext,
     WelcomeSkip,
@@ -687,6 +696,9 @@ impl App {
             settings,
             signed_in,
             login: LoginState::Idle,
+            lossless_login: None,
+            lossless_paste: String::new(),
+            lossless_status: None,
             login_busy: false,
             welcome_step: (!s.welcome_complete).then_some(0),
             page: Page::Home,

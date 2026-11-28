@@ -988,7 +988,14 @@ impl Tidal {
         if let Ok(v) = self.get_json(&format!("{API_URL}/sessions"), &[]) {
             out.push(format!("session client: {}", v.get("client").map(|c| c.to_string()).unwrap_or_default()));
         }
-        for ep in ["playbackinfo"] {
+        let uid = self.settings.lock().user_id;
+        if let Some(uid) = uid {
+            match self.get_json(&format!("{API_URL}/users/{uid}/subscription"), &[]) {
+                Ok(v) => out.push(format!("subscription: {}", v)),
+                Err(e) => out.push(format!("subscription ERR {e:#}")),
+            }
+        }
+        for ep in ["playbackinfo", "playbackinfopostpaywall"] {
             for device in [None] {
                 for q in ["HI_RES", "LOSSLESS", "HI_RES_LOSSLESS", "HIGH"] {
                     let url = format!("{API_URL}/tracks/{track_id}/{ep}");

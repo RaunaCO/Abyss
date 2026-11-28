@@ -7,6 +7,14 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
+## [1.8.2]
+
+- Lossless again: sessions created with the TV (device-code) sign-in now get
+  only AAC 320 kbps from TIDAL for every quality, even with a HiFi/Max plan.
+  Settings > Account > Lossless quality signs in on the web (the flow whose
+  sessions TIDAL serves FLAC and Hi-Res) and replaces the session. `--probe`
+  also prints the plan's highest quality and both playback endpoints.
+
 ## [1.8.1]
 
 - Star ratings no longer disappear after a forced close or an install over a
