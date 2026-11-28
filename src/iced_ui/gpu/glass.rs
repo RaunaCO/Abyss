@@ -157,15 +157,15 @@ pub struct Optics {
 impl Optics {
     /// Large panels: headers, the featured card, the inline album, Replay.
     pub const PANEL: Optics =
-        Optics { refraction: 72.0, bevel: 52.0, dispersion: 0.48, frost: 0.55, tint: 0.40, specular: 1.15, sheen: 1.1, magnify: 0.06 };
+        Optics { refraction: 60.0, bevel: 52.0, dispersion: 0.30, frost: 0.55, tint: 0.40, specular: 1.15, sheen: 1.1, magnify: 0.06 };
     /// A panel over the full-screen artwork (Now Playing's queue, similar and
     /// credits): the panel's lens with a little more frost, so the dimmest
     /// text (times, 11 px) keeps AA over a bright photograph.
     pub const OVER_ART: Optics =
-        Optics { refraction: 72.0, bevel: 52.0, dispersion: 0.48, frost: 0.9, tint: 0.52, specular: 1.15, sheen: 1.1, magnify: 0.06 };
+        Optics { refraction: 60.0, bevel: 52.0, dispersion: 0.30, frost: 0.9, tint: 0.52, specular: 1.15, sheen: 1.1, magnify: 0.06 };
     /// The player bar (68 px tall: a narrower lens).
     pub const BAR: Optics =
-        Optics { refraction: 40.0, bevel: 30.0, dispersion: 0.44, frost: 0.8, tint: 0.26, specular: 1.0, sheen: 1.0, magnify: 0.04 };
+        Optics { refraction: 40.0, bevel: 30.0, dispersion: 0.36, frost: 0.8, tint: 0.16, specular: 1.0, sheen: 1.0, magnify: 0.04 };
     /// Menus, popovers and tooltips: more frost and tint, they sit over text.
     pub const POPOVER: Optics =
         Optics { refraction: 30.0, bevel: 22.0, dispersion: 0.39, frost: 1.6, tint: 0.62, specular: 1.0, sheen: 0.9, magnify: 0.03 };
@@ -218,8 +218,10 @@ pub enum Kind {
     /// `lights`: the cover's three colours and the seconds elapsed, drawn as
     /// slowly drifting glows instead of the scene (album pages).
     Wash { top: f32, height: f32, alpha: f32, lights: Option<([Color; 3], f32)> },
-    /// The colour field behind the enlarged cover, fitted to the whole window.
-    CoverBackdrop,
+    /// The colour field behind the enlarged cover, fitted to the whole window:
+    /// the cover itself, very soft, with its colours drifting over it as
+    /// lights (`lights`: colours and the ambient clock), toned and vignetted.
+    CoverBackdrop { lights: Option<([Color; 3], f32)> },
 }
 
 /// The album banner (the page wash's drifting glows), as panes over it see
@@ -438,19 +440,25 @@ fn scene_at(sp: vec2<f32>, lod: f32) -> vec3<f32> {
         return mix(u.page_bg.rgb, b.rgb, b.a * u.page.z);
     }
     if (u.bar_y.w > 0.5) {
-        let uv = flow((sp - u.rect.xy) / max(u.rect.zw, vec2<f32>(1.0)), u.page.w, vec2<f32>(0.032, 0.2));
+        // The player bar: the cover's colours (see `bar_palette`) as three
+        // lights carried by the current, mixed in OKLab (two opposite hues
+        // meet through colour, not grey) with squared weights so each keeps
+        // a region of its own.
+        let uv = flow((sp - u.rect.xy) / max(u.rect.zw, vec2<f32>(1.0)), u.page.w, vec2<f32>(0.05, 0.24));
         var sum = vec3<f32>(0.0);
         var weight = 0.0;
+        var reach = 0.0;
         for (var i = 0u; i < 3u; i++) {
             let light = u.bar_colors[i];
-            let d = (uv - vec2<f32>(light.w, u.bar_y[i])) * vec2<f32>(3.5, 0.85);
+            let d = (uv - vec2<f32>(light.w, u.bar_y[i])) * vec2<f32>(3.2 / u.page_bg[i], 0.85);
             let w = exp(-dot(d, d));
-            sum += w * light.rgb;
-            weight += w;
+            sum += w * w * oklab(to_linear(light.rgb));
+            weight += w * w;
+            reach += w;
         }
-        let palette = sum / max(weight, 0.001);
-        let strength = select(0.64, 0.36, u.tint.w > 0.5);
-        return mix(u.tint.rgb, mix(palette, vec3<f32>(1.0), 0.065), strength * (1.0 - exp(-1.65 * weight)));
+        let palette = clamp(to_srgb(from_oklab(sum / max(weight, 0.0001))), vec3<f32>(0.0), vec3<f32>(1.0));
+        let strength = select(0.86, 0.40, u.tint.w > 0.5);
+        return mix(u.tint.rgb, palette, strength * (1.0 - exp(-2.2 * reach)));
     }
     let m = max(u.screen.x, u.screen.y);
     let uv = (sp - u.screen.xy * 0.5) / m + vec2<f32>(0.5, 0.5);
@@ -473,9 +481,36 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let light_theme = u.tint.w > 0.5;
 
     if (u.screen.w > 1.5) {
-        let uv = (p - u.rect.xy) / max(u.rect.zw, vec2<f32>(1.0));
-        let color = textureSampleLevel(tex, samp, uv, 1.0).rgb;
-        return finish(mix(vec3<f32>(0.035), color, 0.50), 1.0, p);
+        // Behind the enlarged cover: the cover itself, as soft as it gets and
+        // covering the window, carried by the current; its colours drifting
+        // over it; then toned down in OKLab lightness (chroma mostly kept,
+        // so a colour stays a colour and a black-and-white cover stays a
+        // composition of its own greys) with a vignette that gives it depth.
+        let at = (p - u.rect.xy) / max(u.rect.zw, vec2<f32>(1.0));
+        let aspect = u.rect.zw / max(u.rect.z, u.rect.w);
+        let fp = flow(at, u.page.w * 0.6, vec2<f32>(0.035, 0.035));
+        let cuv = (fp - vec2<f32>(0.5)) * aspect / 1.12 + vec2<f32>(0.5);
+        var col = textureSampleLevel(tex, samp, cuv, 3.0).rgb;
+        if (u.bar_y.w > 0.5) {
+            var sum = vec3<f32>(0.0);
+            var weight = 0.0;
+            var reach = 0.0;
+            for (var i = 0u; i < 3u; i++) {
+                let light = u.bar_colors[i];
+                let d = (fp - vec2<f32>(light.w, u.bar_y[i])) * aspect / u.page_bg[i];
+                let w = exp(-dot(d, d));
+                sum += w * w * oklab(to_linear(light.rgb));
+                weight += w * w;
+                reach += w;
+            }
+            let lights = clamp(to_srgb(from_oklab(sum / max(weight, 0.0001))), vec3<f32>(0.0), vec3<f32>(1.0));
+            col = mix(col, lights, 0.30 * (1.0 - exp(-1.6 * reach)));
+        }
+        var lab = oklab(to_linear(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0))));
+        let corner = smoothstep(0.25, 0.9, length((at - vec2<f32>(0.5)) * vec2<f32>(1.0, aspect.y / aspect.x * 1.4)));
+        let k = 0.60 * (1.0 - 0.55 * corner);
+        lab = vec3<f32>(lab.x * k, lab.yz * mix(1.0, k, 0.4));
+        return finish(clamp(to_srgb(from_oklab(lab)), vec3<f32>(0.0), vec3<f32>(1.0)), 1.0, p);
     }
     if (u.screen.w > 0.5) {
         // The page wash.
@@ -516,7 +551,9 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let base = center + q * (1.0 - u.scene.z);
     let off = -n * u.shape.z * k;
     let disp = u.shape.w;
-    let lod = max(u.look.x - 0.9 * k, 0.0);
+    // Sharper toward the rim, but never the sharpest level: a photograph's
+    // fine detail, bent and split into red and blue there, read as noise.
+    let lod = max(u.look.x - 0.9 * k, min(u.look.x, 0.8));
     let cr = scene_at(base + off * (1.0 + disp), lod).r;
     let cg = scene_at(base + off, lod).g;
     let cb = scene_at(base + off * (1.0 - disp), lod).b;
@@ -529,7 +566,10 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         }
     }
     if (u.scene.w < 0.5) {
-        col = u.tint.rgb;
+        // Nothing behind (the chrome): the pane's own body, a touch lighter
+        // at its top than at its foot, so it reads as a lens, not a grey slab.
+        let yy0 = clamp((p.y - u.rect.y) / max(u.rect.w, 1.0), 0.0, 1.0);
+        col = u.tint.rgb * select(1.10 - 0.22 * yy0, 1.0 - 0.04 * yy0, light_theme);
     }
     // Over the album banner the pane is lit by it: thinner frost so its
     // colour comes through, and the light caught in the edges takes the
@@ -605,7 +645,9 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     col = mix(col, u.rim.rgb, u.rim.a * stroke);
     let band = 1.0 - smoothstep(0.6 * scale, 2.2 * scale, -d);
     let rim_lit = (select(0.30, 0.8, light_theme) + 0.04 * hover + 0.03 * press) * spec;
-    let edge = band * rim_lit * (0.33 + 0.67 * pow(lit, 1.5));
+    // Bright on the edge facing the light, nearly gone on the far side: a
+    // pane catches light, it is not framed in white.
+    let edge = band * rim_lit * (0.12 + 0.88 * pow(lit, 1.5));
     let gs = sigma * 0.6;
     let glint = band * exp(-dist * dist / (2.0 * gs * gs)) * hover * 0.28 * u.look.w;
     col = mix(col, spec_c, clamp(edge + glint, 0.0, 1.0));
@@ -860,6 +902,10 @@ pub fn uniforms(primitive: &GlassPrimitive, bounds: &Rectangle, physical: (f32, 
             u.extra[3] = opacity.clamp(0.0, 1.0);
             if let Some((colors, elapsed)) = bar_light {
                 let centers = if album_light { wash_centers(elapsed) } else { bar_centers(elapsed) };
+                if !album_light {
+                    let k = bar_sizes(elapsed);
+                    u.page_bg = [k[0], k[1], k[2], 1.0];
+                }
                 u.bar_colors = std::array::from_fn(|i| [colors[i].r, colors[i].g, colors[i].b, centers[i][0]]);
                 let mode = if album_light { 3.0 } else { 1.0 };
                 // The band's lights sit near its top; in a pane they spread over its height.
@@ -892,16 +938,23 @@ pub fn uniforms(primitive: &GlassPrimitive, bounds: &Rectangle, physical: (f32, 
                 u.scene[3] = 1.0;
             }
         }
-        Kind::CoverBackdrop => {
+        Kind::CoverBackdrop { lights } => {
             u.rect = [px(bounds.x), px(bounds.y), px(bounds.width), px(bounds.height)];
             u.screen[3] = 2.0;
+            if let Some((colors, elapsed)) = lights {
+                let spots = super::backdrop::light_spots(elapsed);
+                u.bar_colors = std::array::from_fn(|i| [colors[i].r, colors[i].g, colors[i].b, spots[i][0]]);
+                u.bar_y = [spots[0][1], spots[1][1], spots[2][1], 1.0];
+                u.page_bg = [spots[0][2], spots[1][2], spots[2][2], 1.0];
+                u.page[3] = elapsed;
+            }
         }
     }
     u
 }
 
 /// OKLab of an sRGB colour: lightness, then the a / b axes.
-fn to_oklab(c: Color) -> [f32; 3] {
+pub fn to_oklab(c: Color) -> [f32; 3] {
     let lin = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
     let (r, g, b) = (lin(c.r), lin(c.g), lin(c.b));
     let l = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).max(0.0).cbrt();
@@ -912,6 +965,11 @@ fn to_oklab(c: Color) -> [f32; 3] {
         1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
         0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
     ]
+}
+
+/// The sRGB colour of OKLab coordinates (clipped into the gamut).
+pub fn from_oklab([l, a, b]: [f32; 3]) -> Color {
+    from_oklch(l, a.hypot(b), b.atan2(a))
 }
 
 /// The sRGB colour of OKLCh lightness `l`, chroma `c` and hue `h` (radians),
@@ -973,14 +1031,14 @@ pub fn banner_palette(palette: [Color; 3], light_theme: bool) -> [Color; 3] {
                 // A dark orange or yellow is brown or olive: beside a warm
                 // colour the shade is a warm graphite instead.
                 let lead_deg = hue(lead).to_degrees().rem_euclid(360.0);
-                let warm_lead = (35.0..115.0).contains(&lead_deg);
+                let warm_lead = (35.0..125.0).contains(&lead_deg);
                 let c = lead_c.min(max_c) * if warm_lead { 0.18 } else { 0.6 };
                 from_oklch(if warm_lead { shade + 0.04 } else { shade }, c, hue(lead))
             }
         } else {
-            // Orange and yellow darkened turn brown: they keep more light.
+            // Orange, yellow and olive darkened turn brown or mud: they keep more light.
             let deg = hue(i).to_degrees().rem_euclid(360.0);
-            let warm = (35.0..115.0).contains(&deg);
+            let warm = (35.0..125.0).contains(&deg);
             let low = if warm && !light_theme { 0.64 } else { low };
             let l = if one_hue {
                 // The tones spread over a luminous band, darkest at its foot
@@ -1000,6 +1058,47 @@ pub fn banner_palette(palette: [Color; 3], light_theme: bool) -> [Color; 3] {
             };
             from_oklch(l, chroma(i).min(max_c), hue(i))
         }
+    })
+}
+
+/// The player bar's three lights from a cover's palette. The bar sits under
+/// white text, so each colour is brought into a band of lightness where it
+/// glows and the text still reads, by moving its OKLab lightness only: hue
+/// and chroma stay the cover's (chroma capped, never raised). Darkening an
+/// sRGB colour toward black instead (as before) took the chroma with it and
+/// turned a vivid red or orange cover into a dim brown. Warm hues keep more
+/// light (darkened they are brown). Colours of one hue spread over the band
+/// by their own lightness, and the greys of a black-and-white cover keep
+/// their tones (graphite to smoke), so a single-hue or monochrome cover still
+/// shows light moving across the bar. Never a hue the cover lacks.
+pub fn bar_palette(palette: [Color; 3], light_theme: bool) -> [Color; 3] {
+    let lab = palette.map(to_oklab);
+    let chroma = |i: usize| lab[i][1].hypot(lab[i][2]);
+    let hue = |i: usize| lab[i][2].atan2(lab[i][1]);
+    let deg = |i: usize| hue(i).to_degrees().rem_euclid(360.0);
+    let warm = |i: usize| (35.0..125.0).contains(&deg(i));
+    let (lo, hi) = (lab.iter().map(|c| c[0]).fold(1.0, f32::min), lab.iter().map(|c| c[0]).fold(0.0, f32::max));
+    let spread = (hi - lo).max(0.0001);
+    // Where a colour sits among the cover's three, by lightness (0 darkest).
+    let rank = |i: usize| if hi - lo < 0.03 { [0.7, 0.3, 0.5][i] } else { (lab[i][0] - lo) / spread };
+    let lead = (0..3).max_by(|&a, &b| chroma(a).total_cmp(&chroma(b))).unwrap_or(0);
+    let one_hue = (0..3).all(|i| {
+        let d = (hue(i) - hue(lead)).to_degrees().rem_euclid(360.0);
+        chroma(i) < 0.035 || d.min(360.0 - d) < 25.0
+    });
+    std::array::from_fn(|i| {
+        let c = chroma(i);
+        if light_theme {
+            let l = 0.80 + 0.10 * rank(i);
+            return from_oklch(l, c.min(0.12), hue(i));
+        }
+        if c < 0.035 {
+            // A grey: its own tone, from graphite to smoke.
+            return from_oklch(0.27 + 0.28 * rank(i), c, hue(i));
+        }
+        let (floor, top) = if warm(i) { (0.50, 0.64) } else { (0.38, 0.58) };
+        let l = if one_hue { floor + (top - floor) * rank(i) } else { lab[i][0].clamp(floor, top) };
+        from_oklch(l, c.min(0.19), hue(i))
     })
 }
 
@@ -1031,14 +1130,52 @@ pub(super) fn wash_centers(elapsed: f32) -> [[f32; 2]; 3] {
     })
 }
 
-/// Independent smooth paths through pseudorandom points, with no common period.
-pub(super) fn bar_centers(elapsed: f32) -> [[f32; 2]; 3] {
+/// A pseudorandom value in 0..1 for step `i` of a path.
+fn hash01(i: i64, seed: u32) -> f32 {
+    let mut value = (i as u32).wrapping_mul(0x9e37_79b9).wrapping_add(seed);
+    value = (value ^ (value >> 16)).wrapping_mul(0x85eb_ca6b);
+    value = (value ^ (value >> 13)).wrapping_mul(0xc2b2_ae35);
+    ((value ^ (value >> 16)) >> 8) as f32 / 16_777_215.0
+}
+
+/// A path through pseudorandom points in 0..1 with continuous speed
+/// (Catmull-Rom): it never halts at the points, as a smoothstep walk did
+/// (every light stopped dead every few seconds, a mechanical pulse).
+pub(super) fn wander(time: f32, seed: u32) -> f32 {
+    let i = time.floor() as i64;
+    let f = time - time.floor();
+    let [p0, p1, p2, p3] = [-1, 0, 1, 2].map(|k| hash01(i + k, seed));
+    let (f2, f3) = (f * f, f * f * f);
+    let v = 0.5 * (2.0 * p1 + (p2 - p0) * f + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * f2 + (3.0 * p1 - p0 - 3.0 * p2 + p3) * f3);
+    v.clamp(0.0, 1.0)
+}
+
+/// The current's uneven pace: time that swells and eases (three slow,
+/// unrelated periods; always forward, between 0.2 and 1.8 times real time).
+pub fn pace(t: f32) -> f32 {
+    t + 2.8 * (t * 0.137).sin() + 1.9 * (t * 0.089 + 1.7).sin() + 1.1 * (t * 0.229 + 4.1).sin()
+}
+
+/// The player bar's three lights: each wanders around its own part of the
+/// bar (left, middle, right, overlapping so they can pass each other) on a
+/// continuous path at an uneven pace, so all three colours always show and
+/// the bar never settles into a rhythm. About 40 px/s typical at 1440 px,
+/// rarely over 200.
+pub(crate) fn bar_centers(elapsed: f32) -> [[f32; 2]; 3] {
+    let s = pace(elapsed);
     std::array::from_fn(|i| {
         let seed = 317 * i as u32;
-        let x = drift(elapsed / [4.3, 5.7, 5.0][i], 113 + seed, [0.12, 0.50, 0.88][i]);
-        let y = drift(elapsed / [3.1, 4.6, 3.9][i], 593 + seed, [0.22, 0.76, 0.32][i]);
-        [0.05 + 0.90 * x, y]
+        let x = wander(s / [4.8, 5.8, 5.3][i], 113 + seed);
+        let y = wander(s / [3.9, 4.7, 4.3][i], 593 + seed);
+        [[0.18, 0.50, 0.82][i] + 0.60 * (x - 0.5), 0.1 + 0.8 * y]
     })
+}
+
+/// How wide each bar light is (1 = its usual size): they swell and shrink
+/// slowly, so which colour leads keeps changing over a song.
+pub(super) fn bar_sizes(elapsed: f32) -> [f32; 3] {
+    let s = pace(elapsed * 0.8);
+    std::array::from_fn(|i| 0.75 + 0.55 * wander(s / [7.7, 9.1, 8.3][i], 941 + 131 * i as u32))
 }
 
 impl shader::Primitive for GlassPrimitive {
