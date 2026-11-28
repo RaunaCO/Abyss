@@ -215,7 +215,7 @@ pub fn ambient_moving() -> bool {
     if crate::shared::lyrics::reduced_motion() {
         return false;
     }
-    PLAYING.load(std::sync::atomic::Ordering::Relaxed) || CLOCK.lock().map_or(false, |c| c.rate > 0.0)
+    PLAYING.load(std::sync::atomic::Ordering::Relaxed) || CLOCK.lock().is_ok_and(|c| c.rate > 0.0)
 }
 
 /// The colours the player bar shows: the given palette (itself cross-faded

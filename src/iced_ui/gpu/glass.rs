@@ -157,12 +157,12 @@ pub struct Optics {
 impl Optics {
     /// Large panels: headers, the featured card, the inline album, Replay.
     pub const PANEL: Optics =
-        Optics { refraction: 60.0, bevel: 52.0, dispersion: 0.30, frost: 0.55, tint: 0.40, specular: 1.15, sheen: 1.1, magnify: 0.06 };
+        Optics { refraction: 60.0, bevel: 52.0, dispersion: 0.30, frost: 1.1, tint: 0.40, specular: 1.15, sheen: 1.1, magnify: 0.06 };
     /// A panel over the full-screen artwork (Now Playing's queue, similar and
     /// credits): the panel's lens with a little more frost, so the dimmest
     /// text (times, 11 px) keeps AA over a bright photograph.
     pub const OVER_ART: Optics =
-        Optics { refraction: 60.0, bevel: 52.0, dispersion: 0.30, frost: 0.9, tint: 0.52, specular: 1.15, sheen: 1.1, magnify: 0.06 };
+        Optics { refraction: 60.0, bevel: 52.0, dispersion: 0.30, frost: 1.4, tint: 0.52, specular: 1.15, sheen: 1.1, magnify: 0.06 };
     /// The player bar (68 px tall: a narrower lens).
     pub const BAR: Optics =
         Optics { refraction: 40.0, bevel: 30.0, dispersion: 0.36, frost: 0.8, tint: 0.16, specular: 1.0, sheen: 1.0, magnify: 0.04 };
