@@ -236,13 +236,14 @@ impl Lyrics {
     fn layout_key(&self, width: f32) -> (u64, u32, u32, u32) {
         (
             self.doc.generation,
-            (width * 4.0) as u32,
+            layout_width(width) as u32,
             (self.style.font * 100.0) as u32,
             u32::from(self.reading_first) | ((self.style.kind == Kind::Side) as u32) << 1,
         )
     }
 
     fn build_layout(&self, width: f32) -> Layout {
+        let width = layout_width(width);
         let st = &self.style;
         let max_text_w = (width - st.left - st.right - 2.0 * st.pad_x).max(40.0);
         let mut fs = iced::advanced::graphics::text::font_system().write().expect("font system");
@@ -353,6 +354,15 @@ impl Lyrics {
         }
         follow_target(top, height, self.style.follow_fraction, (layout.content_h - height).max(0.0))
     }
+}
+
+/// The width the lines are wrapped for: whole steps of 8 px below the
+/// widget's. Dragging the side panel's edge changes the width every frame;
+/// each new width re-shapes every line and re-rasterises and re-blurs the
+/// ones that wrap differently, so it now happens once per 8 px (the text
+/// keeps at most 8 px more of the right margin meanwhile).
+fn layout_width(width: f32) -> f32 {
+    (width / 8.0).floor() * 8.0
 }
 
 /// Lines of `text` wrapped at `max_w` (logical px): (row text, row width).
