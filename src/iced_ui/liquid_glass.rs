@@ -994,6 +994,8 @@ mod tests {
     #[test]
     #[ignore = "requires a wgpu adapter; renders offscreen"]
     fn glass_refracts_and_disperses_the_scene_offscreen() {
+        // The strips test drives the same forced clock.
+        let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         use iced::advanced::renderer::Headless;
         let mut renderer =
             iced::futures::executor::block_on(<iced::Renderer as Headless>::new(super::super::INTER, iced::Pixels(16.0), None))
