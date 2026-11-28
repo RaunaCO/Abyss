@@ -7,6 +7,13 @@
 //!    atomically after every successful save (read if the database cannot be);
 //! 3. a journal of changes the database refused for now (busy, unavailable),
 //!    replayed with the next change, on a timer and at start.
+//!
+//! The database is the only truth. Several copies of Abyss may run at once
+//! (an install over a running one, a second launch): after every save the
+//! ratings in memory and the mirror are taken back from the database, so one
+//! copy never shows, nor writes into the mirror, a stale picture of the other's
+//! changes. When the database could not be read at start (still locked by a
+//! copy that is closing), the mirror stands in until a retry reads it.
 
 use std::{
     collections::HashMap,
@@ -123,6 +130,53 @@ mod tests {
         Ok(())
     }
 
+    /// Two copies of Abyss on the same data (an install over a running one, a
+    /// second launch): neither may make the other's ratings disappear, in the
+    /// database, in the mirror or on screen once it saves.
+    #[test]
+    fn two_copies_never_lose_each_others_ratings() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut a = Ratings::load_at(dir.path())?;
+        let mut b = Ratings::load_at(dir.path())?;
+        a.set_at(dir.path(), "track", 1, 8)?;
+        b.set_at(dir.path(), "track", 2, 6)?;
+        // B's save took A's rating back from the database.
+        assert_eq!((b.get(1), b.get(2)), (8, 6));
+        let mirror = read_snapshot(&dir.path().join(MIRROR)).expect("mirror");
+        assert_eq!(mirror.tracks.get("1"), Some(&8), "the mirror is the database, not B's stale memory");
+        a.set_at(dir.path(), "album", 3, 10)?;
+        assert_eq!((a.get(1), a.get(2), a.get_album(3)), (8, 6, 10));
+        let fresh = Ratings::load_at(dir.path())?;
+        assert_eq!((fresh.get(1), fresh.get(2), fresh.get_album(3)), (8, 6, 10));
+        Ok(())
+    }
+
+    /// A start while the database is locked (an old copy still closing) shows
+    /// the mirror, then reads the database once it is free, without waiting
+    /// for a new rating.
+    #[test]
+    fn a_start_on_a_locked_database_catches_up_when_it_is_free() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut first = Ratings::load_at(dir.path())?;
+        first.set_at(dir.path(), "track", 1, 8)?;
+        // The mirror is behind the database (as a copy that wrote it from stale memory would leave it).
+        storage::atomic_write(&dir.path().join(MIRROR), br#"{"tracks":{},"albums":{}}"#)?;
+        // Another connection holds the write lock longer than the start waits.
+        let mut lock = rusqlite::Connection::open(dir.path().join(storage::FILE))?;
+        let held = lock.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
+        let started = std::time::Instant::now();
+        let mut second = Ratings::load_at(dir.path())?;
+        assert!(started.elapsed() >= LOAD_PATIENCE - std::time::Duration::from_millis(100), "waited for the database");
+        assert_eq!(second.get(1), 0, "only the (stale) mirror was readable");
+        assert!(second.needs_retry());
+        held.rollback()?;
+        drop(lock);
+        assert!(second.retry_pending());
+        assert_eq!(second.get(1), 8, "caught up with the database");
+        assert!(!second.needs_retry());
+        Ok(())
+    }
+
     #[test]
     fn a_cleared_rating_stays_cleared_through_the_journal() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -187,6 +241,8 @@ pub struct Ratings {
     pending: HashMap<(bool, u64), u8>,
     /// Where they are stored (the profile's folder unless a test chose one).
     dir: Option<PathBuf>,
+    /// The database was read at start; false while the mirror stands in for it.
+    from_db: bool,
 }
 
 /// How a change was kept.
@@ -217,8 +273,26 @@ fn kind_name(album: bool) -> &'static str {
     }
 }
 
-/// Writes `changes` in one transaction: all of them or none.
-fn store(dir: &Path, changes: &[((bool, u64), u8)]) -> Result<()> {
+/// Every rating in the database.
+fn read_all(tx: &Transaction<'_>) -> Result<(HashMap<u64, u8>, HashMap<u64, u8>)> {
+    let mut stmt = tx.prepare("SELECT kind, id, halves FROM ratings")?;
+    let mut rows = stmt.query([])?;
+    let (mut tracks, mut albums) = (HashMap::new(), HashMap::new());
+    while let Some(row) = rows.next()? {
+        let kind: String = row.get(0)?;
+        let id = row.get::<_, String>(1)?.parse()?;
+        if kind == "album" { &mut albums } else { &mut tracks }.insert(id, row.get(2)?);
+    }
+    Ok((tracks, albums))
+}
+
+/// How long a start waits for a database another copy of Abyss is still
+/// writing (closing, or an installer replacing it) before using the mirror.
+const LOAD_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Writes `changes` in one transaction (all of them or none) and returns every
+/// rating the database holds afterwards.
+fn store(dir: &Path, changes: &[((bool, u64), u8)]) -> Result<(HashMap<u64, u8>, HashMap<u64, u8>)> {
     storage::transaction(dir, |tx| {
         prepare(tx, dir)?;
         for &((album, id), halves) in changes {
@@ -233,7 +307,7 @@ fn store(dir: &Path, changes: &[((bool, u64), u8)]) -> Result<()> {
                 )?;
             }
         }
-        Ok(())
+        read_all(tx)
     })
 }
 
@@ -245,17 +319,10 @@ impl Ratings {
     /// The database first, or the mirror if it cannot be read; then the
     /// journal on top (the newest changes), flushed to the database when it can.
     fn load_at(dir: &Path) -> Result<Self> {
-        let from_db = storage::transaction(dir, |tx| {
+        let from_db = storage::transaction_waiting(dir, LOAD_PATIENCE, |tx| {
             prepare(tx, dir)?;
-            let mut stmt = tx.prepare("SELECT kind, id, halves FROM ratings")?;
-            let mut rows = stmt.query([])?;
-            let mut ratings = Self::default();
-            while let Some(row) = rows.next()? {
-                let kind: String = row.get(0)?;
-                let id = row.get::<_, String>(1)?.parse()?;
-                ratings.map(kind == "album").insert(id, row.get(2)?);
-            }
-            Ok(ratings)
+            let (tracks, albums) = read_all(tx)?;
+            Ok(Self { tracks, albums, from_db: true, ..Self::default() })
         });
         let db_ok = from_db.is_ok();
         let mut ratings = from_db.unwrap_or_else(|error| {
@@ -323,6 +390,12 @@ impl Ratings {
         !self.pending.is_empty()
     }
 
+    /// Whether the timer should call [`Self::retry_pending`]: changes wait, or
+    /// the start had to show the mirror instead of the database.
+    pub fn needs_retry(&self) -> bool {
+        self.has_pending() || !self.from_db
+    }
+
     pub fn set(&mut self, track: u64, halves: u8) -> Result<Saved> {
         let dir = self.dir();
         self.set_at(&dir, "track", track, halves)
@@ -356,18 +429,27 @@ impl Ratings {
     /// Tries to move the waiting changes into the database (called on a
     /// timer); true when nothing waits any more.
     pub fn retry_pending(&mut self) -> bool {
-        if self.pending.is_empty() {
+        if self.pending.is_empty() && self.from_db {
             return true;
         }
         let dir = self.dir();
         self.flush(&dir).is_ok()
     }
 
+    /// Stores what waits (possibly nothing) and takes every rating back from
+    /// the database, which may also hold changes another copy of Abyss made.
     fn flush(&mut self, dir: &Path) -> Result<()> {
         let changes: Vec<_> = self.pending.iter().map(|(k, v)| (*k, *v)).collect();
-        if let Err(error) = store(dir, &changes) {
-            log::warn!("ratings: database busy or unavailable, {} change(s) kept in the journal: {error:#}", changes.len());
-            return Err(error);
+        match store(dir, &changes) {
+            Ok((tracks, albums)) => {
+                self.tracks = tracks;
+                self.albums = albums;
+                self.from_db = true;
+            }
+            Err(error) => {
+                log::warn!("ratings: database busy or unavailable, {} change(s) kept in the journal: {error:#}", changes.len());
+                return Err(error);
+            }
         }
         self.pending.clear();
         let _ = std::fs::remove_file(dir.join(PENDING));

@@ -24,6 +24,7 @@ mod scrobble;
 mod secure;
 #[allow(dead_code)]
 mod shared;
+mod single_instance;
 mod storage;
 #[allow(dead_code)]
 mod tidal;
@@ -294,6 +295,11 @@ fn main() {
         if std::env::var_os("WGPU_BACKEND").is_none() {
             std::env::set_var("WGPU_BACKEND", "dx12");
         }
+        // One copy per data folder: a second one would save over the first's
+        // ratings, queue and settings (single_instance.rs).
+        let Some(_instance) = single_instance::acquire(&config::config_dir()) else {
+            return;
+        };
         if let Err(error) = iced_ui::run() {
             log::error!("the interface could not start: {error}");
             let report = redact(&format!("Abyss could not start its window: {error}\n"));

@@ -1094,7 +1094,12 @@ impl App {
                 Task::none()
             }
             Message::CloseRequested | Message::WindowClose => {
-                log::info!("closing: saving the queue and the history");
+                log::info!("closing: saving the queue, the history and waiting ratings");
+                // A rating the database refused is already in the journal; try
+                // once more so the next start finds it in the database itself.
+                if self.ratings.has_pending() {
+                    self.ratings.retry_pending();
+                }
                 self.flush_history();
                 self.save_queue(true);
                 crate::local::flush_index(Duration::from_secs(5));

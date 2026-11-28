@@ -7,6 +7,18 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
+## [1.8.1]
+
+- Star ratings no longer disappear after a forced close or an install over a
+  running copy. Only one Abyss runs per profile: a second launch brings the
+  open window to the front, and a launch while the previous copy is closing
+  (an installer, for example) waits for it. After every save the ratings shown
+  and the JSON mirror are taken back from the database, so a copy with an older
+  picture can no longer overwrite the mirror. A start on a database that is
+  still locked waits up to 5 s, then shows the mirror only until the database
+  can be read again (retried every 10 s). Ratings still waiting in the journal
+  are saved once more on close.
+
 ## [1.8.0]
 
 - Moving and resizing the window is native: Windows decides where the title bar

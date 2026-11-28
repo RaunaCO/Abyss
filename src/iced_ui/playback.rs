@@ -561,9 +561,10 @@ impl App {
     pub(super) fn tick(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
         self.save_queue(false);
-        // Ratings the database refused (busy, unavailable) wait in a journal:
-        // try again every 10 s, never on every tick (a busy database blocks up to 750 ms).
-        if self.ratings.has_pending() {
+        // Ratings the database refused (busy, unavailable) wait in a journal,
+        // and a start that could only read the mirror reads the database again:
+        // every 10 s, never on every tick (a busy database blocks up to 750 ms).
+        if self.ratings.needs_retry() {
             static LAST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
             let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
             if last.is_none_or(|at| at.elapsed() >= Duration::from_secs(10)) {

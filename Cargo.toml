@@ -1,6 +1,6 @@
 [package]
 name = "tide"
-version = "1.8.0"
+version = "1.8.1"
 edition = "2021"
 description = "Abyss, an unofficial native TIDAL desktop client written in Rust with Iced and wgpu"
 license = "MIT"
