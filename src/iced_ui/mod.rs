@@ -37,6 +37,7 @@ mod tests;
 mod theme;
 mod wash;
 mod widgets;
+mod winhit;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::Receiver;
@@ -279,8 +280,6 @@ pub struct App {
     ctrl_held: bool,
     /// The last time something other than a timer happened (see `poll_ms`).
     active_at: Instant,
-    /// The last press on the title bar (to tell a double one).
-    title_press: Option<(Instant, Point)>,
     /// Side panel resize: where the pointer started and the width then.
     pub side_resize: Option<(f32, f32)>,
     pub queue_scroll: f32,
@@ -756,7 +755,6 @@ impl App {
             hwnd: None,
             ctrl_held: false,
             active_at: Instant::now(),
-            title_press: None,
             side_resize: None,
             queue_scroll: 0.0,
             queue_centred: None,
@@ -1043,10 +1041,16 @@ impl App {
                 self.viewport = size;
                 let media = window::run(id, |w| {
                     use raw_window_handle::RawWindowHandle;
-                    match w.window_handle().ok().map(|h| h.as_raw()) {
+                    let hwnd = match w.window_handle().ok().map(|h| h.as_raw()) {
                         Some(RawWindowHandle::Win32(h)) => Some(h.hwnd.get()),
                         _ => None,
+                    };
+                    // On the window's own thread: the system's hit test now
+                    // knows the caption and the resize borders (see `winhit`).
+                    if let Some(hwnd) = hwnd {
+                        winhit::install(hwnd);
                     }
+                    hwnd
                 })
                 .map(Message::MediaReady);
                 let scale = window::scale_factor(id).map(Message::WindowRescaled);
@@ -1323,7 +1327,7 @@ impl App {
         images::evict();
         // What the glass surfaces refract in this view.
         liquid_glass::update_scene(self);
-        let root = self.view_root();
+        let root = chrome::hit_map(self, self.view_root());
         self.perf_note(t0.elapsed());
         root
     }
