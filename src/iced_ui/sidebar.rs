@@ -258,7 +258,11 @@ pub fn view(app: &App, open: bool) -> Element<'_, Message> {
     )
     .padding(Padding { top: 8.0, bottom: 6.0, left: ROW_MX, right: ROW_MX });
 
-    let body = column![identity(open, lab), middle, account];
+    // The rail's logo row is part of the title bar (it moves the window);
+    // unfolded, the sidebar over the bar keeps the pointer (see `chrome`).
+    let top = container(identity(open, lab)).width(Length::Fill);
+    let top = if open { super::chrome::hole(top) } else { super::chrome::caption(top) };
+    let body = column![top, middle, account];
     let panel = container(body).width(Length::Fill).height(Length::Fill).clip(true).style(|_| container::Style {
         background: Some(theme::frame().into()),
         text_color: Some(theme::text()),
