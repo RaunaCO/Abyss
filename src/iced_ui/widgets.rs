@@ -280,8 +280,13 @@ pub fn faded_text(color: Color) -> impl Fn(&iced::Theme) -> text::Style {
 pub fn tip<'a>(content: impl Into<Element<'a, Message>>, label: &'a str) -> Element<'a, Message> {
     // After a short rest, so sweeping the pointer along a bar does not flash
     // a bubble on every icon it crosses.
+    // 6 px clear of the control; the tooltip keeps the bubble inside the
+    // window (`snap_within_viewport`), so at the right edge (the caption
+    // buttons) it slides left instead of being cut.
     iced::widget::tooltip(content, tip_bubble(label), iced::widget::tooltip::Position::Bottom)
+        .gap(6)
         .padding(0)
+        .snap_within_viewport(true)
         .delay(std::time::Duration::from_millis(450))
         .into()
 }
@@ -289,10 +294,65 @@ pub fn tip<'a>(content: impl Into<Element<'a, Message>>, label: &'a str) -> Elem
 /// The tooltips' bubble: GPUI's `sidebar::Tip` metrics (12 px text, 10 x 6
 /// padding, 7 px corners) on a small pane of glass.
 pub fn tip_bubble<'a>(label: impl text::IntoFragment<'a>) -> Element<'a, Message> {
-    super::liquid_glass::glass(container(text(label).size(theme::TYPE_LABEL).color(theme::text())).padding([6, 10]), 7.0)
+    let pane = super::liquid_glass::glass(container(text(label).size(theme::TYPE_LABEL).color(theme::text())).padding([6, 10]), 7.0)
         .optics(super::liquid_glass::Optics::POPOVER)
-        .shadow(theme::popover_shadow())
-        .into()
+        .shadow(theme::popover_shadow());
+    // Iced's tooltip draws its bubble with an infinite viewport; the glass
+    // pane draws its label in a layer clipped to that viewport, and a layer
+    // of infinite size drew nothing (an empty capsule). See [`Finite`].
+    // 6 px of air at the sides, so a bubble pushed against the window's
+    // edge (the caption buttons) does not touch it.
+    Element::new(Finite { content: container(pane).padding([0, 6]).into() })
+}
+
+/// Draws its content with a finite viewport (its own bounds and room for a
+/// shadow) when it is given an unbounded one, as overlays such as Iced's
+/// tooltip do: widgets that open a clipped layer of the viewport (the glass
+/// panes) then draw nothing.
+struct Finite<'a> {
+    content: Element<'a, Message>,
+}
+
+impl iced::advanced::Widget<Message, iced::Theme, iced::Renderer> for Finite<'_> {
+    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+        vec![iced::advanced::widget::Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn size(&self) -> iced::Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> iced::Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        self.content.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        let finite = viewport.width.is_finite() && viewport.height.is_finite() && viewport.x.is_finite() && viewport.y.is_finite();
+        let viewport = if finite { *viewport } else { layout.bounds().expand(48.0) };
+        self.content.as_widget().draw(&tree.children[0], renderer, theme, style, layout, cursor, &viewport);
+    }
 }
 
 /// 7728 -> "2:08:48"; 968 -> "16:08".
