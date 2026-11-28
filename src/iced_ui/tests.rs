@@ -662,3 +662,141 @@ fn the_tick_slows_down_when_nothing_waits_on_it() {
     drop(app.update(Message::SettingsTab(1)));
     assert_eq!(app.poll_ms(), POLL_ACTIVE_MS);
 }
+
+/// Hundreds of pages visited, searches typed and tracks played: the caches and
+/// the history stay bounded, and Back still finds its pages with their data.
+#[test]
+#[ignore = "requires an isolated profile (ABYSS_CONFIG_DIR, ABYSS_CACHE_DIR)"]
+fn caches_and_history_stay_bounded_after_much_browsing() {
+    let (mut app, tracks, album) = playing_app();
+    for round in 0..3u64 {
+        for i in 0..200u64 {
+            let id = 10_000 + round * 1000 + i;
+            drop(app.update(Message::Navigate(Page::Album(id))));
+            // What a finished load leaves behind.
+            app.albums.insert(id, Load::Ready((album.clone(), tracks.clone())));
+            app.album_extra.insert(id, Load::Ready((Vec::new(), Vec::new())));
+            drop(app.update(Message::Navigate(Page::Artist(id))));
+            drop(app.update(Message::Navigate(Page::Mix(format!("mix-{id}")))));
+            drop(app.update(Message::SearchInput(format!("query {id}"))));
+            app.search.insert(format!("query {id}"), Load::Ready(SearchResults::default()));
+            app.lyrics.insert(id, Load::Failed("none".into()));
+            app.credits.insert(id, Load::Ready(Vec::new()));
+        }
+        drop(app.update(Message::Tick));
+    }
+    let maps = [
+        ("albums", app.albums.len()),
+        ("album_extra", app.album_extra.len()),
+        ("artists", app.artists.len()),
+        ("mixes", app.mixes.len()),
+        ("search", app.search.len()),
+        ("lyrics", app.lyrics.len()),
+        ("credits", app.credits.len()),
+    ];
+    println!("after 1800 pages: {maps:?}, back {}, scroll memory {}", app.back.len(), app.scroll_memory.len());
+    // Kept: what the history can reach (HISTORY_CAP pages) plus the cap's slack.
+    for (name, n) in maps {
+        assert!(n <= HISTORY_CAP + CACHE_CAP, "{name}: {n} entries");
+    }
+    assert!(app.back.len() <= HISTORY_CAP && app.scroll_memory.len() <= HISTORY_CAP);
+    // Back: the pages are there with their data.
+    // (Each round visited an album, its artist, a mix: two steps back is the last album.)
+    drop(app.update(Message::Back));
+    drop(app.update(Message::Back));
+    let Page::Album(id) = app.page.clone() else { panic!("two steps back is an album: {:?}", app.page) };
+    assert!(matches!(app.albums.get(&id), Some(Load::Ready(_))), "the album a Back reaches keeps its data");
+    // The playing track's lyrics are kept.
+    let playing = app.now.as_ref().unwrap().track.id;
+    app.lyrics.insert(playing, Load::Failed("none".into()));
+    for i in 0..100 {
+        app.lyrics.insert(50_000 + i, Load::Failed("none".into()));
+    }
+    app.trim_caches();
+    assert!(app.lyrics.contains_key(&playing));
+}
+
+/// Back and Forward put a page where it was scrolled; a new visit starts at the top.
+#[test]
+#[ignore = "requires an isolated profile (ABYSS_CONFIG_DIR, ABYSS_CACHE_DIR)"]
+fn back_and_forward_restore_where_the_page_was_scrolled() {
+    let (mut app, _, album) = playing_app();
+    drop(app.update(Message::Navigate(Page::Album(album.id))));
+    drop(app.update(Message::PageScrolled(640.0, 700.0)));
+    drop(app.update(Message::Navigate(Page::MyTracks)));
+    assert_eq!(app.page_scroll, 0.0, "a new page starts at the top");
+    drop(app.update(Message::PageScrolled(120.0, 700.0)));
+    drop(app.update(Message::Back));
+    assert_eq!(app.page, Page::Album(album.id));
+    assert_eq!(app.page_scroll, 640.0, "Back returns to where the album was");
+    drop(app.update(Message::Forward));
+    assert_eq!(app.page, Page::MyTracks);
+    assert_eq!(app.page_scroll, 120.0, "and Forward to where the list was");
+    // Visiting the album anew (not through the history) starts at its top.
+    drop(app.update(Message::Navigate(Page::Album(album.id))));
+    assert_eq!(app.page_scroll, 0.0);
+    // The mouse's back button goes the same way.
+    drop(app.update(Message::MouseBack));
+    assert_eq!((app.page.clone(), app.page_scroll), (Page::MyTracks, 120.0));
+}
+
+/// Alt+Tab while dragging: the release never arrives, so losing the focus lets go.
+#[test]
+#[ignore = "requires an isolated profile (ABYSS_CONFIG_DIR, ABYSS_CACHE_DIR)"]
+fn losing_the_focus_lets_go_of_drags_and_ctrl() {
+    let (mut app, _, _) = playing_app();
+    app.snap.duration = 240.0;
+    drop(app.update(Message::Modifiers(keyboard::Modifiers::CTRL)));
+    assert!(app.ctrl_held);
+    drop(app.update(Message::ProgressDrag(0.5)));
+    assert_eq!(app.drag, Some(Drag::Progress));
+    drop(app.update(Message::Unfocused));
+    assert!(!app.ctrl_held, "Ctrl is not stuck (the wheel would zoom)");
+    assert_eq!(app.drag, None, "the progress is not frozen");
+    assert!((app.snap.position - 120.0).abs() < 0.5, "the drag ends where it was: {}", app.snap.position);
+    drop(app.update(Message::VolumeDrag(0.3)));
+    drop(app.update(Message::Unfocused));
+    assert_eq!(app.drag, None);
+    app.window = Some(iced::window::Id::unique());
+    app.side_resize = Some((900.0, 320.0));
+    drop(app.update(Message::Unfocused));
+    assert!(app.side_resize.is_none(), "the side panel edge is let go");
+    drop(app.update(Message::Tick));
+}
+
+/// Skipping through a queue fast: the last press wins, nothing stale plays.
+#[test]
+#[ignore = "requires an isolated profile (ABYSS_CONFIG_DIR, ABYSS_CACHE_DIR)"]
+fn skipping_fast_through_the_queue_lands_on_the_last_press() {
+    let (mut app, _, album) = playing_app();
+    let many: Vec<Track> = (0..60u64)
+        .map(|i| {
+            Track::parse(&json!({"id": 700 + i, "title": format!("T{i}"), "duration": 200, "allowStreaming": true,
+                "artist": {"id": 1, "name": "A"}, "album": {"id": album.id, "title": album.title}}))
+            .unwrap()
+        })
+        .collect();
+    drop(app.update(Message::PlayTracks(Arc::new(many), 0)));
+    let mut keys = Vec::new();
+    for _ in 0..40 {
+        drop(app.update(Message::Next));
+        keys.push(app.now.as_ref().unwrap().key);
+    }
+    let now = app.now.as_ref().unwrap();
+    assert_eq!(now.index, 40);
+    assert_eq!(now.track.id, 740);
+    assert!(keys.windows(2).all(|w| w[1] > w[0]), "every skip is a new play (stale stream answers are dropped by key)");
+    for _ in 0..5 {
+        drop(app.update(Message::Prev));
+    }
+    assert_eq!(app.now.as_ref().unwrap().index, 35);
+    // Removing a queued track before the playing one keeps it playing.
+    let first = app.queue[0].uid;
+    drop(app.update(Message::RemoveQueued(first)));
+    assert_eq!(app.now.as_ref().unwrap().index, 34);
+    assert_eq!(app.queue[34].track.id, app.now.as_ref().unwrap().track.id);
+    // The playing track cannot be removed from under itself.
+    let playing = app.queue[34].uid;
+    drop(app.update(Message::RemoveQueued(playing)));
+    assert_eq!(app.queue[34].uid, playing);
+}

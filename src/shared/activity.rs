@@ -1,9 +1,9 @@
 //! Is anybody there? The interface "rests" when nothing plays and nobody has
-//! touched the window for a while (or it is behind other windows): ambient
-//! motion (banner lights, liquid flow) then holds still, so an idle Abyss
-//! draws no frames at all instead of 8-20 a second for a picture nobody
-//! watches. Any input wakes it, and the motion continues from where it
-//! stopped ([`ambient_clock`] does not advance while resting).
+//! touched the window for a while (or it is behind other windows). Ambient
+//! motion comes to rest on its own (`motion` on the motion branch); this
+//! tells the interface when a rest ends, so the first input after one asks
+//! for a new view (a frame) even when the pointer moves over nothing that
+//! reacts. [`ambient_clock`] is a motion clock that does not advance while resting.
 //!
 //! Fed by the interface: [`input`] on every keyboard / mouse / touch event,
 //! [`set_playing`] from the tick, [`set_focused`] from the window events.
@@ -13,8 +13,9 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-/// Without input for this long (window focused, nothing playing), the interface rests.
-pub const REST_AFTER: Duration = Duration::from_secs(20);
+/// Without input for this long (window focused, nothing playing), the interface rests
+/// (the same as `motion::AMBIENT_IDLE` on the motion branch).
+pub const REST_AFTER: Duration = Duration::from_secs(30);
 /// Behind other windows, nothing playing: it rests this soon after the last input.
 pub const REST_AFTER_UNFOCUSED: Duration = Duration::from_secs(3);
 

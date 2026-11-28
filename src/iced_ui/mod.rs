@@ -362,6 +362,9 @@ pub struct App {
 
     /// Frames are being drawn continuously (animations): when the last one was.
     pub last_frame: Instant,
+    /// Where each page of the history was scrolled when it was left (Back and
+    /// Forward bring it back there), newest last.
+    scroll_memory: Vec<(Page, f32)>,
 }
 
 /// Fades of the ambient colour and palette (track changes).
@@ -449,6 +452,8 @@ pub enum Message {
     Chrome(chrome::ChromeMsg),
     QueueScrolled(f32),
     Modifiers(keyboard::Modifiers),
+    /// The window lost the focus: keys and buttons held are let go.
+    Unfocused,
     AccentHue(f32),
     AccentSave,
     PointerUp,
@@ -826,6 +831,7 @@ impl App {
             eq_draft: None,
             eq_scale: None,
             last_frame: Instant::now(),
+            scroll_memory: Vec::new(),
         };
         let mut tasks = vec![window::oldest().and_then(|id| window::size(id).map(move |size| Message::WindowOpened(id, size)))];
         if storage_unavailable {
@@ -985,7 +991,12 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         perf::note_message(|| message_kind(&message));
-        let task = self.dispatch(message);
+        let quiet = matches!(message, Message::Tick | Message::Frame | Message::Wake);
+        let before = (!quiet).then(|| (self.page.clone(), self.page_scroll, self.back.len(), self.forward.len()));
+        let mut task = self.dispatch(message);
+        if let Some(before) = before {
+            task = Task::batch([task, self.restore_scroll(before)]);
+        }
         // A dismissed menu fades out unless another one took its place.
         if self.menu.is_some() || self.menu_exit.as_ref().is_some_and(|(_, _, at)| at.elapsed() > motion::EXIT) {
             self.menu_exit = None;
@@ -1087,6 +1098,19 @@ impl App {
             Message::Modifiers(mods) => {
                 self.ctrl_held = mods.control();
                 Task::none()
+            }
+            // Alt+Tab in the middle of a drag: Windows takes the mouse capture
+            // and the release never arrives. Let go of everything held, as a
+            // release would (Ctrl, a slider, the side panel's edge, a row).
+            Message::Unfocused => {
+                self.ctrl_held = false;
+                let slider = match self.drag {
+                    Some(Drag::Progress) => self.update_more(Message::ProgressRelease),
+                    Some(Drag::Volume) => self.update_more(Message::VolumeRelease),
+                    None => Task::none(),
+                };
+                let side = self.chrome_update(chrome::ChromeMsg::PointerUp);
+                Task::batch([slider, side, self.row_update(rows::RowMsg::Release)])
             }
             Message::QueueScrolled(y) => {
                 self.queue_scroll = y;
@@ -1514,7 +1538,7 @@ impl App {
                 // Ambient motion slows down behind other windows (see `motion::ambient_interval`).
                 motion::set_focused(false);
                 let _ = crate::shared::activity::set_focused(false);
-                Some(Message::Modifiers(keyboard::Modifiers::empty()))
+                Some(Message::Unfocused)
             }
             iced::Event::Window(window::Event::Focused) => {
                 motion::set_focused(true);
@@ -1603,6 +1627,116 @@ fn message_kind(message: &Message) -> String {
         other => perf::variant(&format!("{other:?}")),
     }
 }
+
+impl App {
+    /// The page changed: remember where the old one was scrolled, and put a
+    /// page reached with Back or Forward where it was left (a new visit
+    /// starts at the top).
+    fn restore_scroll(&mut self, (page, scroll, back, forward): (Page, f32, usize, usize)) -> Task<Message> {
+        if self.page == page {
+            return Task::none();
+        }
+        self.scroll_memory.retain(|(p, _)| *p != page);
+        self.scroll_memory.push((page, scroll));
+        if self.scroll_memory.len() > HISTORY_CAP {
+            self.scroll_memory.remove(0);
+        }
+        // Back pops the back stack; Forward pops the forward one (and pushes one back).
+        let returned = self.back.len() < back || (self.forward.len() + 1 == forward && self.back.len() == back + 1);
+        if !returned {
+            return Task::none();
+        }
+        let Some(y) = self.scroll_memory.iter().rev().find(|(p, _)| *p == self.page).map(|(_, y)| *y).filter(|y| *y > 0.0) else {
+            return Task::none();
+        };
+        self.page_scroll = y;
+        iced::widget::operation::scroll_to(pages::PAGE_SCROLL, iced::widget::scrollable::AbsoluteOffset { x: 0.0, y })
+    }
+
+    // ------------------------------------------------------------ caches
+
+    /// Keep the per-page caches from growing for the whole session: past
+    /// [`CACHE_CAP`] entries, a map keeps only what the pages in the history,
+    /// the playing track and the open panels use (anything dropped loads
+    /// again when visited). The history itself keeps its last [`HISTORY_CAP`] pages.
+    pub(super) fn trim_caches(&mut self) {
+        fn trim<K: std::hash::Hash + Eq, V>(map: &mut HashMap<K, V>, keep: impl Fn(&K) -> bool) {
+            if map.len() > CACHE_CAP {
+                map.retain(|k, _| keep(k));
+            }
+        }
+        for stack in [&mut self.back, &mut self.forward] {
+            if stack.len() > HISTORY_CAP {
+                stack.drain(..stack.len() - HISTORY_CAP);
+            }
+        }
+        let big = [
+            self.albums.len(),
+            self.album_extra.len(),
+            self.artists.len(),
+            self.playlists.len(),
+            self.mixes.len(),
+            self.browse.len(),
+            self.search.len(),
+            self.lyrics.len(),
+            self.credits.len(),
+            self.similar.len(),
+            self.tech_info.len(),
+        ]
+        .into_iter()
+        .any(|n| n > CACHE_CAP);
+        if !big && self.artist_pics.len() <= 4 * CACHE_CAP {
+            return;
+        }
+        let pages: Vec<&Page> = std::iter::once(&self.page).chain(&self.back).chain(&self.forward).collect();
+        let mut album_ids: HashSet<u64> = pages.iter().filter_map(|p| if let Page::Album(id) = p { Some(*id) } else { None }).collect();
+        album_ids.extend(self.expanded_album);
+        album_ids.extend(self.now.as_ref().and_then(|n| n.track.album.as_ref()).map(|a| a.id));
+        if let Some(info::InfoTarget::Album(a)) = &self.info_panel {
+            album_ids.insert(a.id);
+        }
+        let artist_ids: HashSet<u64> = pages.iter().filter_map(|p| if let Page::Artist(id) = p { Some(*id) } else { None }).collect();
+        let playlist_ids: HashSet<&str> =
+            pages.iter().filter_map(|p| if let Page::Playlist(u) = p { Some(u.as_str()) } else { None }).collect();
+        let mix_ids: HashSet<&str> = pages.iter().filter_map(|p| if let Page::Mix(m) = p { Some(m.as_str()) } else { None }).collect();
+        let browse_ids: HashSet<&str> =
+            pages.iter().filter_map(|p| if let Page::Browse(b, _) = p { Some(b.as_str()) } else { None }).collect();
+        let mut queries: HashSet<&str> =
+            pages.iter().filter_map(|p| if let Page::Search(q) = p { Some(q.as_str()) } else { None }).collect();
+        queries.insert(self.search_query.trim());
+        // The playing track, the next few (gapless, lyrics ready) and the one an info panel shows.
+        let mut track_ids: HashSet<u64> = HashSet::new();
+        if let Some(now) = &self.now {
+            track_ids.insert(now.track.id);
+            track_ids.extend(self.queue.iter().skip(now.index).take(4).map(|q| q.track.id));
+        }
+        if let Some(info::InfoTarget::Song(t)) = &self.info_panel {
+            track_ids.insert(t.id);
+        }
+        let (albums, artists) = (&album_ids, &artist_ids);
+        trim(&mut self.albums, |id| albums.contains(id));
+        trim(&mut self.album_extra, |id| albums.contains(id));
+        trim(&mut self.artists, |id| artists.contains(id));
+        trim(&mut self.playlists, |u| playlist_ids.contains(u.as_str()));
+        trim(&mut self.mixes, |m| mix_ids.contains(m.as_str()));
+        trim(&mut self.browse, |b| browse_ids.contains(b.as_str()));
+        trim(&mut self.search, |q| queries.contains(q.as_str()));
+        let tracks = &track_ids;
+        trim(&mut self.lyrics, |id| tracks.contains(id));
+        self.lyrics_docs.retain(|id, _| tracks.contains(id) || self.lyrics.contains_key(id));
+        trim(&mut self.credits, |id| tracks.contains(id));
+        trim(&mut self.similar, |id| tracks.contains(id));
+        trim(&mut self.tech_info, |id| tracks.contains(id));
+        if self.artist_pics.len() > 4 * CACHE_CAP {
+            self.artist_pics.clear();
+        }
+    }
+}
+
+/// Entries a per-page cache holds before it is trimmed (see `App::trim_caches`).
+const CACHE_CAP: usize = 48;
+/// Pages kept for Back and for Forward.
+const HISTORY_CAP: usize = 100;
 
 /// A key for the toast shown since `at`: a new message enters anew.
 fn toast_key(at: Instant) -> u64 {

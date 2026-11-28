@@ -703,6 +703,9 @@ impl App {
         }
         self.step_spin();
         self.track_colors();
+        self.trim_caches();
+        // Ambient motion never rests while music plays (see `shared::activity`).
+        crate::shared::activity::set_playing(self.now.is_some() && !self.snap.paused && !self.ended);
         Task::batch(tasks)
     }
 
