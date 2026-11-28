@@ -56,6 +56,56 @@ struct Inner {
     derive_pending: HashSet<String>,
     /// When each cover was first drawn (they fade in once).
     first_shown: HashMap<String, Instant>,
+    /// The latest of those (so "is anything fading?" does not scan them all).
+    last_first_shown: Option<Instant>,
+    /// URLs with a resample on a worker: one at a time per URL, so a window
+    /// being resized does not queue a Lanczos pass for every 32 px step.
+    resampling: HashSet<String>,
+}
+
+impl Inner {
+    fn new() -> Self {
+        Self {
+            encoded: HashMap::new(),
+            encoded_bytes: 0,
+            sized: HashMap::new(),
+            latest: HashMap::new(),
+            decoded_bytes: 0,
+            colors: HashMap::new(),
+            palettes: HashMap::new(),
+            backdrops: Vec::new(),
+            glass: Vec::new(),
+            derive_pending: HashSet::new(),
+            first_shown: HashMap::new(),
+            last_first_shown: None,
+            resampling: HashSet::new(),
+        }
+    }
+
+    /// Start making `key`? Not while another size of the same image is being
+    /// made: the last finished size is shown meanwhile, and the size wanted
+    /// then is asked for again when that one is done (it wakes the view).
+    fn claim_resample(&mut self, key: &(String, u32, u32)) -> bool {
+        if !self.resampling.insert(key.0.clone()) {
+            return false;
+        }
+        self.sized.insert(key.clone(), Sized::Pending);
+        true
+    }
+
+    /// Colours and palettes are small but one per cover ever seen: past this
+    /// many, start over (they are derived again when needed).
+    fn trim_derived(&mut self) {
+        const MAX: usize = 1024;
+        if self.colors.len() > MAX {
+            self.colors.clear();
+            self.derive_pending.retain(|k| !k.starts_with("color|"));
+        }
+        if self.palettes.len() > MAX {
+            self.palettes.clear();
+            self.derive_pending.retain(|k| !k.starts_with("palette|"));
+        }
+    }
 }
 
 type Job = Box<dyn FnOnce() + Send>;
@@ -94,24 +144,7 @@ pub fn init(http: Client) {
             })
             .ok();
     }
-    let _ = IMAGES.set(Images {
-        inner: Mutex::new(Inner {
-            encoded: HashMap::new(),
-            encoded_bytes: 0,
-            sized: HashMap::new(),
-            latest: HashMap::new(),
-            decoded_bytes: 0,
-            colors: HashMap::new(),
-            palettes: HashMap::new(),
-            backdrops: Vec::new(),
-            glass: Vec::new(),
-            derive_pending: HashSet::new(),
-            first_shown: HashMap::new(),
-        }),
-        jobs: Mutex::new(tx),
-        http,
-        dir,
-    });
+    let _ = IMAGES.set(Images { inner: Mutex::new(Inner::new()), jobs: Mutex::new(tx), http, dir });
 }
 
 fn images() -> Option<&'static Images> {
@@ -292,13 +325,17 @@ fn sized_image(url: &str, w: f32, h: f32, contain: bool) -> Option<Handle> {
     }
     let original = encoded(url)?;
     let mut g = im.inner.lock();
-    g.sized.insert(key.clone(), Sized::Pending);
+    let start = g.claim_resample(&key);
     let shown = fallback(&mut g, &key.0, now);
     drop(g);
+    if !start {
+        return shown;
+    }
     spawn(move || {
         let out = resample(&original, dw, dh, contain);
         let Some(im) = images() else { return };
         let mut g = im.inner.lock();
+        g.resampling.remove(&key.0);
         match out {
             Some(img) => {
                 let bytes = img.as_raw().len();
@@ -338,7 +375,18 @@ pub fn fade_in(url: &str) -> f32 {
         return 1.0;
     }
     let Some(im) = images() else { return 1.0 };
-    let at = *im.inner.lock().first_shown.entry(url.to_string()).or_insert_with(Instant::now);
+    let at = {
+        let mut g = im.inner.lock();
+        match g.first_shown.get(url) {
+            Some(at) => *at,
+            None => {
+                let now = Instant::now();
+                g.first_shown.insert(url.to_string(), now);
+                g.last_first_shown = Some(now);
+                now
+            }
+        }
+    };
     let t = (at.elapsed().as_secs_f32() / FADE_IN).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
@@ -350,7 +398,7 @@ pub fn fading() -> bool {
     }
     let Some(im) = images() else { return false };
     let g = im.inner.lock();
-    g.first_shown.values().any(|at| at.elapsed().as_secs_f32() < FADE_IN + 0.05)
+    g.last_first_shown.is_some_and(|at| at.elapsed().as_secs_f32() < FADE_IN + 0.05)
 }
 
 /// Advance the use counter and drop what is over budget (least recently
@@ -401,6 +449,7 @@ pub fn evict() {
             }
         }
     }
+    g.trim_derived();
     if g.first_shown.len() > 4096 {
         g.first_shown.retain(|_, at| at.elapsed() < Duration::from_secs(1));
     }
@@ -535,6 +584,34 @@ pub fn logo() -> Handle {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn one_resample_at_a_time_per_image_while_the_window_resizes() {
+        let mut g = super::Inner::new();
+        let key = |w| ("local:cover".to_string(), w, w);
+        assert!(g.claim_resample(&key(320)));
+        // The window grew by a step while that one is being made: wait for it.
+        assert!(!g.claim_resample(&key(352)));
+        assert!(!g.sized.contains_key(&key(352)), "nothing pending for a size not being made");
+        // Another image is independent.
+        assert!(g.claim_resample(&("local:other".to_string(), 352, 352)));
+        // Done: the next view asks for the size it wants now.
+        g.resampling.remove("local:cover");
+        assert!(g.claim_resample(&key(384)));
+    }
+
+    #[test]
+    fn derived_colours_start_over_past_their_cap() {
+        let mut g = super::Inner::new();
+        for i in 0..1100 {
+            g.colors.insert(format!("u{i}"), iced::Color::BLACK);
+            g.derive_pending.insert(format!("color|u{i}"));
+        }
+        g.derive_pending.insert("glass|u1".into());
+        g.trim_derived();
+        assert!(g.colors.is_empty());
+        assert_eq!(g.derive_pending.len(), 1, "colours can be derived again; the rest is kept");
+    }
+
     #[test]
     fn prune_removes_oldest_first() {
         let dir = std::env::temp_dir().join(format!("abyss-iced-prune-{}", std::process::id()));
