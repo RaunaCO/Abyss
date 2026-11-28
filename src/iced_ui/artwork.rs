@@ -126,8 +126,12 @@ pub fn palette_of(bytes: &[u8]) -> Option<Vec<Rgba>> {
     let glow = |c: &[f32; 3]| {
         let (h, s, v) = rgb_to_hsv(c[0], c[1], c[2]);
         // In proportion to the cover's own: a muted slate stays a slate (a
-        // floor of 45 % turned faint tints into vivid periwinkle or mint).
-        let s = if s < 0.12 { s } else { (s * 1.3 + 0.06).min(0.95) };
+        // floor of 45 % turned faint tints into vivid periwinkle or mint),
+        // and the boost itself fades in only for clearly coloured covers, so
+        // a dusty beige or sage is not pushed toward a colour it lacks.
+        let k = ((s - 0.15) / 0.25).clamp(0.0, 1.0);
+        let k = k * k * (3.0 - 2.0 * k);
+        let s = (s * (1.0 + 0.3 * k) + 0.06 * k).min(0.95);
         (h, s, (v * 1.2).clamp(0.62, 0.96))
     };
     let mut out: Vec<Rgba> = chosen.iter().map(&glow).map(|(h, s, v)| hsv_to_rgb(h, s, v)).collect();
