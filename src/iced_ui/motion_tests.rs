@@ -304,3 +304,73 @@ fn motion_on_app_parts_at_rest() {
         println!("{name}: {}", kinds[20..].join(" "));
     }
 }
+
+/// Opening and closing the queue fast, through `update` as clicks do: every
+/// turn starts from the width the panel has (no jump, no restart), the last
+/// click wins within one `PANEL`, and nothing keeps drawing afterwards.
+#[test]
+#[ignore = "requires an isolated profile and a wgpu adapter"]
+fn motion_on_app_queue_toggled_fast_reverses_and_settles() {
+    let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut app = booted_app();
+    let mut screen = Screen::new(app.viewport);
+    screen.settle(&mut app);
+    motion::idle_for_tests();
+    let _ = screen.frames_asked(&mut app, Duration::from_millis(2500), VSYNC_200);
+    let mut seen = Vec::new();
+    for i in 0..12 {
+        // 20..65 ms apart: faster than the panel's 195 ms.
+        let gap = Duration::from_millis(20 + (i * 17 % 46));
+        let until = Instant::now() + gap;
+        while Instant::now() < until {
+            let _ = screen.frame(&mut app, &[]);
+            std::thread::sleep(VSYNC_200);
+        }
+        let t = Instant::now();
+        let before = app.side_reveal.fraction_at(t);
+        drop(app.update(Message::ToggleQueue));
+        let after = app.side_reveal.fraction_at(t);
+        assert!((after - before).abs() < 0.03, "toggle {i}: the panel jumped {before:.3} -> {after:.3}");
+        seen.push(after);
+        let _ = screen.frame(&mut app, &[]);
+    }
+    assert!(seen.iter().any(|f| *f > 0.05 && *f < 0.95), "the toggles caught it mid-way: {seen:?}");
+    // 12 toggles: closed again. It is closed one PANEL later, and stays still.
+    assert!(!app.show_queue);
+    let _ = screen.frames_asked(&mut app, panel_motion::PANEL + Duration::from_millis(30), VSYNC_200);
+    assert_eq!(app.side_reveal.fraction(), 0.0);
+    motion::idle_for_tests();
+    let _ = screen.frames_asked(&mut app, Duration::from_millis(2500), VSYNC_200);
+    let (vsync, _) = screen.frames_split(&mut app, Duration::from_millis(600), VSYNC_200);
+    assert_eq!(vsync, 0, "something kept gliding after the toggles");
+}
+
+/// A menu dismissed by a click elsewhere while it is still growing in fades
+/// out from the opacity it had reached (1.7.1 flashed it to full first).
+#[test]
+#[ignore = "requires an isolated profile and a wgpu adapter"]
+fn motion_on_app_menu_closed_mid_entrance_leaves_from_where_it_was() {
+    let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut app = booted_app();
+    let mut screen = Screen::new(app.viewport);
+    screen.settle(&mut app);
+    for attempt in 0..3 {
+        app.menu = Some((Point::new(500.0, 300.0), MenuTarget::Output));
+        let _ = screen.frame(&mut app, &[]);
+        std::thread::sleep(Duration::from_millis(25));
+        let _ = screen.frame(&mut app, &[]);
+        let Some(entering) = wash::last_trace_alpha(false) else { continue };
+        drop(app.update(Message::CloseMenu));
+        assert!(app.menu_exit.is_some());
+        let _ = screen.frame(&mut app, &[]);
+        let leaving = wash::last_trace_alpha(true).expect("the ghost was drawn");
+        assert!(entering < 0.98, "attempt {attempt}: the entrance was already over ({entering})");
+        assert!(leaving <= entering + 0.02, "the ghost flashed: entrance at {entering:.2}, ghost at {leaving:.2}");
+        // And it is gone within EXIT.
+        let _ = screen.frames_asked(&mut app, motion::EXIT + Duration::from_millis(40), VSYNC_200);
+        drop(app.update(Message::Tick));
+        assert!(app.menu_exit.is_none());
+        return;
+    }
+    panic!("the menu never drew its entrance");
+}

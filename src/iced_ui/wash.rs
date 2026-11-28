@@ -611,6 +611,12 @@ fn traced(bounds: Rectangle, leaving: bool, now: Instant) -> Option<Trace> {
     })
 }
 
+/// For tests: the opacity of the latest surface traced entering or `leaving`.
+#[cfg(test)]
+pub fn last_trace_alpha(leaving: bool) -> Option<f32> {
+    TRACES.with(|traces| traces.borrow().iter().rev().find(|t| t.leaving == leaving).map(|t| t.alpha))
+}
+
 impl<Message, Theme, Renderer> Enter<'_, Message, Theme, Renderer> {
     /// Eased progress 0..1. Reduced motion keeps this fade (it is not
     /// movement); only the slide and the growth are dropped.
