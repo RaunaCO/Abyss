@@ -20,6 +20,30 @@ the default since the migration, are in [MIGRATION-ICED.md](MIGRATION-ICED.md).
   freshly built `.exe`, because antivirus scanning inflates it.
 - Audio: `Abyss --probe` reports time to first audio and seek latency.
 
+## 1.8.0 vs 1.7.1 (2026-11-28)
+
+Same machine (Windows 11, RX 6800 XT, 2560x1440 @125 %, 200 Hz), release builds,
+the same copy of a real profile (Discord and Last.fm off, volume 2 %), window
+1800x1125 physical (1440x900 design px), the same script for both builds. CPU is
+a share of one logical core; RAM is working set / private. Frames for 1.8.0 come
+from `ABYSS_PERF=1` (root draw counter); 1.7.1 frames are PresentMon presents
+from an earlier run (PresentMon stopped producing output afterwards).
+
+| Scenario | 1.7.1 | 1.8.0 |
+| --- | --- | --- |
+| Home, nothing playing, first 15 s | 3.9 % · 216 / 275 MB · GPU 2.5 % | 2.4 % · 215 / 267 MB · GPU 1.4 % |
+| Home at rest (track paused, 30 s without input) | 4.4 % · ~6 frames/s (PresentMon) | **0.19 % · 0.2 frames/s** · GPU 0.03 % |
+| Album page, playing (FLAC Max) | 7.7 % · 262 / 315 MB · GPU 6.9 % | 6.9 % · 261 / 308 MB · GPU 6.2 % · ~35 frames/s |
+| Now Playing + synced lyrics | 4.6 % · 277 / 388 MB · ~20 frames/s, p95 gap 119 ms | 5.8 % · 271 / 375 MB · ~35 frames/s, even |
+| Library Tracks (1.5 k rows), wheel bursts | 20.7 % · 313 / 456 MB | 20.8 % · 297 / 417 MB · 190–196 frames/s while moving, ~32 after |
+| Continuous resize (316 steps in 8 s) | 21.8 % | 18.2 % |
+| 18 × Back/Forward afterwards | – | +1.7 MB working set |
+
+Now Playing costs about one point more because its lights and lyrics now run on
+an even 30 fps grid instead of ~20 irregular frames. The 800 MB playback target
+holds (highest observed: 395 / 513 MB after a long session of browsing and
+playback).
+
 ## 0.9.9
 
 Windows release builds, isolated profiles, the same local 24-bit / 192 kHz WAV

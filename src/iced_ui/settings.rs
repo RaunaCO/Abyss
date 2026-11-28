@@ -11,6 +11,12 @@ use super::{theme, App, Message};
 use crate::config::Quality;
 
 pub const ABOUT_TAB: usize = 5;
+/// Between the groups of a section: twice the 12 px between a group's
+/// heading and its card, so each heading reads with the card under it.
+// TODO(theme): `theme::SPACE_XL` once arte's scale is merged.
+pub(super) const GROUP_GAP: f32 = 24.0;
+/// Inset of a row's content inside a group card (GPUI: 4 px + 16 px).
+pub(super) const ROW_X: f32 = 20.0;
 pub const LOCAL_TAB: usize = 6;
 pub const EQ_TAB: usize = 7;
 impl App {
@@ -111,7 +117,7 @@ fn hue_strip<'a>(accent: u32) -> Element<'a, Message> {
 
 fn row_text<'a>(label: impl text::IntoFragment<'a>, desc: Option<String>) -> Element<'a, Message> {
     column![text(label).size(13).font(widgets::semibold()).color(theme::text())]
-        .push(desc.map(|d| text(d).size(11.5).line_height(text::LineHeight::Absolute(17.0.into())).color(theme::text_secondary())))
+        .push(desc.map(|d| text(d).size(12).line_height(text::LineHeight::Absolute(17.0.into())).color(theme::text_secondary())))
         .spacing(3)
         .width(Length::Fill)
         .into()
@@ -119,7 +125,7 @@ fn row_text<'a>(label: impl text::IntoFragment<'a>, desc: Option<String>) -> Ele
 
 pub(super) fn setting<'a>(label: &'a str, desc: Option<String>, control: Element<'a, Message>) -> Element<'a, Message> {
     // GPUI: 4 px inset in the card, then 16 x 10 px inside the row.
-    row![row_text(label, desc), control].spacing(12).align_y(Alignment::Center).padding([13, 20]).into()
+    row![row_text(label, desc), control].spacing(12).align_y(Alignment::Center).padding([13.0, ROW_X]).into()
 }
 
 fn toggle_row<'a>(label: &'a str, desc: &'a str, on: bool, key: &'static str) -> Element<'a, Message> {
@@ -175,7 +181,7 @@ pub(super) fn group<'a>(i: Icon, t: &'a str, sub: &'a str, rows: Vec<Element<'a,
 }
 
 pub(super) fn small_button<'a>(label: impl text::IntoFragment<'a>, primary: bool, msg: Message) -> Element<'a, Message> {
-    let b = button(container(text(label).size(11.5).font(widgets::bold())).height(30).align_y(alignment::Vertical::Center))
+    let b = button(container(text(label).size(12).font(widgets::semibold())).height(30).align_y(alignment::Vertical::Center))
         .padding([0, 13])
         .style(move |_, _| {
             let h = super::wash::phase().hover;
@@ -326,11 +332,7 @@ pub fn view(app: &App, width: f32) -> Element<'_, Message> {
                 button::Style {
                     background: Some(theme::ink(0.07 * p.hover * (1.0 - p.active) + (0.10 + 0.03 * p.hover) * p.active).into()),
                     text_color: theme::text(),
-                    border: Border {
-                        color: super::wash::mix(iced::Color::TRANSPARENT, theme::glass_rim(0.3), p.active),
-                        width: 1.0,
-                        radius: theme::concentric(18.0, 11.0).into(),
-                    },
+                    border: Border { radius: theme::concentric(18.0, 11.0).into(), ..Default::default() },
                     ..Default::default()
                 }
             })
@@ -343,7 +345,7 @@ pub fn view(app: &App, width: f32) -> Element<'_, Message> {
         let mut nav = column![].spacing(2);
         for (g, (title, tabs)) in groups.into_iter().enumerate() {
             // On glass: the secondary level, not the dimmest (vibrancy, AA).
-            let label = text(title.to_uppercase()).size(10.5).font(widgets::bold()).color(theme::text_secondary());
+            let label = text(title.to_uppercase()).size(11).font(widgets::semibold()).color(theme::text_secondary());
             nav = nav.push(container(label).padding(iced::Padding {
                 top: if g == 0 { 4.0 } else { 14.0 },
                 bottom: 5.0,
@@ -352,13 +354,17 @@ pub fn view(app: &App, width: f32) -> Element<'_, Message> {
             }));
             nav = nav.extend(tabs.iter().map(|&i| entry(i)));
         }
-        // Navigation, so a pane of glass beside the section's header. A
-        // structural region: the heavier popover material (more frost, a
-        // narrow lens) so the group names near its edge stay legible; it
-        // holds still, its entries carry their own hover.
-        super::liquid_glass::glass(container(nav).width(236).padding(10), super::liquid_glass::PANEL_R)
-            .optics(super::liquid_glass::Optics::POPOVER)
-            .shadow(theme::popover_shadow())
+        // Navigation is structure, not a floating pane: the quiet surface of
+        // the groups' cards, so the section's glass header is the one slab of
+        // glass (two slabs side by side competed on the accent field).
+        container(nav)
+            .width(236)
+            .padding(10)
+            .style(|_| container::Style {
+                background: Some(theme::ink(0.036).into()),
+                border: Border { color: theme::ink(0.09), width: 1.0, radius: super::liquid_glass::PANEL_R.into() },
+                ..Default::default()
+            })
             .into()
     } else {
         let pills = groups.iter().flat_map(|(_, tabs)| tabs.iter().copied()).map(|i| {
@@ -385,7 +391,7 @@ pub fn view(app: &App, width: f32) -> Element<'_, Message> {
     });
     let mut heading = column![
         text(title).size(22).font(widgets::bold()).color(theme::text()),
-        text(section_summary(tab)).size(12.5).color(theme::text_secondary()),
+        text(section_summary(tab)).size(13).color(theme::text_secondary()),
     ]
     .spacing(4);
     let chips = settings_chips(app, tab);
@@ -417,18 +423,19 @@ fn audio(app: &App) -> Element<'_, Message> {
     let s = app.settings.lock().clone();
     let quality = |q: Quality, desc: &'static str| -> Element<'_, Message> {
         let selected = s.quality == q;
-        let ring = if selected { theme::gold() } else { theme::ink(0.28) };
+        // The accent, as every other selection (gold stays the MAX badge's).
+        let ring = if selected { theme::accent() } else { theme::ink(0.28) };
         let inner = container(Space::new().width(8).height(8)).style(move |_| container::Style {
-            background: selected.then(|| theme::gold().into()),
+            background: selected.then(|| theme::accent().into()),
             border: Border { radius: 4.0.into(), ..Default::default() },
             ..Default::default()
         });
         let dot = container(inner).center(18).style(move |_| container::Style {
-            background: Some(if selected { theme::gold_solid() } else { theme::field() }.into()),
+            background: Some(if selected { theme::accent_dim() } else { theme::field() }.into()),
             border: Border { color: ring, width: 2.0, radius: 9.0.into() },
             ..Default::default()
         });
-        let mut r = row![dot, row_text(q.label(), Some(desc.to_string()))].spacing(14).align_y(Alignment::Center).padding([13, 20]);
+        let mut r = row![dot, row_text(q.label(), Some(desc.to_string()))].spacing(14).align_y(Alignment::Center).padding([13.0, ROW_X]);
         if q == Quality::Low {
             r = r.push(small_button(crate::i18n::t("aac_320_kbps"), false, Message::SetQuality(q)));
         }
@@ -444,7 +451,7 @@ fn audio(app: &App) -> Element<'_, Message> {
     let device_label = s.output_device.clone().unwrap_or_else(|| crate::i18n::t("system_default").to_string());
     let open = app.output_list_open;
     let pick = row![
-        container(widgets::line(device_label, 11.5, theme::text())).max_width(280),
+        container(widgets::line(device_label, 12.0, theme::text())).max_width(280),
         super::icons::icon(if open { Icon::ChevUp } else { Icon::ChevDown }, 12.0, theme::text_secondary()),
     ]
     .spacing(6)
@@ -472,7 +479,7 @@ fn audio(app: &App) -> Element<'_, Message> {
             ]
             .spacing(10)
             .align_y(Alignment::Center)
-            .padding([8, 10]);
+            .padding([8.0, ROW_X - 10.0]);
             let b = button(body)
                 .width(Length::Fill)
                 .padding(0)
@@ -484,7 +491,7 @@ fn audio(app: &App) -> Element<'_, Message> {
                 .on_press(Message::SetOutput(d, exclusive, force));
             super::wash::wash(b, theme::field(), 6.0).into()
         });
-        container(iced::widget::Column::with_children(entries)).padding(Padding { left: 8.0, right: 8.0, bottom: 8.0, top: 0.0 }).into()
+        container(iced::widget::Column::with_children(entries)).padding(Padding { left: 10.0, right: 10.0, bottom: 8.0, top: 0.0 }).into()
     });
     let status = if app.snap.output.is_empty() {
         crate::i18n::t("current_output_opens_on_playback").to_string()
@@ -519,7 +526,7 @@ fn audio(app: &App) -> Element<'_, Message> {
         ),
         toggle_row(crate::i18n::t("force_volume"), crate::i18n::t("audio.force_volume_description"), s.force_volume, "force_volume"),
         // The output actually open, quietly at the end (GPUI).
-        container(text(status).size(11).color(theme::text_dim())).padding([10, 16]).into(),
+        container(text(status).size(11).color(theme::text_dim())).padding([10.0, ROW_X]).into(),
     ]);
     let queue =
         vec![toggle_row(crate::i18n::t("autoplay"), crate::i18n::t("play_similar_songs_when_the_queue_ends"), s.autoplay, "autoplay")];
@@ -528,7 +535,7 @@ fn audio(app: &App) -> Element<'_, Message> {
         group(Icon::VolumeUp, crate::i18n::t("audio_output"), crate::i18n::t("device_volume_and_exclusive_mode"), output_rows),
         group(Icon::Play, crate::i18n::t("playback"), crate::i18n::t("queue_behavior"), queue),
     ]
-    .spacing(12)
+    .spacing(GROUP_GAP)
     .into()
 }
 
@@ -602,7 +609,7 @@ fn appearance<'a>(app: &'a App) -> Element<'a, Message> {
         iced::widget::Row::with_children(chips).spacing(6).wrap().vertical_spacing(6),
     ]
     .spacing(10)
-    .padding([13, 20])
+    .padding([13.0, ROW_X])
     .into();
     let zoom = crate::shared::zoom::user_zoom();
     let zoom_row = setting(
@@ -611,7 +618,7 @@ fn appearance<'a>(app: &'a App) -> Element<'a, Message> {
         row![
             small_button("−", false, Message::StepZoom(-1)),
             text(crate::i18n::text("format.percent_spaced", &[format!("{}", (zoom * 100.0).round() as i32)]))
-                .size(12.5)
+                .size(13)
                 .width(56)
                 .align_x(alignment::Horizontal::Center),
             small_button("+", false, Message::StepZoom(1)),
@@ -660,7 +667,7 @@ fn appearance<'a>(app: &'a App) -> Element<'a, Message> {
         ),
         group(Icon::Fullscreen, crate::i18n::t("full_screen"), crate::i18n::t("playback_background"), vec![bg_row]),
     ]
-    .spacing(12)
+    .spacing(GROUP_GAP)
     .into()
 }
 
@@ -732,7 +739,7 @@ fn library(app: &App) -> Element<'_, Message> {
             ]
         ),
     ]
-    .spacing(12)
+    .spacing(GROUP_GAP)
     .into()
 }
 
@@ -740,7 +747,7 @@ fn connections(app: &App) -> Element<'_, Message> {
     let s = app.settings.lock().clone();
     let discord_id = text_input(crate::i18n::t("discord_application_id"), &s.discord_client_id)
         .on_input(Message::DiscordId)
-        .size(12.5)
+        .size(13)
         .padding([7, 10])
         .width(220)
         .style(super::pages::field_style);
@@ -787,7 +794,7 @@ fn connections(app: &App) -> Element<'_, Message> {
             ]
         ),
     ]
-    .spacing(12)
+    .spacing(GROUP_GAP)
     .into()
 }
 
@@ -819,7 +826,7 @@ fn account(app: &App) -> Element<'_, Message> {
     ]
     .spacing(14)
     .align_y(Alignment::Center)
-    .padding([14, 16])
+    .padding([14.0, ROW_X])
     .into();
     let manage = || small_button(crate::i18n::t("manage"), false, Message::OpenUrl(account_url.into()));
     let personal = vec![
@@ -850,13 +857,40 @@ fn account(app: &App) -> Element<'_, Message> {
         setting(crate::i18n::t("account"), None, small_button(crate::i18n::t("sign_in_to_tidal"), true, Message::StartLogin))
     };
     let more = vec![link("notification_settings"), link("change_password"), session];
+    // Lossless: TIDAL serves FLAC only to sessions signed in on the web (Android client).
+    let mut lossless = vec![setting(
+        crate::i18n::t("lossless.title"),
+        Some(crate::i18n::t("lossless.desc").to_string()),
+        small_button(crate::i18n::t("lossless.start"), true, Message::LosslessStart),
+    )];
+    if app.lossless_login.is_some() {
+        let field = text_input(crate::i18n::t("lossless.paste"), &app.lossless_paste)
+            .on_input(Message::LosslessPaste)
+            .on_submit(Message::LosslessFinish)
+            .padding([8, 10])
+            .size(13)
+            .width(Length::Fill);
+        lossless.push(
+            row![field, small_button(crate::i18n::t("lossless.finish"), true, Message::LosslessFinish)]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .padding([10.0, ROW_X])
+                .into(),
+        );
+    }
+    match &app.lossless_status {
+        Some(Ok(())) => lossless.push(setting(crate::i18n::t("lossless.done"), None, Space::new().into())),
+        Some(Err(e)) => lossless.push(setting(crate::i18n::t("lossless.failed"), Some(e.clone()), Space::new().into())),
+        None => {}
+    }
     column![
         group(Icon::Artist, crate::i18n::t("profile"), "", vec![profile_card]),
         group(Icon::Edit, crate::i18n::t("personal_details"), crate::i18n::t("your_tidal_account_information"), personal),
         group(Icon::Settings, crate::i18n::t("subscription"), "", subscription),
+        group(Icon::Settings, crate::i18n::t("lossless.group"), "", lossless),
         group(Icon::SignOut, crate::i18n::t("security_and_session"), "", more),
     ]
-    .spacing(12)
+    .spacing(GROUP_GAP)
     .into()
 }
 
@@ -878,7 +912,7 @@ fn about(app: &App) -> Element<'_, Message> {
     ]
     .spacing(16)
     .align_y(Alignment::Center)
-    .padding(16);
+    .padding([16.0, ROW_X]);
     let data_dir = crate::config::config_dir().display().to_string();
     let help = vec![
         action_row(crate::i18n::t("check_for_updates"), update_desc, Message::CheckUpdates),
@@ -913,6 +947,6 @@ fn about(app: &App) -> Element<'_, Message> {
         group(Icon::List, crate::i18n::t("licenses_and_credits"), crate::i18n::t("about.components"), credits),
         group(Icon::Link, crate::i18n::t("about_the_project"), "", vec![independent]),
     ]
-    .spacing(12)
+    .spacing(GROUP_GAP)
     .into()
 }

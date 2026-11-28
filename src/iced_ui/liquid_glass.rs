@@ -42,7 +42,7 @@
 //! `theme::text_secondary_on_glass` (vibrancy) where the flat grey would fall
 //! under AA.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use iced::advanced::layout::{self, Layout};
@@ -118,13 +118,103 @@ pub fn update_scene(app: &App) {
         }
     }
     let url = scene_url(app);
-    let palette_only = app.cover_view.is_some() || (!app.now_playing_open && matches!(app.page, Page::Album(_) | Page::MyAlbums));
+    // The full-screen cover view shows the cover itself behind it (see `cover_backdrop`).
+    let palette_only = app.cover_view.is_none() && !app.now_playing_open && matches!(app.page, Page::Album(_) | Page::MyAlbums);
     let scene = url.and_then(|url| images::glass_scene(&url, palette_only)).unwrap_or_else(accent_scene);
     let Ok(mut g) = SCENE.lock() else { return };
     if g.as_ref().is_none_or(|s| s.key != scene.key) {
         *g = Some(scene);
     }
 }
+
+// ------------------------------------------------------------------ the ambient clock
+
+// Every ambient motion (the player bar's lights, the album banner and the
+// panes over it, the Now Playing and full-screen cover backgrounds) reads
+// one clock, `motion::ambient_clock`: it runs while music plays (never
+// resting then) or the window is in use, slows like a current settling once
+// idle, and resumes from where it stopped, never jumping.
+
+/// The clock's reading in offscreen tests (frames at chosen moments).
+#[cfg(test)]
+static FORCED_TIME: Mutex<Option<f32>> = Mutex::new(None);
+
+/// The ambient clock now (seconds).
+pub fn ambient_time() -> f32 {
+    #[cfg(test)]
+    if let Some(t) = *FORCED_TIME.lock().unwrap_or_else(|e| e.into_inner()) {
+        return t;
+    }
+    super::motion::ambient_clock()
+}
+
+/// When the next ambient frame is due, or `None` once the drift rests: the
+/// next tick of one grid shared by every ambient surface (bar, banner,
+/// backgrounds), at least half an interval away. Each frame redraws the
+/// whole window, so surfaces that each asked for "now + 33 ms" from slightly
+/// different instants drew extra, unevenly spaced frames; on one grid they
+/// share every frame.
+pub fn ambient_deadline(now: Instant) -> Option<Instant> {
+    let every = super::motion::ambient_next(now, false)?.saturating_duration_since(now);
+    Some(grid_deadline(now, every))
+}
+
+/// The next point of the shared grid of period `every`, at least half a period away.
+fn grid_deadline(now: Instant, every: std::time::Duration) -> Instant {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let epoch = *EPOCH.get_or_init(Instant::now);
+    let step = every.as_nanos().max(1);
+    let since = now.saturating_duration_since(epoch).as_nanos();
+    let mut next = (since / step + 1) * step;
+    if next - since < step / 2 {
+        next += step;
+    }
+    epoch + std::time::Duration::from_nanos(next as u64)
+}
+
+/// The ambient motion is moving (or settling) and wants frames.
+pub fn ambient_moving() -> bool {
+    super::motion::ambient_moving(Instant::now())
+}
+
+/// The colours the player bar shows: the given palette (itself cross-faded
+/// on track changes, in sRGB and briefly) followed in OKLab over a longer
+/// time, so a new cover flows into the bar instead of switching, and two
+/// opposite hues meet through clean colour rather than grey.
+struct BarColors {
+    shown: [[f32; 3]; 3],
+    last: Option<Instant>,
+}
+
+static BAR_COLORS: Mutex<Option<BarColors>> = Mutex::new(None);
+/// Time constant of the bar's colour change (seconds).
+const BAR_BLEND_S: f32 = 0.7;
+
+fn bar_colors(target: [Color; 3]) -> ([Color; 3], bool) {
+    use super::gpu::glass::{from_oklab, to_oklab};
+    let goal = target.map(to_oklab);
+    let now = Instant::now();
+    let mut g = BAR_COLORS.lock().unwrap_or_else(|e| e.into_inner());
+    let state = g.get_or_insert(BarColors { shown: goal, last: None });
+    let dt = state.last.map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32()).min(1.0);
+    state.last = Some(now);
+    let k = if crate::shared::lyrics::reduced_motion() { 1.0 } else { 1.0 - (-dt / BAR_BLEND_S).exp() };
+    let mut moving = false;
+    for (shown, goal) in state.shown.iter_mut().zip(goal) {
+        for (s, g) in shown.iter_mut().zip(goal) {
+            *s += (g - *s) * k;
+            if (g - *s).abs() > 0.002 {
+                moving = true;
+            } else {
+                *s = g;
+            }
+        }
+    }
+    (state.shown.map(from_oklab), moving)
+}
+
+/// The bar's colours are still flowing toward the cover's (set when drawn).
+static BAR_SETTLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // ------------------------------------------------------------------ painting
 
@@ -165,12 +255,7 @@ static PAGE_LIGHT: Mutex<Option<PageLight>> = Mutex::new(None);
 
 /// Seconds on the clock the album banner and the panes over it share.
 fn banner_clock() -> f32 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    if crate::shared::lyrics::reduced_motion() {
-        0.0
-    } else {
-        START.get_or_init(Instant::now).elapsed().as_secs_f32()
-    }
+    ambient_time()
 }
 
 /// The scene as a wash at the top of the page, fading out over 380 px and
@@ -204,8 +289,8 @@ impl<Message> shader::Program<Message> for Wash {
 
     fn update(&self, _: &mut (), event: &Event, _: Rectangle, _: mouse::Cursor) -> Option<shader::Action<Message>> {
         match event {
-            Event::Window(window::Event::RedrawRequested(now)) if self.lights.is_some() && !crate::shared::lyrics::reduced_motion() => {
-                Some(shader::Action::request_redraw_at(*now + super::motion::ambient_slow_interval()))
+            Event::Window(window::Event::RedrawRequested(now)) if self.lights.is_some() => {
+                ambient_deadline(*now).map(shader::Action::request_redraw_at)
             }
             _ => None,
         }
@@ -236,8 +321,37 @@ impl<Message> shader::Program<Message> for Wash {
     }
 }
 
+/// The background of the full-screen cover view: the cover's own picture,
+/// very soft, with its colours drifting over it on the ambient clock (see
+/// `gpu::glass`, `Kind::CoverBackdrop`). Asks for frames only while the
+/// ambient motion moves.
 pub fn cover_backdrop<'a, Message: 'a>() -> Element<'a, Message> {
-    shader(Paint { scene: current_scene(), kind: Kind::CoverBackdrop, light_theme: false }).width(Length::Fill).height(Length::Fill).into()
+    let scene = current_scene();
+    // The scene is keyed "<kind>|<cover url>": the palette of that cover.
+    let lights = scene.as_ref().and_then(|s| s.key.split_once('|')).and_then(|(_, url)| <[Color; 3]>::try_from(images::palette(url)).ok());
+    shader(CoverField { scene, lights }).width(Length::Fill).height(Length::Fill).into()
+}
+
+struct CoverField {
+    scene: Option<Scene>,
+    lights: Option<[Color; 3]>,
+}
+
+impl<Message> shader::Program<Message> for CoverField {
+    type State = ();
+    type Primitive = GlassPrimitive;
+
+    fn update(&self, _: &mut (), event: &Event, _: Rectangle, _: mouse::Cursor) -> Option<shader::Action<Message>> {
+        match event {
+            Event::Window(window::Event::RedrawRequested(now)) => ambient_deadline(*now).map(shader::Action::request_redraw_at),
+            _ => None,
+        }
+    }
+
+    fn draw(&self, _: &(), _: mouse::Cursor, _: Rectangle) -> GlassPrimitive {
+        let lights = self.lights.map(|c| (c, ambient_time()));
+        GlassPrimitive::new(self.scene.clone(), Kind::CoverBackdrop { lights }, false)
+    }
 }
 
 /// Depth of the scroll edge (logical px).
@@ -294,7 +408,7 @@ pub struct Glass<'a, Message, Theme> {
 }
 
 /// Corner radius of the large panes (headers, cards, dialogs).
-pub const PANEL_R: f32 = 18.0;
+pub const PANEL_R: f32 = theme::R_XL;
 /// Any radius of at least half the height: the shader clamps it to a capsule.
 pub const CAPSULE: f32 = 999.0;
 
@@ -360,6 +474,12 @@ pub fn prominent(palette: Option<[Color; 3]>) -> (Color, Color) {
 }
 
 impl<Message, Theme> Glass<'_, Message, Theme> {
+    /// The pane shows the ambient light and it is moving (or its colours are
+    /// still flowing to a new cover's).
+    fn wants_ambient_frames(&self) -> bool {
+        matches!(self.source, Source::PlayerBar(Some(_)))
+            && (ambient_moving() || (!self.album && BAR_SETTLING.load(std::sync::atomic::Ordering::Relaxed)))
+    }
     /// How the pane bends and lights the scene (default [`Optics::PANEL`]).
     pub fn optics(mut self, optics: Optics) -> Self {
         self.optics = optics;
@@ -378,7 +498,7 @@ impl<Message, Theme> Glass<'_, Message, Theme> {
     pub fn player_bar(mut self, palette: Option<[Color; 3]>) -> Self {
         self.optics = Optics::BAR;
         self.tint = theme::bg();
-        self.source = Source::PlayerBar(palette);
+        self.source = Source::PlayerBar(palette.map(|p| super::gpu::glass::bar_palette(p, self.light_theme)));
         self
     }
     /// React to the pointer: a light that follows it, a glint along the rim
@@ -543,10 +663,8 @@ impl<Message, Theme> Widget<Message, Theme, iced::Renderer> for Glass<'_, Messag
         if !self.interactive {
             // A still pane: only the player bar's ambient light asks for frames.
             if let Event::Window(window::Event::RedrawRequested(now)) = event {
-                if matches!(self.source, Source::PlayerBar(Some(_))) && !crate::shared::lyrics::reduced_motion() {
-                    shell.request_redraw_at(
-                        *now + if self.album { super::motion::ambient_slow_interval() } else { super::motion::ambient_interval() },
-                    );
+                if self.wants_ambient_frames() {
+                    shell.request_redraw_at(ambient_deadline(*now).unwrap_or(*now + std::time::Duration::from_millis(33)));
                 }
             }
         } else {
@@ -568,10 +686,8 @@ impl<Message, Theme> Widget<Message, Theme, iced::Renderer> for Glass<'_, Messag
                 Event::Mouse(mouse::Event::CursorMoved { .. }) if over || state.hover > 0.0 => wake = true,
                 Event::Mouse(mouse::Event::CursorLeft) if state.hover > 0.0 => wake = true,
                 Event::Window(window::Event::RedrawRequested(now)) => {
-                    if matches!(self.source, Source::PlayerBar(Some(_))) && !crate::shared::lyrics::reduced_motion() {
-                        shell.request_redraw_at(
-                            *now + if self.album { super::motion::ambient_slow_interval() } else { super::motion::ambient_interval() },
-                        );
+                    if self.wants_ambient_frames() {
+                        shell.request_redraw_at(ambient_deadline(*now).unwrap_or(*now + std::time::Duration::from_millis(33)));
                     }
                     let dt = state.last.map_or(1.0 / 60.0, |l| now.saturating_duration_since(l).as_secs_f32()).clamp(1.0 / 240.0, 0.05);
                     state.over = over;
@@ -629,15 +745,13 @@ impl<Message, Theme> Widget<Message, Theme, iced::Renderer> for Glass<'_, Messag
             Source::PlayerBar(palette) => (
                 None,
                 palette.map(|colors| {
-                    static START: OnceLock<Instant> = OnceLock::new();
-                    let elapsed = if self.album {
-                        banner_clock()
-                    } else if crate::shared::lyrics::reduced_motion() {
-                        0.0
+                    if self.album {
+                        (colors, banner_clock())
                     } else {
-                        START.get_or_init(Instant::now).elapsed().as_secs_f32()
-                    };
-                    (colors, elapsed)
+                        let (colors, settling) = bar_colors(colors);
+                        BAR_SETTLING.store(settling, std::sync::atomic::Ordering::Relaxed);
+                        (colors, ambient_time())
+                    }
                 }),
                 None,
             ),
@@ -688,7 +802,11 @@ impl<Message, Theme> Widget<Message, Theme, iced::Renderer> for Glass<'_, Messag
         // The content in a layer of its own, so its backgrounds are drawn over
         // the pane; with no pane drawn, no layer either.
         if pane.is_some() {
-            renderer.with_layer(*viewport, |renderer| {
+            // Overlays (tooltips) pass an infinite viewport, and a layer
+            // clipped to it draws nothing: clip to the pane's reach instead.
+            let finite = viewport.width.is_finite() && viewport.height.is_finite();
+            let clip = if finite { *viewport } else { bounds.expand(reach) };
+            renderer.with_layer(clip, |renderer| {
                 self.content.as_widget().draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
             });
         } else {
@@ -881,6 +999,8 @@ mod tests {
     #[test]
     #[ignore = "requires a wgpu adapter; renders offscreen"]
     fn glass_refracts_and_disperses_the_scene_offscreen() {
+        // The strips test drives the same forced clock.
+        let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         use iced::advanced::renderer::Headless;
         let mut renderer =
             iced::futures::executor::block_on(<iced::Renderer as Headless>::new(super::super::INTER, iced::Pixels(16.0), None))
@@ -930,9 +1050,15 @@ mod tests {
         assert!(mean(&light) > mean(&lit) + 60.0, "light {} dark {}", mean(&light), mean(&lit));
 
         let palette = [Color::from_rgb(1.0, 0.0, 0.0), Color::from_rgb(0.0, 1.0, 0.0), Color::from_rgb(0.0, 0.0, 1.0)];
+        *FORCED_TIME.lock().unwrap() = Some(30.0);
         let bar = render(&mut renderer, &scene, |c| glass(c, 22.0).player_bar(Some(palette)));
+        *FORCED_TIME.lock().unwrap() = None;
         let left = diff(&bar, &black, (p0 + 60)..(p0 + 100), (cy - 10)..(cy + 10));
-        let middle = diff(&bar, &black, (cx - 30)..(cx + 30), (cy - 10)..(cy + 10));
+        // The third light wanders around the middle: green leads somewhere there.
+        let middle = (0..8)
+            .map(|k| diff(&bar, &black, (cx - 200 + 50 * k)..(cx - 160 + 50 * k), (cy - 10)..(cy + 10)))
+            .max_by(|a, b| (a[1] - a[0].max(a[2])).total_cmp(&(b[1] - b[0].max(b[2]))))
+            .unwrap();
         let right = diff(&bar, &black, (x1 - 100)..(x1 - 60), (cy - 10)..(cy + 10));
         assert!(left[0] > left[2] + 10.0 && right[2] > right[0] + 10.0, "bar palette: {left:?} {right:?}");
         assert!(middle[1] > middle[0] + 10.0 && middle[1] > middle[2] + 10.0, "third bar colour: {middle:?}");
@@ -1172,5 +1298,229 @@ mod tests {
         // And it fades out downward.
         let low = diff(&shot, &black, 0..w, (h - 20)..h);
         assert!(low.iter().sum::<f32>() < top.iter().sum::<f32>() * 0.35, "fade: top {top:?} bottom {low:?}");
+    }
+}
+
+#[cfg(test)]
+mod ambient_tests {
+    use super::*;
+
+    #[test]
+    fn ambient_frames_land_on_one_grid() {
+        // The grid itself, without the shared at-rest state other tests change.
+        let every = std::time::Duration::from_millis(33);
+        let now = Instant::now();
+        let a = grid_deadline(now, every);
+        let b = grid_deadline(now + std::time::Duration::from_millis(2), every);
+        // Two surfaces asking a moment apart get the same frame (unless the
+        // second asks right at the half-interval boundary).
+        assert!(a == b || b.saturating_duration_since(a) == every);
+        let gap = a.saturating_duration_since(now);
+        assert!(gap >= every / 2 && gap <= every * 3 / 2, "{gap:?}");
+    }
+
+    #[test]
+    fn bar_lights_never_stall_and_keep_their_colours_apart() {
+        use super::super::gpu::glass::bar_centers;
+        let w = 1440.0;
+        let dt = 1.0 / 30.0;
+        let (mut speeds, mut spreads) = (Vec::new(), Vec::new());
+        let mut prev = bar_centers(0.0);
+        for k in 1..(600 * 30) {
+            let c = bar_centers(k as f32 * dt);
+            speeds.extend(prev.iter().zip(c).map(|(a, b)| (a[0] - b[0]).abs() * w / dt));
+            let mut xs = c.map(|p| p[0]);
+            xs.sort_by(f32::total_cmp);
+            spreads.push(xs[2] - xs[0]);
+            prev = c;
+        }
+        speeds.sort_by(f32::total_cmp);
+        spreads.sort_by(f32::total_cmp);
+        let q = |v: &[f32], p: f32| v[((v.len() - 1) as f32 * p) as usize];
+        eprintln!("bar light speed px/s p50 {:.0} p90 {:.0} p99 {:.0}", q(&speeds, 0.5), q(&speeds, 0.9), q(&speeds, 0.99));
+        assert!(q(&speeds, 0.5) > 20.0 && q(&speeds, 0.99) < 260.0);
+        // The three colours spread over the bar nearly all the time.
+        assert!(q(&spreads, 0.1) > 0.3, "spread p10 {}", q(&spreads, 0.1));
+    }
+
+    #[test]
+    fn bar_palette_keeps_the_cover_hue_and_readable_white_text() {
+        use super::super::gpu::glass::{bar_palette, to_oklab};
+        let red = [Color::from_rgb8(0x9e, 0x13, 0x07), Color::from_rgb8(0xc8, 0x18, 0x0a), Color::from_rgb8(0xb5, 0x46, 0x3c)];
+        let out = bar_palette(red, false);
+        let ls: Vec<f32> = out.iter().map(|c| to_oklab(*c)[0]).collect();
+        for (a, b) in red.iter().zip(out) {
+            let (_, c0, h0) = theme::to_oklch(*a);
+            let (l, c1, h1) = theme::to_oklch(b);
+            let dh = (h1 - h0).rem_euclid(360.0).min((h0 - h1).rem_euclid(360.0));
+            assert!(dh < 8.0, "hue {h0} became {h1}");
+            assert!(c1 <= c0 + 0.01, "chroma raised {c0} -> {c1}");
+            assert!(c1 > 0.12, "a vivid red stays vivid: {c1}");
+            assert!(theme::contrast(Color::WHITE, b) >= 3.0, "white on {b:?} at L {l}");
+        }
+        // One hue in three tones: they keep different lightness (movement shows).
+        let spread = ls.iter().cloned().fold(0.0, f32::max) - ls.iter().cloned().fold(1.0, f32::min);
+        assert!(spread > 0.08, "tones {ls:?}");
+        // Black and white: greys, in different tones, never a hue.
+        let grey = [Color::from_rgb8(0x9b, 0x9e, 0x9e), Color::from_rgb8(0x9a, 0x9c, 0x9e), Color::from_rgb8(0x30, 0x30, 0x31)];
+        for c in bar_palette(grey, false) {
+            assert!(theme::to_oklch(c).1 < 0.02, "{c:?}");
+        }
+    }
+
+    // ------------------------------------------------------------ strips
+
+    fn render_sized<M: 'static>(renderer: &mut iced::Renderer, mut root: Element<'static, M>, size: Size) -> Vec<u8> {
+        use iced::advanced::renderer::Headless;
+        use iced::advanced::Renderer as _;
+        let mut tree = Tree::new(root.as_widget());
+        let node = root.as_widget_mut().layout(&mut tree, renderer, &layout::Limits::new(size, size));
+        let frame = Rectangle::with_size(size);
+        renderer.reset(frame);
+        root.as_widget().draw(
+            &tree,
+            renderer,
+            &iced::Theme::Dark,
+            &Default::default(),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &frame,
+        );
+        Headless::screenshot(renderer, Size::new(size.width as u32, size.height as u32), 1.0, Color::BLACK)
+    }
+
+    /// The covers the strips are drawn for: `ABYSS_AMBIENT_COVERS` (file
+    /// stems in `ABYSS_COVERS`, comma separated) or a default set from the
+    /// shared cache: vivid red, black and white, dark brown, multicoloured.
+    fn strip_covers() -> Vec<(String, Vec<u8>)> {
+        let Ok(dir) = std::env::var("ABYSS_COVERS") else { return Vec::new() };
+        let names = std::env::var("ABYSS_AMBIENT_COVERS")
+            .unwrap_or_else(|_| "7e963b565237eb0d,25e87b3164b8e818,6f67c00043dc8a66,000352dbf56efd37".into());
+        names
+            .split(',')
+            .filter_map(|n| Some((n.to_string(), std::fs::read(std::path::Path::new(&dir).join(format!("{n}.img"))).ok()?)))
+            .collect()
+    }
+
+    fn out_dir() -> std::path::PathBuf {
+        let dir =
+            std::env::var_os("ABYSS_SHOT_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("abyss-ambient"));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// For each cover: the player bar at 10 moments 4 s apart (stacked), the
+    /// Now Playing background and the full-screen cover view at 3 moments
+    /// 8 s apart (side by side), with white text where the app has it, so
+    /// motion, colour truth and legibility can be judged by eye. Prints the
+    /// bar's colourfulness and the worst contrast of white text over it.
+    #[test]
+    #[ignore = "requires a wgpu adapter and a folder of covers; renders offscreen"]
+    fn ambient_strips_offscreen() {
+        use iced::advanced::renderer::Headless;
+        use iced::widget::{column, container, image as picture, row, stack, text, Space};
+        let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        theme::set_light(false);
+        let covers = strip_covers();
+        if covers.is_empty() {
+            return;
+        }
+        let mut renderer =
+            iced::futures::executor::block_on(<iced::Renderer as Headless>::new(super::super::INTER, iced::Pixels(16.0), None))
+                .expect("wgpu adapter");
+        let dir = out_dir();
+        for (name, bytes) in covers {
+            let raw: [Color; 3] = super::super::artwork::palette_of(&bytes).unwrap().try_into().unwrap();
+            // The bar.
+            *BAR_COLORS.lock().unwrap() = None;
+            let frames = 10u32;
+            let mut sheet = image::RgbaImage::new(1440, frames * 72);
+            let mut worst = f32::MAX;
+            let mut chroma = 0.0;
+            for k in 0..frames {
+                *FORCED_TIME.lock().unwrap() = Some(30.0 + 4.0 * k as f32);
+                let label = column![
+                    text("Kascade").size(12).font(super::super::widgets::bold()).color(Color::WHITE),
+                    text("The Joy of Motion - Animals as Leaders").size(11).color(theme::text_secondary()),
+                ]
+                .spacing(3);
+                let bar = container(row![Space::new().width(58), label].align_y(iced::Alignment::Center))
+                    .padding([0, 16])
+                    .height(68)
+                    .width(Length::Fill)
+                    .align_y(iced::Alignment::Center);
+                let root: Element<'static, ()> = stack![
+                    container(Space::new().width(Length::Fill).height(Length::Fill))
+                        .style(|_| container::Style { background: Some(Color::BLACK.into()), ..Default::default() }),
+                    glass(bar, theme::PANEL_R - 1.0).player_bar(Some(raw)),
+                ]
+                .into();
+                let shot = render_sized(&mut renderer, root, Size::new(1440.0, 68.0));
+                // Where a longer title would run (x 290..380, y 16..52, clear
+                // of this label's glyphs): the contrast of white over the field.
+                for y in (16..52u32).step_by(2) {
+                    for x in (290..380u32).step_by(3) {
+                        let i = ((y * 1440 + x) * 4) as usize;
+                        let c = Color::from_rgb8(shot[i], shot[i + 1], shot[i + 2]);
+                        worst = worst.min(theme::contrast(Color::WHITE, c));
+                    }
+                }
+                let mid = ((34 * 1440 + 900) * 4) as usize;
+                chroma += theme::to_oklch(Color::from_rgb8(shot[mid], shot[mid + 1], shot[mid + 2])).1 / frames as f32;
+                image::imageops::overlay(&mut sheet, &image::RgbaImage::from_raw(1440, 68, shot).unwrap(), 0, i64::from(k * 72));
+            }
+            sheet.save(dir.join(format!("bar-{name}.png"))).unwrap();
+            eprintln!("{name}: bar mean chroma {chroma:.3}, worst white-text contrast {worst:.2}");
+
+            // Now Playing's background and the full-screen cover view.
+            let (w, h) = (720u32, 450u32);
+            let mut np = image::RgbaImage::new(w * 3, h * 2);
+            let ambient = super::super::artwork::dominant_color(&bytes).unwrap_or(raw[0]);
+            let blurred = Arc::new(super::super::artwork::backdrop_image(&bytes).unwrap());
+            let scene =
+                Scene { key: format!("glass|{name}"), image: Arc::new(SceneImage::from_image(&image::load_from_memory(&bytes).unwrap())) };
+            for k in 0..3u32 {
+                *FORCED_TIME.lock().unwrap() = Some(30.0 + 8.0 * k as f32);
+                let backdrop = super::super::gpu::backdrop::Backdrop {
+                    cover: Some((name.clone(), blurred.clone())),
+                    blur: true,
+                    spin: super::super::now_playing::BgSpin::Stopped(40.0 * k as f32),
+                    drag_frac: 0.0,
+                    ambient,
+                    palette: [raw[0], raw[1]],
+                    shade: theme::multiply(theme::with_lightness(ambient, 0.42), theme::rgb(0x2a2a2a)),
+                };
+                let lyrics = column((0..5).map(|i| {
+                    text(format!("A line of the song {i}"))
+                        .size(20)
+                        .color(Color { a: if i == 1 { 1.0 } else { 0.5 }, ..Color::WHITE })
+                        .into()
+                }))
+                .spacing(10);
+                let root: Element<'static, super::super::Message> = stack![
+                    shader(backdrop).width(Length::Fill).height(Length::Fill),
+                    row![
+                        container(picture(picture::Handle::from_bytes(bytes.clone())).width(200).height(200))
+                            .center_x(Length::FillPortion(1))
+                            .center_y(Length::Fill),
+                        container(lyrics).center_y(Length::Fill).width(Length::FillPortion(1)),
+                    ],
+                ]
+                .into();
+                let shot = render_sized(&mut renderer, root, Size::new(w as f32, h as f32));
+                image::imageops::overlay(&mut np, &image::RgbaImage::from_raw(w, h, shot).unwrap(), i64::from(k * w), 0);
+                let field = CoverField { scene: Some(scene.clone()), lights: Some(raw) };
+                let root: Element<'static, ()> = stack![
+                    shader(field).width(Length::Fill).height(Length::Fill),
+                    container(picture(picture::Handle::from_bytes(bytes.clone())).width(380).height(380)).center(Length::Fill),
+                ]
+                .into();
+                let shot = render_sized(&mut renderer, root, Size::new(w as f32, h as f32));
+                image::imageops::overlay(&mut np, &image::RgbaImage::from_raw(w, h, shot).unwrap(), i64::from(k * w), i64::from(h));
+            }
+            np.save(dir.join(format!("np-cover-{name}.png"))).unwrap();
+        }
+        *FORCED_TIME.lock().unwrap() = None;
+        eprintln!("ambient strips: {}", dir.display());
     }
 }

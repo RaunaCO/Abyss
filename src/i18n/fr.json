@@ -757,5 +757,13 @@
   "close": "Fermer",
   "stream": "Flux",
   "local.rescan": "Chercher de nouveaux fichiers dans les dossiers",
-  "local.tracks_count": "{0} titres dans la bibliothèque"
+  "local.tracks_count": "{0} titres dans la bibliothèque",
+  "lossless.group": "Lossless quality",
+  "lossless.title": "Lossless and Hi-Res streams",
+  "lossless.desc": "TIDAL only sends FLAC to sessions signed in on the web. Sign in there, then paste the address of the page TIDAL ends on (it may say it cannot be opened).",
+  "lossless.start": "Sign in on the web",
+  "lossless.paste": "Paste the final address (starts with https://tidal.com/android/login/auth)",
+  "lossless.finish": "Confirm",
+  "lossless.done": "Lossless session active: new tracks play in FLAC",
+  "lossless.failed": "The web sign-in failed"
 }

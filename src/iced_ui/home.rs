@@ -153,7 +153,7 @@ fn featured<'a>(lead: Option<(String, Item)>, width: f32, pad: f32) -> Element<'
 fn listening<'a>(recent: Vec<Item>, width: f32, wide: bool) -> Element<'a, Message> {
     let head = row![
         icon(Icon::Clock, 16.0, theme::text_secondary()),
-        text(crate::i18n::t("recently_played")).size(18).font(widgets::bold()).color(theme::text()),
+        text(crate::i18n::t("recently_played")).size(widgets::scale::TYPE_HEADING).font(widgets::semibold()).color(theme::text()),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -182,7 +182,7 @@ fn listening<'a>(recent: Vec<Item>, width: f32, wide: bool) -> Element<'a, Messa
 fn collection<'a>(title: String, items: Vec<Item>, width: f32) -> Element<'a, Message> {
     let cols = if width >= 640.0 { 2 } else { 1 };
     let cell = (width - 16.0 * (cols - 1) as f32) / cols as f32;
-    let heading = container(text(title).size(20).font(widgets::bold()).color(theme::text()))
+    let heading = container(text(title).size(widgets::scale::TYPE_HEADING).font(widgets::semibold()).color(theme::text()))
         .padding(iced::Padding { bottom: 8.0, ..Default::default() });
     let mut list = column![heading].spacing(4);
     for pair in items.chunks(cols) {
@@ -245,7 +245,8 @@ fn home_item<'a>(item: Item, width: f32, collection: bool) -> Element<'a, Messag
         Item::Track(t) if collection => Some(MenuTarget::Track(t.clone())),
         _ => None,
     };
-    let rest = if collection { 0.032 } else { 0.0 };
+    // No slab at rest (art-audit §4): the hover wash only.
+    let rest = 0.0;
     // Hover and press fade like GPUI's (`wash`), over the resting fill.
     let body: Element<'a, Message> = match hover_layer {
         Some(layer) => iced::widget::hover(body, layer),
@@ -256,7 +257,7 @@ fn home_item<'a>(item: Item, width: f32, collection: bool) -> Element<'a, Messag
         .padding(0)
         .on_press(Message::OpenItem(item))
         .style(|_, _| button::Style { text_color: theme::text(), ..Default::default() });
-    let b = super::wash::wash(b, theme::ink(rest + 0.06), 9.0).rest(theme::ink(rest)).press(theme::ink(0.04));
+    let b = super::wash::wash(b, theme::ink(rest + 0.06), widgets::scale::R_MD).rest(theme::ink(rest)).press(theme::ink(0.04));
     match menu {
         Some(menu) => mouse_area(b).on_right_press(Message::OpenMenu(menu)).into(),
         None => b.into(),
@@ -271,12 +272,8 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
         return None;
     }
     let heading = |first: bool, label: &'static str| -> Element<'_, Message> {
-        let t = container(text(label).size(theme::TYPE_LABEL).font(widgets::bold()).color(theme::text_dim())).padding(iced::Padding {
-            top: if first { 4.0 } else { 9.0 },
-            bottom: 6.0,
-            left: 8.0,
-            right: 8.0,
-        });
+        let t = container(text(label).size(widgets::scale::TYPE_CAPTION).font(widgets::semibold()).color(theme::text_dim()))
+            .padding(iced::Padding { top: if first { 4.0 } else { 9.0 }, bottom: 6.0, left: 8.0, right: 8.0 });
         if first {
             t.into()
         } else {
@@ -288,10 +285,32 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
     let hint = |label: String, color: iced::Color| -> Element<'_, Message> {
         container(text(label).size(theme::TYPE_LABEL).color(color)).padding(14).into()
     };
-    let entry = |url: Option<String>, round: bool, title: String, sub: String, msg: Message| -> Element<'_, Message> {
-        let names =
-            column![line(title, 12.0, theme::text()).font(widgets::semibold()), line(sub, 10.5, theme::text_secondary())].spacing(2);
-        let body = row![cover(url, 36.0, round), container(names).width(Length::Fill).clip(true)].spacing(10).align_y(Alignment::Center);
+    let q = app.search_query.trim();
+    // While a new query loads, the results of the longest earlier query that
+    // has them stay, dimmed, instead of flashing the loading dots on every
+    // keystroke (the dots only when there is nothing to show yet).
+    let (found, stale) = match app.search.get(q) {
+        Some(Load::Ready(r)) => (Some(r), false),
+        Some(Load::Failed(_)) => (None, false),
+        _ => {
+            let earlier = q.char_indices().map(|(i, _)| &q[..i]).filter(|p| !p.trim().is_empty()).rev().find_map(|p| {
+                match app.search.get(p.trim()) {
+                    Some(Load::Ready(r)) => Some(r),
+                    _ => None,
+                }
+            });
+            (earlier, true)
+        }
+    };
+    let dim = if stale { 0.5 } else { 1.0 };
+    let entry = move |url: Option<String>, round: bool, title: String, sub: String, msg: Message| -> Element<'_, Message> {
+        let names = column![
+            line(title, widgets::scale::TYPE_LABEL, theme::with_alpha(theme::text(), dim)).font(widgets::semibold()),
+            line(sub, widgets::scale::TYPE_CAPTION, theme::with_alpha(theme::text_secondary(), dim))
+        ]
+        .spacing(2);
+        let art = widgets::cover_at_opacity(url, 36.0, round, dim);
+        let body = row![art, container(names).width(Length::Fill).clip(true)].spacing(10).align_y(Alignment::Center);
         widgets::soft(
             button(container(body).height(54).align_y(alignment::Vertical::Center)).width(Length::Fill).padding([0, 10]).on_press(msg),
             9.0,
@@ -299,7 +318,6 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
     };
     let album_sub = |artists: String| crate::i18n::text("album.detail", &[artists]);
 
-    let q = app.search_query.trim();
     let mut list: Vec<Element<'_, Message>> = Vec::new();
     let mut footer = None;
     if q.is_empty() {
@@ -318,8 +336,8 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
             );
         }
     } else {
-        match app.search.get(q) {
-            Some(Load::Ready(found)) => {
+        match (found, app.search.get(q)) {
+            (Some(found), _) => {
                 if let Some(top) = &found.top {
                     let (title, sub, url, round) = item_text(top);
                     let sub = match top {
@@ -358,7 +376,7 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
                     list.push(hint(crate::i18n::t("no_results").into(), theme::text_dim()));
                 }
             }
-            Some(Load::Failed(reason)) => list.push(hint(reason.clone(), theme::danger())),
+            (None, Some(Load::Failed(reason))) => list.push(hint(reason.clone(), theme::danger())),
             _ => list.push(container(widgets::loading_dots()).height(48).center(Length::Fill).into()),
         }
         let short = if q.chars().count() > 26 { format!("{}\u{2026}", q.chars().take(25).collect::<String>()) } else { q.to_string() };

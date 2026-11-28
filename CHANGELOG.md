@@ -7,6 +7,63 @@ Release plan: **0.8.0** feature complete → **0.9.0** beta (real-world testing,
 fixes only) → **1.0.0** stable. Public distribution is on hold until the legal
 questions in [docs/LEGAL.md](docs/LEGAL.md) are resolved.
 
+## [1.8.2]
+
+- Lossless again: sessions created with the TV (device-code) sign-in now get
+  only AAC 320 kbps from TIDAL for every quality, even with a HiFi/Max plan.
+  Settings > Account > Lossless quality signs in on the web (the flow whose
+  sessions TIDAL serves FLAC and Hi-Res) and replaces the session. `--probe`
+  also prints the plan's highest quality and both playback endpoints.
+
+## [1.8.1]
+
+- Star ratings no longer disappear after a forced close or an install over a
+  running copy. Only one Abyss runs per profile: a second launch brings the
+  open window to the front, and a launch while the previous copy is closing
+  (an installer, for example) waits for it. After every save the ratings shown
+  and the JSON mirror are taken back from the database, so a copy with an older
+  picture can no longer overwrite the mirror. A start on a database that is
+  still locked waits up to 5 s, then shows the mirror only until the database
+  can be read again (retried every 10 s). Ratings still waiting in the journal
+  are saved once more on close.
+
+## [1.8.0]
+
+- Moving and resizing the window is native: Windows decides where the title bar
+  and the resize borders are (`WM_NCHITTEST`). One plain click or a double-click
+  on the bar no longer leaves dragging and resizing dead until a restart (a
+  winit `dragging` flag stayed set when no move started). The whole empty top
+  band moves the window, including the gaps around the panels; borders resize
+  with the system cursors and long L-shaped corners; double-click, drag down
+  from maximised, Aero Snap and the system menu are Windows' own. The window
+  can no longer grow past the 8192 px a GPU surface accepts.
+- The player bar, Now Playing and the full-screen cover show the cover's real
+  colours: a vivid cover gives a vivid bar (lightness is adjusted in OKLab for
+  readable white text, hue and chroma come from the cover), black-and-white
+  covers stay grey, and the lights flow continuously along separate zones
+  instead of pausing every few seconds. Now Playing and the cover view are
+  colour compositions of the cover rather than one flat tone.
+- Quieter glass: rims catch light on one side only, less dispersion over
+  photographs, frostier headers, window buttons out of the glass capsule.
+- One design scale (spacing, concentric radii, type sizes without half pixels,
+  weights, elevation). Track lists are flat rows; the playing row (accent,
+  bars) and the selected row (neutral ring) are distinct and can be seen
+  together; arrows, Home, End, Enter and Escape move and play the selection.
+- Menus are placed from their real height and slide up to stay whole above the
+  player bar; tooltips show their text again and stay inside the window.
+- Now Playing: titles clamp to two lines with "…", controls take the cover's
+  width on large windows, centred empty states, the queue starts at the top.
+  Settings, Replay and lyrics get consistent insets and spacing.
+- Motion: a press shows on the first frame, a menu closed while opening fades
+  from where it was, fast skips cross-fade the bar cover, panels reverse from
+  where they are. Ambient motion never stops while music plays and comes to
+  rest after 30 s without input otherwise: an idle window draws ~0 frames
+  (1.7.1: 6–20 a second).
+- Back and Forward return to where each page was scrolled; a page change closes
+  an open menu; a seek no longer jumps back on release; losing the focus
+  mid-drag releases it; a failed search is retried; page caches and history
+  stay bounded in long sessions; `ABYSS_PERF=1` names what asks for frames.
+
 ## [1.7.1]
 
 - Star ratings for tracks and albums are reliable: a click rates on the press

@@ -1,6 +1,33 @@
 //! Colours and sizes for the Iced interface: the dark theme (default, close to
 //! the official desktop app) and a light theme with its own palette (not an
 //! inversion). Same values as the GPUI reference (`src/ui/theme.rs`).
+//!
+//! # The design scale
+//!
+//! One scale for every surface, so neighbours line up and nothing looks
+//! improvised (the audit found ~20 font sizes, ~20 radii and every spacing
+//! from 1 to 32 px). New code uses these tokens, never a literal:
+//!
+//! * **Spacing** [`SPACE_2XS`] 2 · [`SPACE_XS`] 4 · [`SPACE_SM`] 8 · [`SPACE_MD`] 12
+//!   ([`GAP`]) · [`SPACE_LG`] 16 · [`SPACE_XL`] 24 · [`SPACE_XXL`] 32 · [`SPACE_XXXL`] 48.
+//! * **Radius**, concentric ([`concentric`] for a shape nested in another):
+//!   [`R_XS`] 4 badges · [`R_SM`] 6 small buttons, row washes, thumbnails ·
+//!   [`R_MD`] 8 cards, covers, inputs · [`R_LG`] 12 menus, popovers ·
+//!   [`R_XL`] 18 glass panels and dialogs · [`R_CAPSULE`] pills. [`PANEL_R`]
+//!   (10) is the page panel inside the window frame.
+//! * **Type** [`TYPE_MICRO`] 10 · [`TYPE_CAPTION`] 11 · [`TYPE_LABEL`] 12 ·
+//!   [`TYPE_SMALL`] 13 · [`TYPE_BODY`] 14 · [`TYPE_SECTION`] 16 · [`TYPE_HEADING`] 20 ·
+//!   [`TYPE_TITLE`] 28 · [`TYPE_DISPLAY`] 40; no half sizes.
+//! * **Weight** [`W_REGULAR`] body and secondary text · [`W_MEDIUM`] row titles,
+//!   selected navigation · [`W_SEMIBOLD`] section headings, buttons, eyebrows ·
+//!   [`W_BOLD`] only page and header titles (title / display sizes).
+//! * **Elevation** [`elevation`]: 0 flat · 1 small floating controls · 2 a card
+//!   lifted on hover · 3 menus, popovers, floating headers · 4 dialogs. On the
+//!   dark theme depth reads from lightness ([`popover`]), the shadow only helps.
+//!
+//! Hierarchy: the cover's colours (player bar, album banner, Now Playing)
+//! are the protagonists; glass headers and menus float calmly; lists, rows
+//! and navigation are structure and carry no glass and no per-item borders.
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -388,11 +415,6 @@ fn pick_a(dark: u32, light: u32) -> Rgba {
     rgba(if is_light() { light } else { dark })
 }
 
-/// Solid gold-tinted background of a selected quality option.
-pub fn gold_solid() -> Rgba {
-    pick(0x2a2a20, 0xf5edd2)
-}
-
 pub fn gold_bg() -> Rgba {
     pick_a(0xffd43222, 0xd9a4002a)
 }
@@ -452,11 +474,78 @@ pub const CONTENT_W: f32 = 1120.0;
 pub const WIDE_W: f32 = 1480.0;
 pub const GAP: f32 = 12.0;
 
+// ---------------------------------------------------------------- scale
+// See the module docs. Tokens not used yet are kept for the panels' owners.
+
+#[allow(dead_code)]
+pub const SPACE_2XS: f32 = 2.0;
+#[allow(dead_code)]
+pub const SPACE_XS: f32 = 4.0;
+#[allow(dead_code)]
+pub const SPACE_SM: f32 = 8.0;
+#[allow(dead_code)]
+pub const SPACE_MD: f32 = GAP;
+#[allow(dead_code)]
+pub const SPACE_LG: f32 = 16.0;
+#[allow(dead_code)]
+pub const SPACE_XL: f32 = 24.0;
+#[allow(dead_code)]
+pub const SPACE_XXL: f32 = 32.0;
+#[allow(dead_code)]
+pub const SPACE_XXXL: f32 = 48.0;
+
+#[allow(dead_code)]
+pub const R_XS: f32 = 4.0;
+#[allow(dead_code)]
+pub const R_SM: f32 = 6.0;
+#[allow(dead_code)]
+pub const R_MD: f32 = 8.0;
+#[allow(dead_code)]
+pub const R_LG: f32 = 12.0;
+#[allow(dead_code)]
+pub const R_XL: f32 = 18.0;
+#[allow(dead_code)]
+pub const R_CAPSULE: f32 = 999.0;
+
+#[allow(dead_code)]
+pub const TYPE_MICRO: f32 = 10.0;
+#[allow(dead_code)]
+pub const TYPE_CAPTION: f32 = 11.0;
 pub const TYPE_BODY: f32 = 14.0;
 pub const TYPE_LABEL: f32 = 12.0;
+#[allow(dead_code)]
+pub const TYPE_SMALL: f32 = 13.0;
 pub const TYPE_SECTION: f32 = 16.0;
-#[allow(dead_code)] // Mirrors GPUI's theme; no Iced surface uses it now.
+#[allow(dead_code)]
+pub const TYPE_HEADING: f32 = 20.0;
+#[allow(dead_code)]
 pub const TYPE_TITLE: f32 = 28.0;
+#[allow(dead_code)]
+pub const TYPE_DISPLAY: f32 = 40.0;
+
+#[allow(dead_code)]
+pub const W_REGULAR: iced::font::Weight = iced::font::Weight::Normal;
+#[allow(dead_code)]
+pub const W_MEDIUM: iced::font::Weight = iced::font::Weight::Medium;
+#[allow(dead_code)]
+pub const W_SEMIBOLD: iced::font::Weight = iced::font::Weight::Semibold;
+#[allow(dead_code)]
+pub const W_BOLD: iced::font::Weight = iced::font::Weight::Bold;
+
+/// The shadow of elevation `level` (0 flat .. 4 modal), see the module docs.
+#[allow(dead_code)]
+pub fn elevation(level: u8) -> iced::Shadow {
+    let black = |a: f32| Rgba { r: 0.0, g: 0.0, b: 0.0, a };
+    let light = is_light();
+    let (a, y, blur) = match level {
+        0 => return iced::Shadow::default(),
+        1 => return control_shadow(),
+        2 => (if light { 0.10 } else { 0.45 }, 6.0, 18.0),
+        3 => return popover_shadow(),
+        _ => (if light { 0.20 } else { 0.70 }, 18.0, 48.0),
+    };
+    iced::Shadow { color: black(a), offset: iced::Vector::new(0.0, y), blur_radius: blur }
+}
 
 // GPUI's `liquid_glass` gradient is now a real refracting pane: see `liquid_glass.rs`.
 

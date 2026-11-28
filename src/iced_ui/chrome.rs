@@ -1,20 +1,24 @@
-//! The window's own chrome: the caption buttons, the drag area of the top bar,
-//! the resize edges of the undecorated window and the side panel's handle.
+//! The window's own chrome: the caption buttons, the caption surfaces of the
+//! top bar and the rail, and the side panel's handle.
+//!
+//! On Windows the system itself moves, resizes, snaps and maximises the
+//! window: [`caption`] and [`hole`] publish where the title bar is and
+//! `winhit` answers the system's hit test (see its docs). Elsewhere a caption
+//! starts winit's move and the edges are Iced grips.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
-use iced::widget::{button, column, container, mouse_area, row, Space};
-use iced::window::{self, Direction};
+#[cfg(not(windows))]
+use iced::widget::mouse_area;
+use iced::widget::{button, column, container, row, Space};
 use iced::{mouse, Alignment, Border, Element, Length, Point, Task};
 
 use super::icons::{icon, Icon};
 use super::{theme, App, Message};
 
-/// Width of the strip that resizes the window.
+/// Width of the strip that resizes the window (Iced grips, off Windows only).
+#[cfg(not(windows))]
 const EDGE: f32 = 5.0;
-/// A second press this soon after the first maximises or restores.
-const DOUBLE_PRESS: Duration = Duration::from_millis(400);
 
 #[cfg(windows)]
 mod win32 {
@@ -86,8 +90,11 @@ pub fn cursor() -> Point {
 
 #[derive(Debug, Clone)]
 pub enum ChromeMsg {
+    /// A press on a caption (off Windows, where the system does not move the window).
+    #[cfg(not(windows))]
     TitlePress,
-    Edge(Direction),
+    #[cfg(not(windows))]
+    Edge(iced::window::Direction),
     Maximized(bool),
     SideGrab(f32),
     SideMove(f32),
@@ -96,20 +103,11 @@ pub enum ChromeMsg {
 
 impl App {
     pub(super) fn chrome_update(&mut self, msg: ChromeMsg) -> Task<Message> {
-        let Some(id) = self.window else { return Task::none() };
         match msg {
-            ChromeMsg::TitlePress => {
-                // The system's move loop swallows the release, so a double click is two presses.
-                let at = cursor();
-                let double = self.title_press.is_some_and(|(when, p)| when.elapsed() < DOUBLE_PRESS && p.distance(at) < 6.0);
-                if double {
-                    self.title_press = None;
-                    return window::toggle_maximize(id);
-                }
-                self.title_press = Some((Instant::now(), at));
-                return window::drag(id);
-            }
-            ChromeMsg::Edge(direction) => return window::drag_resize(id, direction),
+            #[cfg(not(windows))]
+            ChromeMsg::TitlePress => return self.window.map_or_else(Task::none, iced::window::drag),
+            #[cfg(not(windows))]
+            ChromeMsg::Edge(direction) => return self.window.map_or_else(Task::none, |id| iced::window::drag_resize(id, direction)),
             ChromeMsg::Maximized(on) => self.maximized = on,
             ChromeMsg::SideGrab(width) => {
                 self.side_resize = Some((cursor().x, width));
@@ -132,15 +130,16 @@ impl App {
     }
 }
 
-/// Minimise, maximise / restore and close.
-/// GPUI: 34 px buttons 2 px apart in a 30 px group with 2 px padding and an edge.
-const CAPTION_BUTTON_W: f32 = 34.0;
-pub(super) const CAPTION_WIDTH: f32 = 3.0 * CAPTION_BUTTON_W + 2.0 * 2.0 + 2.0 * 2.0 + 2.0;
+/// Minimise, maximise / restore and close: plain glyphs on the bar's glass
+/// (no capsule), 36 x 30 px targets 2 px apart, the wash fading in on hover.
+const CAPTION_BUTTON_W: f32 = 36.0;
+const CAPTION_BUTTON_H: f32 = 30.0;
+pub(super) const CAPTION_WIDTH: f32 = 3.0 * CAPTION_BUTTON_W + 2.0 * 2.0 + 2.0 * 2.0;
 
 pub fn caption_buttons(app: &App) -> Element<'_, Message> {
     let caption = |glyph: Icon, close: bool, msg: Message| -> Element<'_, Message> {
         // GPUI `titlebar`: the fill fades in with the eased hover.
-        let b = button(container(icon(glyph, 14.0, theme::text_secondary())).center_x(CAPTION_BUTTON_W).center_y(24))
+        let b = button(container(icon(glyph, 14.0, theme::text_secondary())).center_x(CAPTION_BUTTON_W).center_y(CAPTION_BUTTON_H))
             .padding(0)
             .style(move |_, _| {
                 let h = super::wash::phase().hover;
@@ -148,7 +147,7 @@ pub fn caption_buttons(app: &App) -> Element<'_, Message> {
                 button::Style {
                     background: (h > 0.0).then(|| iced::Color { a: fill.a * h, ..fill }.into()),
                     text_color: theme::text(),
-                    border: Border { radius: theme::concentric(9.0, 3.0).into(), ..Default::default() },
+                    border: Border { radius: 8.0.into(), ..Default::default() },
                     ..Default::default()
                 }
             })
@@ -163,23 +162,53 @@ pub fn caption_buttons(app: &App) -> Element<'_, Message> {
     .spacing(2)
     .align_y(Alignment::Center);
     // The group already sits on a pane of glass (top bar): no fill or border of its own.
-    container(buttons).padding(2).into()
+    hole(container(buttons).padding(2))
 }
 
-/// `content` with its empty space moving the window (double press: maximise).
-pub fn drag_area<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    mouse_area(content).on_press(Message::Chrome(ChromeMsg::TitlePress)).into()
+/// `content`'s empty space is the window's title bar: it moves the window
+/// (and snaps, restores from maximised, double-clicks to maximise, opens the
+/// system menu on right-click). Controls inside it are marked with [`hole`].
+/// Only for surfaces that do not scroll.
+pub fn caption<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    let marked = super::winhit::caption(content);
+    #[cfg(not(windows))]
+    let marked = mouse_area(marked).on_press(Message::Chrome(ChromeMsg::TitlePress)).into();
+    marked
+}
+
+/// A control inside a [`caption`]: it keeps its clicks.
+pub fn hole<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    super::winhit::hole(content)
+}
+
+/// The whole view, publishing its caption surfaces each time it is drawn.
+pub fn hit_map<'a>(app: &App, view: Element<'a, Message>) -> Element<'a, Message> {
+    // A menu, a dialog, the info panel and the cover view close on a click
+    // anywhere (a scrim over the whole window): that first click must reach
+    // Iced, not move the window. The quick-search results have no scrim over
+    // the bar, so the bar still moves the window (and the results with it).
+    let blocked = app.menu.is_some() || app.dialog.is_some() || app.cover_view.is_some() || app.info_panel.is_some();
+    super::winhit::root(view, blocked, app.fullscreen)
 }
 
 /// The caption of screens without a top bar (welcome, sign-in).
 pub fn caption_strip<'a>(app: &'a App, screen: Element<'a, Message>) -> Element<'a, Message> {
     let bar = row![Space::new().width(Length::Fill).height(theme::TOP_H), caption_buttons(app)].align_y(Alignment::Center).padding([0, 16]);
-    let bar = column![drag_area(bar), Space::new().height(Length::Fill)];
+    let bar = column![caption(bar), Space::new().height(Length::Fill)];
     super::widgets::layered(screen, vec![Some(bar.into())])
 }
 
+/// The strips along the window's edges that resize it. On Windows the system
+/// resizes the window from its own borders (`winhit`): there are none.
+#[cfg(windows)]
+pub fn resize_edges<'a>(_app: &App) -> Option<Element<'a, Message>> {
+    None
+}
+
 /// The strips along the window's edges that resize it.
+#[cfg(not(windows))]
 pub fn resize_edges<'a>(app: &App) -> Option<Element<'a, Message>> {
+    use iced::window::Direction;
     if app.fullscreen || app.maximized {
         return None;
     }
@@ -214,6 +243,7 @@ pub fn resize_edges<'a>(app: &App) -> Option<Element<'a, Message>> {
 
 /// The handle on the left edge of the side panel, `width` wide now.
 pub fn side_handle<'a>(width: f32) -> Element<'a, Message> {
+    use iced::widget::mouse_area;
     let strip = super::wash::wash(Space::new().width(6).height(Length::Fill), super::theme::divider(), 0.0);
     mouse_area(strip).on_press(Message::Chrome(ChromeMsg::SideGrab(width))).interaction(mouse::Interaction::ResizingHorizontally).into()
 }

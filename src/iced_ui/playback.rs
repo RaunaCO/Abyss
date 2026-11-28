@@ -334,6 +334,7 @@ impl App {
         self.player.send(Cmd::Seek(secs));
         self.snap.position = secs;
         self.snap_at = Instant::now();
+        self.seek_hold = Some((secs, Instant::now()));
         Task::none()
     }
 
@@ -560,9 +561,10 @@ impl App {
     pub(super) fn tick(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
         self.save_queue(false);
-        // Ratings the database refused (busy, unavailable) wait in a journal:
-        // try again every 10 s, never on every tick (a busy database blocks up to 750 ms).
-        if self.ratings.has_pending() {
+        // Ratings the database refused (busy, unavailable) wait in a journal,
+        // and a start that could only read the mirror reads the database again:
+        // every 10 s, never on every tick (a busy database blocks up to 750 ms).
+        if self.ratings.needs_retry() {
             static LAST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
             let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
             if last.is_none_or(|at| at.elapsed() >= Duration::from_secs(10)) {
@@ -652,7 +654,22 @@ impl App {
                 }
             }
         }
-        if self.drag != Some(super::Drag::Progress) {
+        // A seek just sent: the engine may still report where it was (it can
+        // sit up to 200 ms flushing the output), and the thumb would jump back
+        // for a tick. Keep the target until the engine is there (or 1.5 s).
+        let held = self.seek_hold.is_some_and(|(target, at)| {
+            let since = at.elapsed().as_secs_f64();
+            since < 1.5 && snap.key == self.snap.key && (snap.position - target).abs() > 1.0 + since
+        });
+        if !held {
+            self.seek_hold = None;
+        }
+        if held {
+            let (position, at) = (self.snap.position, self.snap_at);
+            self.snap = snap;
+            self.snap.position = position;
+            self.snap_at = at;
+        } else if self.drag != Some(super::Drag::Progress) {
             // The engine's playback clock is the reference: the shown position
             // is extrapolated from its latest reading until the next one.
             self.snap = snap;
@@ -703,6 +720,9 @@ impl App {
         }
         self.step_spin();
         self.track_colors();
+        self.trim_caches();
+        // Ambient motion never rests while music plays (see `shared::activity`).
+        crate::shared::activity::set_playing(self.now.is_some() && !self.snap.paused && !self.ended);
         Task::batch(tasks)
     }
 

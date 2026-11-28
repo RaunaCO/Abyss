@@ -20,9 +20,15 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 pub fn transaction<T>(dir: &Path, f: impl FnOnce(&Transaction<'_>) -> Result<T>) -> Result<T> {
+    transaction_waiting(dir, Duration::from_millis(750), f)
+}
+
+/// As [`transaction`], waiting up to `patience` for another writer (another
+/// copy of Abyss that is closing, for example) instead of 750 ms.
+pub fn transaction_waiting<T>(dir: &Path, patience: Duration, f: impl FnOnce(&Transaction<'_>) -> Result<T>) -> Result<T> {
     std::fs::create_dir_all(dir).context(crate::i18n::t("storage.create_data_folder"))?;
     let mut connection = Connection::open(dir.join(FILE)).context(crate::i18n::t("open_listening_database"))?;
-    connection.busy_timeout(Duration::from_millis(750))?;
+    connection.busy_timeout(patience)?;
     connection.pragma_update(None, "synchronous", "FULL")?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute_batch("CREATE TABLE IF NOT EXISTS imports (name TEXT PRIMARY KEY NOT NULL)")?;

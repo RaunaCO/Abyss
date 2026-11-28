@@ -204,7 +204,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let mut import = vec![row_pad(
         column![
             text(crate::i18n::t("local.edit_safety"))
-                .size(11.5)
+                .size(12)
                 .line_height(text::LineHeight::Absolute(17.0.into()))
                 .color(theme::text_secondary()),
             row![
@@ -222,7 +222,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if app.local_busy {
         import.push(row_pad(text(crate::i18n::t("local.working")).size(12).color(theme::text_secondary()).into()));
     }
-    let mut body = column![super::settings::group(Icon::Upload, crate::i18n::t("local.import"), "", import)].spacing(12);
+    let mut body =
+        column![super::settings::group(Icon::Upload, crate::i18n::t("local.import"), "", import)].spacing(super::settings::GROUP_GAP);
     if let Some(editor) = &app.local_editor {
         body = body.push(editor_form(app, editor));
     }
@@ -270,7 +271,7 @@ fn row_pad(content: Element<'_, Message>) -> Element<'_, Message> {
 
 /// A quiet line inside a card when it has nothing to list.
 fn empty_note<'a>(s: &'a str) -> Element<'a, Message> {
-    text(s).size(11.5).line_height(text::LineHeight::Absolute(17.0.into())).color(theme::text_dim()).into()
+    text(s).size(12).line_height(text::LineHeight::Absolute(17.0.into())).color(theme::text_dim()).into()
 }
 
 /// [`super::settings::group`] for a heading made at run time (a count).

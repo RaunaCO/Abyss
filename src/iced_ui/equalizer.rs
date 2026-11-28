@@ -612,7 +612,7 @@ fn fine_slider<'a>(
     on: impl Fn(f32) -> Message + 'a,
 ) -> Element<'a, Message> {
     let bar = slider(range, value, on).step(0.001_f32).on_release(Message::Eq(EqMsg::Commit)).width(Length::Fill);
-    row![text(label).size(11.5).color(theme::text_secondary()).width(110), bar].spacing(10).align_y(Alignment::Center).into()
+    row![text(label).size(12).color(theme::text_secondary()).width(110), bar].spacing(10).align_y(Alignment::Center).into()
 }
 
 fn arrow<'a>(glyph: Icon, enabled: bool, msg: EqMsg) -> Element<'a, Message> {
@@ -626,7 +626,7 @@ fn arrow<'a>(glyph: Icon, enabled: bool, msg: EqMsg) -> Element<'a, Message> {
 }
 
 fn note<'a>(s: &'a str) -> Element<'a, Message> {
-    container(text(s).size(12.5).color(theme::text_secondary())).padding([12, 16]).into()
+    container(text(s).size(13).color(theme::text_secondary())).padding([12.0, super::settings::ROW_X]).into()
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -686,7 +686,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         group(Icon::Stats, crate::i18n::t("eq.graph"), crate::i18n::t("eq.graph_help"), vec![response(app, &s)]),
         chain,
     ]
-    .spacing(24)
+    .spacing(super::settings::GROUP_GAP)
     .into()
 }
 
@@ -754,7 +754,7 @@ fn response<'a>(app: &App, s: &crate::config::Settings) -> Element<'a, Message> 
     let key = |label: &'static str, color: Color| text(label).size(11).color(color);
     let legend =
         row![key(crate::i18n::t("eq.channel_left"), theme::accent()), key(crate::i18n::t("eq.channel_right"), theme::gold())].spacing(12);
-    column![choices.wrap(), row![graph, meters].spacing(12), legend].spacing(12).padding(16).into()
+    column![choices.wrap(), row![graph, meters].spacing(12), legend].spacing(12).padding([16.0, super::settings::ROW_X]).into()
 }
 
 fn filters<'a>(app: &App, list: &[FilterSpec]) -> Vec<Element<'a, Message>> {
@@ -762,8 +762,7 @@ fn filters<'a>(app: &App, list: &[FilterSpec]) -> Vec<Element<'a, Message>> {
     if list.is_empty() {
         out.push(note(crate::i18n::t("eq.empty")));
     } else {
-        let title =
-            |label: &'static str, width: f32| text(label).size(10.5).font(widgets::semibold()).color(theme::text_dim()).width(width);
+        let title = |label: &'static str, width: f32| text(label).size(11).font(widgets::semibold()).color(theme::text_dim()).width(width);
         let columns = row![
             Space::new().width(38),
             title(crate::i18n::t("eq.col_type"), 124.0),
@@ -773,7 +772,7 @@ fn filters<'a>(app: &App, list: &[FilterSpec]) -> Vec<Element<'a, Message>> {
             title(crate::i18n::t("eq.col_q"), 54.0),
         ]
         .spacing(8)
-        .padding([8, 16]);
+        .padding([8.0, super::settings::ROW_X]);
         out.push(columns.into());
     }
     let count = list.len();
@@ -810,7 +809,7 @@ fn filters<'a>(app: &App, list: &[FilterSpec]) -> Vec<Element<'a, Message>> {
             body = body.push(fine_slider(crate::i18n::t("eq.q"), eqgraph::frac_of_q(f.q), 0.0..=1.0, move |v| Message::Eq(EqMsg::Q(i, v))));
         }
         let boxed = container(body)
-            .padding([8, 16])
+            .padding([8.0, super::settings::ROW_X])
             .style(move |_| container::Style { background: selected.then(|| theme::hover().into()), ..Default::default() });
         out.push(
             mouse_area(super::wash::wash(boxed, theme::ink(0.05), 6.0))
@@ -825,10 +824,10 @@ fn filters<'a>(app: &App, list: &[FilterSpec]) -> Vec<Element<'a, Message>> {
     let footer = row![
         small_button(crate::i18n::t("eq.add"), true, Message::Eq(EqMsg::Add)),
         small_button(crate::i18n::t("eq.reset"), false, Message::Eq(EqMsg::Reset)),
-        text(format!("{count} / {MAX_FILTERS}")).size(11.5).color(theme::text_dim()),
+        text(format!("{count} / {MAX_FILTERS}")).size(12).color(theme::text_dim()),
     ]
     .spacing(8)
-    .padding([12, 16])
+    .padding([12.0, super::settings::ROW_X])
     .align_y(Alignment::Center);
     out.push(footer.into());
     out
@@ -841,7 +840,16 @@ fn bars<'a>(app: &App, bands: &[Band]) -> Vec<Element<'a, Message>> {
         let bar = vertical_slider(-MAX_GAIN_DB..=MAX_GAIN_DB, band.gain_db, move |v| Message::Eq(EqMsg::Band(i, v)))
             .step(0.1_f32)
             .on_release(Message::Eq(EqMsg::Commit))
-            .height(180);
+            .height(180)
+            // The whole range shows (the default leaves the rail above the
+            // handle invisible on the dark card), as on the trim faders.
+            .style(move |palette, status| {
+                let mut style = vertical_slider::default(palette, status);
+                let tone = if selected { theme::accent() } else { theme::with_alpha(theme::accent(), 0.75) };
+                style.rail.backgrounds = (tone.into(), theme::ink(0.12).into());
+                style.handle.background = tone.into();
+                style
+            });
         let name = mouse_area(text(eqgraph::freq_label(f64::from(band.freq))).size(10).color(color))
             .on_press(Message::Eq(EqMsg::BandSelect(i)))
             .interaction(mouse::Interaction::Pointer);
@@ -852,7 +860,7 @@ fn bars<'a>(app: &App, bands: &[Band]) -> Vec<Element<'a, Message>> {
             .into()
     }))
     .spacing(4)
-    .padding([12, 16]);
+    .padding([12.0, super::settings::ROW_X]);
     let preset = |n: usize| small_button(n.to_string(), bands.len() == n, Message::Eq(EqMsg::BandPreset(n)));
     let tools = row![
         preset(10),
@@ -863,7 +871,7 @@ fn bars<'a>(app: &App, bands: &[Band]) -> Vec<Element<'a, Message>> {
         small_button(crate::i18n::t("eq.bars_reset"), false, Message::Eq(EqMsg::BandsFlat)),
     ]
     .spacing(8)
-    .padding([12, 16]);
+    .padding([12.0, super::settings::ROW_X]);
     let edit: Element<'a, Message> = match app.eq_band_selected.and_then(|i| bands.get(i)) {
         Some(band) => row![
             text(crate::i18n::t("eq.freq")).size(12).color(theme::text_secondary()),
@@ -872,7 +880,7 @@ fn bars<'a>(app: &App, bands: &[Band]) -> Vec<Element<'a, Message>> {
             field(app, Field::BandGain, format!("{:.1}", band.gain_db), 70.0, true),
         ]
         .spacing(8)
-        .padding([12, 16])
+        .padding([12.0, super::settings::ROW_X])
         .align_y(Alignment::Center)
         .into(),
         None => note(crate::i18n::t("eq.bars_hint")),

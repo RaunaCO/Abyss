@@ -20,31 +20,46 @@ const MENU_W: f32 = 286.0;
 /// GPUI's plain menus (sort, queue entries, playlists): 240 px, 14 px text.
 const PLAIN_W: f32 = 240.0;
 
+/// A menu entry and its height (design px), so the menu knows how tall it
+/// will be before it is laid out and can be placed to fit the window.
+struct Entry(Element<'static, Message>, f32);
+
+/// Height of the menu header: 12 + a 44 px picture + 10.
+const HEADER_H: f32 = 66.0;
+/// Height of an option row (rich menus).
+const OPTION_H: f32 = 34.0;
+/// Height of a plain entry: a 14 px line (1.3) and 8 px above and below.
+const PLAIN_H: f32 = 14.0 * 1.3 + 16.0;
+/// Height of a separator: 5 px, the rule, 5 px.
+const SEP_H: f32 = 11.0;
+
 /// The item a menu is about: its picture (5 px corners), title and detail.
-fn header<'a>(art: Element<'a, Message>, title: String, sub: String) -> Element<'a, Message> {
+fn header(art: Element<'static, Message>, title: String, sub: String) -> Entry {
     let names = column![line(title, 13.5, theme::text()).font(widgets::semibold())]
         .push((!sub.is_empty()).then(|| line(sub, 11.5, theme::text_secondary())))
         .spacing(2);
-    row![art, container(names).width(Length::Fill).clip(true)]
-        .spacing(12)
-        .align_y(Alignment::Center)
-        .padding(iced::Padding { top: 12.0, bottom: 10.0, left: 12.0, right: 12.0 })
-        .into()
+    let r = row![art, container(names).width(Length::Fill).clip(true)].spacing(12).align_y(Alignment::Center).padding(iced::Padding {
+        top: 12.0,
+        bottom: 10.0,
+        left: 12.0,
+        right: 12.0,
+    });
+    Entry(container(r).height(HEADER_H).align_y(iced::alignment::Vertical::Center).into(), HEADER_H)
 }
 
-fn sep<'a>() -> Element<'a, Message> {
-    container(
+fn sep() -> Entry {
+    let rule = container(
         container(Space::new().width(Length::Fill).height(1))
             .style(|_| container::Style { background: Some(super::wash::faded(theme::divider()).into()), ..Default::default() }),
     )
-    .padding([5, 10])
-    .into()
+    .padding([5, 10]);
+    Entry(rule.into(), SEP_H)
 }
 
 /// A vertical option (GPUI's `ctxmenu::option`): 34 px, 6 px in from the
 /// edges, a 15 px glyph 10 px from 13 px text. Its wash fades in under the
 /// pointer (ink 7 %, 5 % more pressed; the danger colour for Remove).
-fn option<'a>(i: Icon, label: impl Into<String>, msg: Message, danger: bool) -> Element<'a, Message> {
+fn option(i: Icon, label: impl Into<String>, msg: Message, danger: bool) -> Entry {
     let color = if danger { theme::danger() } else { theme::text() };
     let body = row![
         icon(i, 15.0, if danger { color } else { theme::text_secondary() }),
@@ -53,7 +68,7 @@ fn option<'a>(i: Icon, label: impl Into<String>, msg: Message, danger: bool) -> 
     .spacing(10)
     .align_y(Alignment::Center);
     let radius = theme::concentric(12.0, 7.0);
-    let b = button(container(body).height(34).align_y(iced::alignment::Vertical::Center))
+    let b = button(container(body).height(OPTION_H).align_y(iced::alignment::Vertical::Center))
         .width(Length::Fill)
         .padding([0, 10])
         .style(widgets::still(radius))
@@ -61,43 +76,56 @@ fn option<'a>(i: Icon, label: impl Into<String>, msg: Message, danger: bool) -> 
     let tint = if danger { theme::danger() } else { theme::ink(1.0) };
     let washed = super::wash::wash(b, Color { a: tint.a * if danger { 0.12 } else { 0.07 }, ..tint }, radius)
         .press(Color { a: tint.a * if danger { 0.06 } else { 0.05 }, ..tint });
-    container(washed).padding([0, 6]).into()
+    Entry(container(washed).padding([0, 6]).into(), OPTION_H)
 }
 
 /// An entry of a plain menu (GPUI's list menu): 14 px text, 14 x 8 padding.
-fn plain<'a>(label: impl Into<String>, msg: Message) -> Element<'a, Message> {
-    let b = button(line(label.into(), theme::TYPE_BODY, theme::text()))
+fn plain(label: impl Into<String>, msg: Message) -> Entry {
+    marked(None, label, msg)
+}
+
+/// A plain entry with a mark column before its label (the current order's
+/// arrow in the sort menu): every label starts at the same place, marked or not.
+fn marked(mark: Option<Icon>, label: impl Into<String>, msg: Message) -> Entry {
+    let mark = container(mark.map(|i| icon(i, 13.0, theme::accent()))).width(16).center_y(PLAIN_H - 16.0);
+    let body = row![mark, line(label.into(), theme::TYPE_BODY, theme::text())].spacing(6).align_y(Alignment::Center);
+    let b = button(container(body).height(PLAIN_H - 16.0).align_y(iced::alignment::Vertical::Center))
         .width(Length::Fill)
-        .padding([8, 14])
-        .style(widgets::still(0.0))
+        .padding([8, 10])
+        .style(widgets::still(theme::concentric(12.0, 6.0)))
         .on_press(msg);
-    // The wash fades in like the rich menus' options (ink 7 %, 5 % more pressed).
-    super::wash::wash(b, theme::ink(0.07), 0.0).press(theme::ink(0.05)).into()
+    // The wash fades in like the rich menus' options (ink 7 %, 5 % more
+    // pressed), inset like them so it never meets the menu's rounded edge.
+    let washed = super::wash::wash(b, theme::ink(0.07), theme::concentric(12.0, 6.0)).press(theme::ink(0.05));
+    Entry(container(washed).padding([0, 6]).into(), PLAIN_H)
 }
 
 /// A small title over a menu's list.
-fn caption<'a>(label: &'static str) -> Element<'a, Message> {
-    container(text(label).size(12).font(widgets::bold()).style(widgets::faded_text(theme::text_secondary()))).padding([6, 14]).into()
+fn caption(label: &'static str) -> Entry {
+    let c = container(text(label).size(12).font(widgets::semibold()).style(widgets::faded_text(theme::text_secondary())))
+        .padding([6, 16])
+        .height(28);
+    Entry(c.into(), 28.0)
 }
 
 /// A device in the output menu: speaker icon, name, a trailing check when chosen.
-fn device_option<'a>(label: String, selected: bool, msg: Message) -> Element<'a, Message> {
+fn device_option(label: String, selected: bool, msg: Message) -> Entry {
     let tone = if selected { theme::accent() } else { theme::text_secondary() };
     let body = row![icon(Icon::VolumeUp, 15.0, tone), container(line(label, 13.0, theme::text())).width(Length::Fill).clip(true)]
         .push(selected.then(|| icon(Icon::Check, 15.0, theme::accent())))
         .spacing(10)
         .align_y(Alignment::Center);
     let radius = theme::concentric(12.0, 7.0);
-    let b = button(container(body).height(34).align_y(iced::alignment::Vertical::Center))
+    let b = button(container(body).height(OPTION_H).align_y(iced::alignment::Vertical::Center))
         .width(Length::Fill)
         .padding([0, 10])
         .style(widgets::still(radius))
         .on_press(msg);
     let rest = if selected { theme::ink(0.06) } else { Color::TRANSPARENT };
-    container(super::wash::wash(b, theme::ink(0.07), radius).rest(rest).press(theme::ink(0.05))).padding([0, 6]).into()
+    Entry(container(super::wash::wash(b, theme::ink(0.07), radius).rest(rest).press(theme::ink(0.05))).padding([0, 6]).into(), OPTION_H)
 }
 
-fn go_to(rows: &mut Vec<Element<'static, Message>>, t: &crate::tidal::Track) {
+fn go_to(rows: &mut Vec<Entry>, t: &crate::tidal::Track) {
     if let Some(a) = t.album.as_ref().filter(|a| a.id != 0) {
         rows.push(option(Icon::Album, crate::i18n::t("view_album"), Message::Navigate(Page::Album(a.id)), false));
     }
@@ -106,8 +134,8 @@ fn go_to(rows: &mut Vec<Element<'static, Message>>, t: &crate::tidal::Track) {
     }
 }
 
-fn entries(app: &App, target: &MenuTarget) -> Vec<Element<'static, Message>> {
-    let mut rows: Vec<Element<'static, Message>> = Vec::new();
+fn entries(app: &App, target: &MenuTarget) -> Vec<Entry> {
+    let mut rows: Vec<Entry> = Vec::new();
     match target {
         MenuTarget::Track(t) | MenuTarget::PlaylistTrack { track: t, .. } => {
             let local = t.local_path.is_some();
@@ -263,13 +291,14 @@ fn entries(app: &App, target: &MenuTarget) -> Vec<Element<'static, Message>> {
             rows.push(caption(crate::i18n::t("add_to_playlist")));
             let lists = app.own_playlists();
             if lists.is_empty() {
-                rows.push(
+                rows.push(Entry(
                     container(
                         text(crate::i18n::t("you_have_no_playlists_of_your_own")).size(12).style(widgets::faded_text(theme::text_dim())),
                     )
                     .padding([8, 16])
                     .into(),
-                );
+                    12.0 * 1.3 + 16.0,
+                ));
             }
             for playlist in lists {
                 rows.push(option(Icon::Playlist, playlist.title.clone(), Message::AlbumToPlaylist(*id, playlist.uuid.clone()), false));
@@ -279,14 +308,8 @@ fn entries(app: &App, target: &MenuTarget) -> Vec<Element<'static, Message>> {
             let (cur, desc) = app.sort_of(section);
             // GPUI's plain list, the current order marked before its name.
             for &k in sort_options(section) {
-                let mark = if k != cur {
-                    "    "
-                } else if desc {
-                    "\u{25bc} "
-                } else {
-                    "\u{25b2} "
-                };
-                rows.push(plain(format!("{mark}{}", k.label()), Message::SetSort(section, k.code().to_string())));
+                let mark = (k == cur).then_some(if desc { Icon::ChevDown } else { Icon::ChevUp });
+                rows.push(marked(mark, k.label(), Message::SetSort(section, k.code().to_string())));
             }
         }
         MenuTarget::Output => {
@@ -381,8 +404,7 @@ pub fn ghost<'a>(app: &'a App, at: Point, target: &'a MenuTarget, closed: std::t
 }
 
 fn menu<'a>(app: &'a App, at: Point, target: &'a MenuTarget, closed: Option<std::time::Instant>) -> Element<'a, Message> {
-    let rows = entries(app, target);
-    let est_h = menu_height(rows.len(), app.viewport.height);
+    let entries = entries(app, target);
     // GPUI: the rich menus are 286 px (output 360) with 6 px under the last
     // option; the plain ones 240 px with 6 px above and below.
     let plain = matches!(target, MenuTarget::Sort(_) | MenuTarget::AddToPlaylist(_));
@@ -392,8 +414,11 @@ fn menu<'a>(app: &'a App, at: Point, target: &'a MenuTarget, closed: Option<std:
         _ => MENU_W,
     };
     let x = at.x.min(app.viewport.width - width - 12.0).max(8.0);
-    let place = place_menu(at.y, est_h, app.viewport.height, bar_top(app));
     let top = if plain || matches!(target, MenuTarget::AddAlbumToPlaylist(_) | MenuTarget::Output) { 6.0 } else { 0.0 };
+    // Its real height: the entries, the padding and the 1 px edges.
+    let est_h = entries.iter().map(|e| e.1).sum::<f32>() + top + 6.0 + 2.0;
+    let rows: Vec<Element<'a, Message>> = entries.into_iter().map(|e| e.0).collect();
+    let place = place_menu(at.y, est_h, app.viewport.height, bar_top(app));
     let panel = container(scrollable(column(rows)).style(super::pages::scroll_style))
         .width(width)
         .max_height(place.max_height)
@@ -466,10 +491,15 @@ fn place_menu(y: f32, est_h: f32, window_h: f32, bar_top: f32) -> Placement {
     let above = up_from - MARGIN;
     if !on_bar && est_h <= below {
         Placement { anchor: Anchor::Top(y.max(MARGIN)), max_height: below }
-    } else if on_bar || above > below {
-        Placement { anchor: Anchor::Bottom(up_from), max_height: above.max(40.0) }
+    } else if est_h <= above {
+        Placement { anchor: Anchor::Bottom(up_from), max_height: above }
+    } else if est_h <= floor - MARGIN {
+        // Fits neither side of the pointer but fits the window: slide it up
+        // until it rests on the floor, whole, instead of scrolling a half.
+        Placement { anchor: Anchor::Bottom(floor), max_height: floor - MARGIN }
     } else {
-        Placement { anchor: Anchor::Top(y.max(MARGIN)), max_height: below.max(40.0) }
+        // Taller than the window: as tall as it can be, scrolling inside.
+        Placement { anchor: Anchor::Top(MARGIN), max_height: (floor - MARGIN).max(40.0) }
     }
 }
 
