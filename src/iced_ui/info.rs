@@ -132,7 +132,7 @@ impl App {
 }
 
 fn labelled<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Message> {
-    column![text(label.to_uppercase()).size(10.5).font(widgets::semibold()).color(theme::text_dim()), value]
+    column![text(label.to_uppercase()).size(11).font(widgets::semibold()).color(theme::text_dim()), value]
         .spacing(2)
         .width(Length::Fill)
         .into()
@@ -282,7 +282,7 @@ fn album<'a>(app: &'a App, shown: &'a Album) -> Element<'a, Message> {
 fn artist<'a>(app: &'a App, shown: &'a Artist) -> Element<'a, Message> {
     let biography = |s: String, dim: bool| -> Element<'a, Message> {
         let color = if dim { theme::text_dim() } else { theme::text_secondary() };
-        let body = text(s).size(12.5).line_height(iced::widget::text::LineHeight::Absolute(19.0.into())).color(color);
+        let body = text(s).size(13).line_height(iced::widget::text::LineHeight::Absolute(19.0.into())).color(color);
         container(scrollable(body).style(super::pages::scroll_style)).max_height(260).into()
     };
     let bio = match app.artists.get(&shown.id) {
