@@ -111,8 +111,6 @@ fn accent_scene() -> Scene {
 
 /// While a cover loads, show the accent field until the correct artwork is ready.
 pub fn update_scene(app: &App) {
-    // The ambient motion follows the music (buffering does not count as a pause).
-    set_ambient_playing(app.now.is_some() && !app.snap.paused && !app.ended);
     // Off album pages no banner shines through the panes.
     if wash_lights(app).is_none() {
         if let Ok(mut light) = PAGE_LIGHT.lock() {
@@ -131,91 +129,47 @@ pub fn update_scene(app: &App) {
 
 // ------------------------------------------------------------------ the ambient clock
 
-/// Seconds on the clock every ambient motion shares (the player bar's
-/// lights, the album banner and the panes over it, the Now Playing and
-/// full-screen cover backgrounds). It runs while music plays; on a pause it
-/// does not stop dead but slows like a current settling (and speeds back up
-/// on play), then holds still, so nothing asks for frames while paused.
-/// Frozen with reduced motion.
-struct Clock {
-    value: f64,
-    rate: f32,
-    last: Option<Instant>,
-}
-
-static CLOCK: Mutex<Clock> = Mutex::new(Clock { value: 0.0, rate: 0.0, last: None });
-static PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// How quickly the clock reaches its pace or rest (time constant, seconds).
-const SETTLE_S: f32 = 0.55;
-/// Below this pace a paused clock counts as still.
-const AT_REST: f32 = 0.01;
+// Every ambient motion (the player bar's lights, the album banner and the
+// panes over it, the Now Playing and full-screen cover backgrounds) reads
+// one clock, `motion::ambient_clock`: it runs while music plays (never
+// resting then) or the window is in use, slows like a current settling once
+// idle, and resumes from where it stopped, never jumping.
 
 /// The clock's reading in offscreen tests (frames at chosen moments).
 #[cfg(test)]
 static FORCED_TIME: Mutex<Option<f32>> = Mutex::new(None);
 
-/// Music is playing (set from the view; see [`update_scene`]).
-pub fn set_ambient_playing(on: bool) {
-    PLAYING.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The ambient clock now (seconds), advanced to this instant.
+/// The ambient clock now (seconds).
 pub fn ambient_time() -> f32 {
     #[cfg(test)]
     if let Some(t) = *FORCED_TIME.lock().unwrap_or_else(|e| e.into_inner()) {
         return t;
     }
-    let now = Instant::now();
-    let mut c = CLOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dt = c.last.map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32());
-    c.last = Some(now);
-    if crate::shared::lyrics::reduced_motion() {
-        c.rate = 0.0;
-        return c.value as f32;
-    }
-    let target = if PLAYING.load(std::sync::atomic::Ordering::Relaxed) { 1.0 } else { 0.0 };
-    c.step(dt, target);
-    c.value as f32
+    super::motion::ambient_clock()
 }
 
-impl Clock {
-    /// Advance by `dt` seconds toward the pace `target` (1 playing, 0 paused).
-    /// Exact for any gap between frames: the pace approaches its target
-    /// exponentially and the clock integrates it.
-    fn step(&mut self, dt: f32, target: f32) {
-        let decay = (-dt / SETTLE_S).exp();
-        self.value += f64::from(target * dt + (self.rate - target) * SETTLE_S * (1.0 - decay));
-        self.rate = target + (self.rate - target) * decay;
-        if target == 0.0 && self.rate < AT_REST {
-            self.rate = 0.0;
-        }
-    }
-}
-
-/// When the next ambient frame is due: the next tick of one grid shared by
-/// every ambient surface (bar, banner, backgrounds), at least half an
-/// interval away. Each frame redraws the whole window, so surfaces that each
-/// asked for "now + 33 ms" from slightly different instants drew extra,
-/// unevenly spaced frames; on one grid they share every frame.
-pub fn ambient_deadline(now: Instant) -> Instant {
+/// When the next ambient frame is due, or `None` once the drift rests: the
+/// next tick of one grid shared by every ambient surface (bar, banner,
+/// backgrounds), at least half an interval away. Each frame redraws the
+/// whole window, so surfaces that each asked for "now + 33 ms" from slightly
+/// different instants drew extra, unevenly spaced frames; on one grid they
+/// share every frame.
+pub fn ambient_deadline(now: Instant) -> Option<Instant> {
     static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let every = super::motion::ambient_next(now, false)?.saturating_duration_since(now);
     let epoch = *EPOCH.get_or_init(Instant::now);
-    let every = super::motion::ambient_interval();
     let step = every.as_nanos().max(1);
     let since = now.saturating_duration_since(epoch).as_nanos();
     let mut next = (since / step + 1) * step;
     if next - since < step / 2 {
         next += step;
     }
-    epoch + std::time::Duration::from_nanos(next as u64)
+    Some(epoch + std::time::Duration::from_nanos(next as u64))
 }
 
 /// The ambient motion is moving (or settling) and wants frames.
 pub fn ambient_moving() -> bool {
-    if crate::shared::lyrics::reduced_motion() {
-        return false;
-    }
-    PLAYING.load(std::sync::atomic::Ordering::Relaxed) || CLOCK.lock().is_ok_and(|c| c.rate > 0.0)
+    super::motion::ambient_moving(Instant::now())
 }
 
 /// The colours the player bar shows: the given palette (itself cross-faded
@@ -330,8 +284,8 @@ impl<Message> shader::Program<Message> for Wash {
 
     fn update(&self, _: &mut (), event: &Event, _: Rectangle, _: mouse::Cursor) -> Option<shader::Action<Message>> {
         match event {
-            Event::Window(window::Event::RedrawRequested(now)) if self.lights.is_some() && ambient_moving() => {
-                Some(shader::Action::request_redraw_at(ambient_deadline(*now)))
+            Event::Window(window::Event::RedrawRequested(now)) if self.lights.is_some() => {
+                ambient_deadline(*now).map(shader::Action::request_redraw_at)
             }
             _ => None,
         }
@@ -384,9 +338,7 @@ impl<Message> shader::Program<Message> for CoverField {
 
     fn update(&self, _: &mut (), event: &Event, _: Rectangle, _: mouse::Cursor) -> Option<shader::Action<Message>> {
         match event {
-            Event::Window(window::Event::RedrawRequested(now)) if ambient_moving() => {
-                Some(shader::Action::request_redraw_at(ambient_deadline(*now)))
-            }
+            Event::Window(window::Event::RedrawRequested(now)) => ambient_deadline(*now).map(shader::Action::request_redraw_at),
             _ => None,
         }
     }
@@ -707,7 +659,7 @@ impl<Message, Theme> Widget<Message, Theme, iced::Renderer> for Glass<'_, Messag
             // A still pane: only the player bar's ambient light asks for frames.
             if let Event::Window(window::Event::RedrawRequested(now)) = event {
                 if self.wants_ambient_frames() {
-                    shell.request_redraw_at(ambient_deadline(*now));
+                    shell.request_redraw_at(ambient_deadline(*now).unwrap_or(*now + std::time::Duration::from_millis(33)));
                 }
             }
         } else {
@@ -730,7 +682,7 @@ impl<Message, Theme> Widget<Message, Theme, iced::Renderer> for Glass<'_, Messag
                 Event::Mouse(mouse::Event::CursorLeft) if state.hover > 0.0 => wake = true,
                 Event::Window(window::Event::RedrawRequested(now)) => {
                     if self.wants_ambient_frames() {
-                        shell.request_redraw_at(ambient_deadline(*now));
+                        shell.request_redraw_at(ambient_deadline(*now).unwrap_or(*now + std::time::Duration::from_millis(33)));
                     }
                     let dt = state.last.map_or(1.0 / 60.0, |l| now.saturating_duration_since(l).as_secs_f32()).clamp(1.0 / 240.0, 0.05);
                     state.over = over;
@@ -1091,7 +1043,9 @@ mod tests {
         assert!(mean(&light) > mean(&lit) + 60.0, "light {} dark {}", mean(&light), mean(&lit));
 
         let palette = [Color::from_rgb(1.0, 0.0, 0.0), Color::from_rgb(0.0, 1.0, 0.0), Color::from_rgb(0.0, 0.0, 1.0)];
+        *FORCED_TIME.lock().unwrap() = Some(30.0);
         let bar = render(&mut renderer, &scene, |c| glass(c, 22.0).player_bar(Some(palette)));
+        *FORCED_TIME.lock().unwrap() = None;
         let left = diff(&bar, &black, (p0 + 60)..(p0 + 100), (cy - 10)..(cy + 10));
         // The third light wanders around the middle: green leads somewhere there.
         let middle = (0..8)
@@ -1345,37 +1299,12 @@ mod ambient_tests {
     use super::*;
 
     #[test]
-    fn the_ambient_clock_settles_on_a_pause_and_resumes_smoothly() {
-        let mut c = Clock { value: 0.0, rate: 0.0, last: None };
-        // Playing: it reaches full pace within a couple of seconds.
-        for _ in 0..90 {
-            c.step(1.0 / 30.0, 1.0);
-        }
-        assert!(c.rate > 0.99, "{}", c.rate);
-        // Paused: it slows (never jumps) and comes to rest, then holds still.
-        let mut last = c.value;
-        let mut frames = 0;
-        while c.rate > 0.0 {
-            c.step(1.0 / 30.0, 0.0);
-            assert!(c.value >= last && c.value - last < 1.0 / 30.0 + 1e-6);
-            last = c.value;
-            frames += 1;
-            assert!(frames < 120, "must come to rest within 4 s");
-        }
-        c.step(10.0, 0.0);
-        assert_eq!(c.value, last, "at rest: still");
-        // A long gap integrates exactly (no jump from a big dt).
-        let before = c.value;
-        c.step(5.0, 1.0);
-        assert!(c.value - before < 5.0 && c.value - before > 4.0);
-    }
-
-    #[test]
     fn ambient_frames_land_on_one_grid() {
+        super::super::motion::note_input();
         let now = Instant::now();
-        let a = ambient_deadline(now);
-        let b = ambient_deadline(now + std::time::Duration::from_millis(2));
-        let every = super::super::motion::ambient_interval();
+        let a = ambient_deadline(now).expect("in use: moving");
+        let b = ambient_deadline(now + std::time::Duration::from_millis(2)).expect("moving");
+        let every = super::super::motion::ambient_next(now, false).unwrap().saturating_duration_since(now);
         // Two surfaces asking a moment apart get the same frame (unless the
         // second asks right at the half-interval boundary).
         assert!(a == b || b.saturating_duration_since(a) == every);

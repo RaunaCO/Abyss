@@ -65,7 +65,13 @@ impl shader::Program<Message> for Backdrop {
         let iced::Event::Window(iced::window::Event::RedrawRequested(now)) = event else { return None };
         let key = self.cover.as_ref().map(|(k, _)| k.as_str());
         if key != state.current.as_ref().map(|(k, _)| k.as_str()) && self.cover.is_some() {
-            state.previous = state.current.take();
+            // A new cover mid cross-fade: the one more visible now stays as
+            // the picture fading out (fast skipping never jumps).
+            let shown = state.changed_at.map_or(1.0, |at| (at.elapsed().as_secs_f32() / FADE_S).clamp(0.0, 1.0));
+            let current = state.current.take();
+            if shown >= 0.5 || state.previous.is_none() {
+                state.previous = current;
+            }
             state.current = self.cover.clone();
             state.changed_at = Some(*now);
         }
@@ -76,7 +82,9 @@ impl shader::Program<Message> for Backdrop {
             return None;
         }
         // The lights and the turning cover move slowly: on the ambient grid.
-        Some(Action::request_redraw_at(crate::iced_ui::liquid_glass::ambient_deadline(*now)))
+        let ambient = crate::iced_ui::liquid_glass::ambient_deadline(*now);
+        let soon = *now + crate::iced_ui::motion::ambient_interval().min(std::time::Duration::from_millis(33));
+        Some(Action::request_redraw_at(ambient.unwrap_or(soon)))
     }
 
     fn draw(&self, state: &State, _cursor: mouse::Cursor, _bounds: Rectangle) -> BackdropPrimitive {

@@ -1332,10 +1332,12 @@ mod tests {
 
     #[test]
     fn bar_lights_follow_independent_smooth_paths() {
+        // Within a minute every light has wandered well across its region.
         let start = bar_centers(0.0);
-        let later = bar_centers(8.0);
-        assert!(start.iter().zip(later).any(|(a, b)| (a[0] - b[0]).abs() > 0.25));
-        assert!(start.iter().zip(later).any(|(a, b)| (a[1] - b[1]).abs() > 0.25));
+        for (i, origin) in start.iter().enumerate() {
+            let reach = |axis: usize| (1..60).map(|t| (bar_centers(t as f32)[i][axis] - origin[axis]).abs()).fold(0.0, f32::max);
+            assert!(reach(0) > 0.15 && reach(1) > 0.25, "light {i}: {} {}", reach(0), reach(1));
+        }
         let before = bar_centers(5.299);
         let after = bar_centers(5.301);
         assert!((before[0][0] - after[0][0]).abs() < 0.001);
