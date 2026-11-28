@@ -155,8 +155,13 @@ pub fn ambient_time() -> f32 {
 /// different instants drew extra, unevenly spaced frames; on one grid they
 /// share every frame.
 pub fn ambient_deadline(now: Instant) -> Option<Instant> {
-    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let every = super::motion::ambient_next(now, false)?.saturating_duration_since(now);
+    Some(grid_deadline(now, every))
+}
+
+/// The next point of the shared grid of period `every`, at least half a period away.
+fn grid_deadline(now: Instant, every: std::time::Duration) -> Instant {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let epoch = *EPOCH.get_or_init(Instant::now);
     let step = every.as_nanos().max(1);
     let since = now.saturating_duration_since(epoch).as_nanos();
@@ -164,7 +169,7 @@ pub fn ambient_deadline(now: Instant) -> Option<Instant> {
     if next - since < step / 2 {
         next += step;
     }
-    Some(epoch + std::time::Duration::from_nanos(next as u64))
+    epoch + std::time::Duration::from_nanos(next as u64)
 }
 
 /// The ambient motion is moving (or settling) and wants frames.
@@ -1302,11 +1307,11 @@ mod ambient_tests {
 
     #[test]
     fn ambient_frames_land_on_one_grid() {
-        super::super::motion::note_input();
+        // The grid itself, without the shared at-rest state other tests change.
+        let every = std::time::Duration::from_millis(33);
         let now = Instant::now();
-        let a = ambient_deadline(now).expect("in use: moving");
-        let b = ambient_deadline(now + std::time::Duration::from_millis(2)).expect("moving");
-        let every = super::super::motion::ambient_next(now, false).unwrap().saturating_duration_since(now);
+        let a = grid_deadline(now, every);
+        let b = grid_deadline(now + std::time::Duration::from_millis(2), every);
         // Two surfaces asking a moment apart get the same frame (unless the
         // second asks right at the half-interval boundary).
         assert!(a == b || b.saturating_duration_since(a) == every);
