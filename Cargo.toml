@@ -57,7 +57,7 @@ kanji-romaji = ["dep:lindera"]
 ui-iced = ["dep:iced", "dep:wgpu", "dep:bytemuck", "dep:rfd"]
 
 [target.'cfg(windows)'.dependencies]
-wasapi = "0.15"
+wasapi = "0.27"
 # DPAPI for the session tokens (already in the dependency tree via other crates).
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Graphics_Gdi"] }
 
