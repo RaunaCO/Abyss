@@ -109,8 +109,10 @@ pub fn cover_size(vw: f32, vh: f32) -> f32 {
 pub fn queue_height(vw: f32, vh: f32) -> f32 {
     let margin = (vw * 0.035).clamp(20.0, 64.0);
     let details = if np_stacked(vw, vh) { (vh * 0.36).clamp(320.0, 900.0) } else { vh - 2.0 * margin };
-    // The tabs (a line of 11 px text in 6 px of padding, 20 px under) and the tab's own inset.
-    (details - 46.3 - 2.0 * margin).max(0.0)
+    // The tabs (a line of 12 or 13 px text in 6 or 7 px of padding, 20 px
+    // under; see `tab_button`) and the tab's own inset.
+    let tabs = if vh >= 1000.0 { 13.0 * 1.3 + 14.0 } else { 12.0 * 1.3 + 12.0 };
+    (details - tabs - 20.0 - 2.0 * margin).max(0.0)
 }
 
 // TODO(theme): the shared spacing scale (`theme::SPACE_*`) once arte's tokens are merged.
@@ -123,7 +125,8 @@ const SPACE_XXL: f32 = 32.0;
 fn titles_width(vw: f32, vh: f32) -> f32 {
     let margin = (vw * 0.035).clamp(20.0, 64.0);
     let column = if np_stacked(vw, vh) { vw - 2.0 * margin } else { vw * 0.46 - margin };
-    column.clamp(120.0, 560.0).floor()
+    // Never narrower than a big cover above it.
+    column.clamp(120.0, cover_size(vw, vh).max(560.0)).floor()
 }
 
 /// Sizes of the title and the artists: they grow with the cover, so the
@@ -428,8 +431,10 @@ fn similar_view(app: &App, id: u64) -> Element<'_, Message> {
 
 fn tab_button(app: &App, tab: NpTab) -> Element<'_, Message> {
     let active = app.np_tab == tab;
-    let b = button(text(tab.label()).size(11).font(super::widgets::bold()))
-        .padding([6, 13])
+    // A step larger on tall windows, where the lyrics beside them are 50 px.
+    let large = app.viewport.height >= 1000.0;
+    let b = button(text(tab.label()).size(if large { 13 } else { 12 }).font(super::widgets::semibold()))
+        .padding(if large { [7, 16] } else { [6, 14] })
         .style(move |_, _| button::Style {
             background: active.then(|| theme::with_alpha(theme::text(), 1.0 - 0.1 * super::wash::phase().hover).into()),
             text_color: if active {
@@ -528,7 +533,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(6)
     .width(title_w);
     let controls = container(super::player_bar::controls(app, true, vw))
-        .max_width(if stacked { (vw * 0.45).clamp(500.0, 760.0) } else { 500.0 })
+        // As wide as a big cover (the bar under a 640 px cover was 500 px).
+        .max_width(if stacked { (vw * 0.45).clamp(500.0, 760.0) } else { size.clamp(500.0, 660.0) })
         .width(Length::Fill);
     let left = column![artwork, titles, controls].spacing(24).align_x(Alignment::Center);
     let left: Element<'_, Message> = if stacked {
