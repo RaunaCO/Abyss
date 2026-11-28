@@ -99,7 +99,8 @@ fn nav_item<'a>(i: Icon, label: &'a str, active: bool, open: bool, lab: Lab, msg
         super::icons::glyph(i, 18.0, theme::text_secondary()).live(|p, _| row_color(p)).scale(|p| 1.0 + 0.05 * p.hover - 0.09 * p.press);
     let lead = container(glyph).width(ICON_BOX).center_x(ICON_BOX).into();
     let name = open.then(|| {
-        let name = line(label, 13.5, theme::text_secondary()).live(move |_| alpha(row_color(super::wash::phase()), lab.get()));
+        let name = line(label, widgets::scale::TYPE_SMALL, theme::text_secondary())
+            .live(move |_| alpha(row_color(super::wash::phase()), lab.get()));
         if active {
             name.font(widgets::semibold())
         } else {
@@ -150,7 +151,7 @@ fn section<'a>(label: &'a str, open: bool, lab: Lab, trailing: Option<Element<'a
     if !open {
         return rule.into();
     }
-    let name = line(label, 11.5, theme::text_dim()).font(widgets::semibold()).live(move |c| alpha(c, lab.get()));
+    let name = line(label, widgets::scale::TYPE_CAPTION, theme::text_dim()).font(widgets::semibold()).live(move |c| alpha(c, lab.get()));
     let mut r = row![container(name).width(Length::Fill)].align_y(Alignment::Center);
     if let Some(t) = trailing {
         r = r.push(t);
@@ -237,7 +238,7 @@ pub fn view(app: &App, open: bool) -> Element<'_, Message> {
     if open {
         let mut names = column![line(line1, 13.0, theme::text()).font(widgets::semibold()).live(move |c| alpha(c, lab.get()))].spacing(2);
         if !line2.is_empty() {
-            names = names.push(line(line2, 11.5, theme::text_secondary()).live(move |c| alpha(c, lab.get())));
+            names = names.push(line(line2, widgets::scale::TYPE_CAPTION, theme::text_secondary()).live(move |c| alpha(c, lab.get())));
         }
         account = account.push(container(names).width(Length::Fill).clip(true)).push(
             row![

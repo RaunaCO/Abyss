@@ -153,7 +153,7 @@ fn featured<'a>(lead: Option<(String, Item)>, width: f32, pad: f32) -> Element<'
 fn listening<'a>(recent: Vec<Item>, width: f32, wide: bool) -> Element<'a, Message> {
     let head = row![
         icon(Icon::Clock, 16.0, theme::text_secondary()),
-        text(crate::i18n::t("recently_played")).size(18).font(widgets::bold()).color(theme::text()),
+        text(crate::i18n::t("recently_played")).size(widgets::scale::TYPE_HEADING).font(widgets::semibold()).color(theme::text()),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -182,7 +182,7 @@ fn listening<'a>(recent: Vec<Item>, width: f32, wide: bool) -> Element<'a, Messa
 fn collection<'a>(title: String, items: Vec<Item>, width: f32) -> Element<'a, Message> {
     let cols = if width >= 640.0 { 2 } else { 1 };
     let cell = (width - 16.0 * (cols - 1) as f32) / cols as f32;
-    let heading = container(text(title).size(20).font(widgets::bold()).color(theme::text()))
+    let heading = container(text(title).size(widgets::scale::TYPE_HEADING).font(widgets::semibold()).color(theme::text()))
         .padding(iced::Padding { bottom: 8.0, ..Default::default() });
     let mut list = column![heading].spacing(4);
     for pair in items.chunks(cols) {
@@ -245,7 +245,8 @@ fn home_item<'a>(item: Item, width: f32, collection: bool) -> Element<'a, Messag
         Item::Track(t) if collection => Some(MenuTarget::Track(t.clone())),
         _ => None,
     };
-    let rest = if collection { 0.032 } else { 0.0 };
+    // No slab at rest (art-audit §4): the hover wash only.
+    let rest = 0.0;
     // Hover and press fade like GPUI's (`wash`), over the resting fill.
     let body: Element<'a, Message> = match hover_layer {
         Some(layer) => iced::widget::hover(body, layer),
@@ -256,7 +257,7 @@ fn home_item<'a>(item: Item, width: f32, collection: bool) -> Element<'a, Messag
         .padding(0)
         .on_press(Message::OpenItem(item))
         .style(|_, _| button::Style { text_color: theme::text(), ..Default::default() });
-    let b = super::wash::wash(b, theme::ink(rest + 0.06), 9.0).rest(theme::ink(rest)).press(theme::ink(0.04));
+    let b = super::wash::wash(b, theme::ink(rest + 0.06), widgets::scale::R_MD).rest(theme::ink(rest)).press(theme::ink(0.04));
     match menu {
         Some(menu) => mouse_area(b).on_right_press(Message::OpenMenu(menu)).into(),
         None => b.into(),
@@ -271,12 +272,8 @@ pub fn search_overlay(app: &App) -> Option<Element<'_, Message>> {
         return None;
     }
     let heading = |first: bool, label: &'static str| -> Element<'_, Message> {
-        let t = container(text(label).size(theme::TYPE_LABEL).font(widgets::bold()).color(theme::text_dim())).padding(iced::Padding {
-            top: if first { 4.0 } else { 9.0 },
-            bottom: 6.0,
-            left: 8.0,
-            right: 8.0,
-        });
+        let t = container(text(label).size(widgets::scale::TYPE_CAPTION).font(widgets::semibold()).color(theme::text_dim()))
+            .padding(iced::Padding { top: if first { 4.0 } else { 9.0 }, bottom: 6.0, left: 8.0, right: 8.0 });
         if first {
             t.into()
         } else {

@@ -106,3 +106,225 @@ fn panel_shots_tooltips() {
     }
     theme::set_light(false);
 }
+
+// ------------------------------------------------------------ app fixtures
+
+/// An app with a Library of real covers, long titles and names, a track
+/// playing (row 1 of the Library), signed in, on the Library's tracks.
+fn fixture() -> App {
+    use serde_json::json;
+    let (mut app, boot) = App::boot();
+    drop(boot);
+    app.welcome_step = None;
+    app.signed_in = true;
+    app.shuffle = false;
+    let art = super::shots::covers();
+    let cover = |i: usize| art.get(i % art.len().max(1)).cloned();
+    let names = ["Aurora Lindqvist", "The Velvet Static & The Extraordinarily Long Named Orchestra Of Gothenburg", "Marea Baja"];
+    let album_titles =
+        ["Midnight Cartography", "Salt & Static (Original Motion Picture Soundtrack, Deluxe 20th Anniversary Edition)", "Las horas lentas"];
+    let albums: Vec<crate::tidal::Album> = album_titles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let mut a = crate::tidal::Album::parse(&json!({
+                "id": 200 + i, "title": t, "artist": {"id": 10 + i, "name": names[i]},
+                "releaseDate": "2019-03-14", "numberOfTracks": 12, "duration": 3000, "type": "ALBUM",
+                "mediaMetadata": {"tags": ["LOSSLESS"]}
+            }))
+            .unwrap();
+            a.cover = cover(i);
+            a
+        })
+        .collect();
+    let titles = [
+        "Opening Theme",
+        "A Very Long Song Title That Keeps Going Past The Edge Of The Column (feat. Somebody Else)",
+        "Interlude",
+        "Lighthouse",
+        "Tidal Pull",
+        "Quiet Machines",
+        "Last Train Home",
+        "Coda",
+        "Paper Boats",
+        "Static Bloom",
+    ];
+    let tracks: Vec<crate::tidal::Track> = titles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let album = &albums[i % 3];
+            crate::tidal::Track::parse(&json!({
+                "id": 1000 + i, "title": t, "duration": 150 + i * 23, "allowStreaming": true, "explicit": i % 4 == 1,
+                "artist": {"id": 10 + i % 3, "name": names[i % 3]},
+                "album": {"id": album.id, "title": album.title, "cover": album.cover},
+                "trackNumber": i + 1, "volumeNumber": 1, "audioQuality": "LOSSLESS"
+            }))
+            .unwrap()
+        })
+        .collect();
+    app.fav_tracks = Load::Ready(tracks.clone());
+    app.fav_albums = Load::Ready(albums.clone());
+    for a in &albums {
+        app.albums.insert(a.id, Load::Ready((a.clone(), tracks.clone())));
+    }
+    // Shown in the order given (no sort by date added: none is set).
+    app.apply_sorts();
+    drop(app.update(Message::Navigate(crate::shared::Page::MyTracks)));
+    let ix = app.lib_tracks.iter().position(|t| t.id == 1001).unwrap_or(1);
+    drop(app.update(Message::PlayFrom(rows::Source::Page, ix)));
+    app.toast = None;
+    app
+}
+
+/// Draw the app until it settles with the pointer at `cursor`: the view's
+/// own messages (sizes measured by sensors, scrolls) are fed back, the
+/// pointer's hover fades in, artwork arrives.
+fn settle_with(app: &mut App, renderer: &mut Renderer, size: Size, cursor: Option<Point>) -> Vec<u8> {
+    let cur = cursor.map_or(mouse::Cursor::Unavailable, mouse::Cursor::Available);
+    let frame = Rectangle::with_size(size);
+    let mut tree: Option<Tree> = None;
+    let mut quiet = 0;
+    for step in 0..90 {
+        let mut messages = Vec::new();
+        {
+            let mut view = app.view();
+            let t = match &mut tree {
+                Some(t) => {
+                    t.diff(view.as_widget());
+                    t
+                }
+                None => tree.insert(Tree::new(view.as_widget())),
+            };
+            let node = view.as_widget_mut().layout(t, renderer, &layout::Limits::new(size, size));
+            let mut events = vec![iced::Event::Window(window::Event::RedrawRequested(Instant::now()))];
+            if let (Some(p), true) = (cursor, step == 2) {
+                events.push(iced::Event::Mouse(mouse::Event::CursorMoved { position: p }));
+            }
+            for e in events {
+                view.as_widget_mut().update(
+                    t,
+                    &e,
+                    Layout::new(&node),
+                    cur,
+                    renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut iced::advanced::Shell::new(&mut messages),
+                    &frame,
+                );
+            }
+        }
+        let fed = !messages.is_empty();
+        for m in messages {
+            drop(app.update(m));
+        }
+        std::thread::sleep(Duration::from_millis(30));
+        if images::take_dirty() || fed || step < 12 {
+            quiet = 0;
+        } else {
+            quiet += 1;
+            if quiet >= 10 {
+                break;
+            }
+        }
+    }
+    let mut view = app.view();
+    let t = tree.get_or_insert_with(|| Tree::new(view.as_widget()));
+    t.diff(view.as_widget());
+    let node = view.as_widget_mut().layout(t, renderer, &layout::Limits::new(size, size));
+    renderer.reset(frame);
+    let theme = app.iced_theme();
+    view.as_widget().draw(t, renderer, &theme, &Default::default(), Layout::new(&node), cur, &frame);
+    Headless::screenshot(renderer, Size::new(size.width as u32, size.height as u32), 1.0, Color::BLACK)
+}
+
+fn sizes() -> Vec<Size> {
+    match super::shots::forced_size() {
+        Some(s) => vec![s],
+        None => vec![Size::new(1366.0, 768.0), Size::new(960.0, 600.0)],
+    }
+}
+
+/// Centre of row `pos` (display order) of the Library's track list.
+fn library_row_y(app: &App, pos: usize) -> f32 {
+    super::page_area(app).y
+        + super::PAGE_TOP
+        + app.lib_bar_h
+        + super::LIB_ACTIONS_H
+        + rows::HEADER_H
+        + pos as f32 * rows::ROW_PITCH
+        + rows::ROW_PITCH / 2.0
+        - app.page_scroll
+}
+
+/// Selected, playing and hovered track rows, apart and together, in both
+/// themes: the selection (neutral ring) must never read as the playing row
+/// (accent) nor as the hover (a wash without a ring).
+#[test]
+#[ignore = "requires an isolated profile and a wgpu adapter; writes PNGs for review"]
+fn panel_shots_row_states() {
+    assert!(std::env::var_os("ABYSS_CONFIG_DIR").is_some() && std::env::var_os("ABYSS_CACHE_DIR").is_some());
+    let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut renderer = renderer_new();
+    let mut app = fixture();
+    let id_at = |app: &App, pos: usize| app.lib_tracks[app.lib_shown[pos]].id;
+    let ix_at = |app: &App, pos: usize| app.lib_shown[pos];
+    for size in sizes() {
+        app.viewport = size;
+        for light in [false, true] {
+            theme::set_light(light);
+            let tag = format!("{}-{}x{}", if light { "light" } else { "dark" }, size.width, size.height);
+            // Measure the Library bar first (its height places the rows).
+            app.page_at = Instant::now() - Duration::from_secs(2);
+            let _ = settle_with(&mut app, &mut renderer, size, None);
+            // Playing = track 1001; selected = the row at 3; pointer over the row at 5.
+            drop(app.update(Message::Row(rows::RowMsg::Select(ix_at(&app, 3), id_at(&app, 3)))));
+            let hover = Point::new(size.width * 0.45, library_row_y(&app, 5));
+            save(&format!("{tag}-rows-apart"), size, &settle_with(&mut app, &mut renderer, size, Some(hover)));
+            // Selected + playing on the same row, the pointer over it.
+            let playing = app.lib_shown.iter().position(|&i| app.lib_tracks[i].id == 1001).unwrap_or(0);
+            drop(app.update(Message::Row(rows::RowMsg::Select(ix_at(&app, playing), 1001))));
+            let hover = Point::new(size.width * 0.45, library_row_y(&app, playing));
+            save(&format!("{tag}-rows-together"), size, &settle_with(&mut app, &mut renderer, size, Some(hover)));
+            // Keyboard: Down twice moves the selection two rows on.
+            for _ in 0..2 {
+                drop(app.row_key(&iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown), iced::keyboard::Modifiers::empty()));
+            }
+            save(&format!("{tag}-rows-keyboard"), size, &settle_with(&mut app, &mut renderer, size, None));
+        }
+    }
+    theme::set_light(false);
+}
+
+/// Context menus opened near every edge of the window stay inside it, above
+/// the player bar, without scrolling when they fit.
+#[test]
+#[ignore = "requires an isolated profile and a wgpu adapter; writes PNGs for review"]
+fn panel_shots_menu_edges() {
+    assert!(std::env::var_os("ABYSS_CONFIG_DIR").is_some() && std::env::var_os("ABYSS_CACHE_DIR").is_some());
+    let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut renderer = renderer_new();
+    let mut app = fixture();
+    let track = app.lib_tracks[1].clone();
+    for size in sizes() {
+        app.viewport = size;
+        for light in [false, true] {
+            theme::set_light(light);
+            let tag = format!("{}-{}x{}", if light { "light" } else { "dark" }, size.width, size.height);
+            let (w, h) = (size.width, size.height);
+            for (name, at, target) in [
+                ("menu-mid", Point::new(w * 0.5, h * 0.5), MenuTarget::Track(track.clone())),
+                ("menu-bottom-right", Point::new(w - 10.0, h - 90.0), MenuTarget::Track(track.clone())),
+                ("menu-top-right", Point::new(w - 6.0, 70.0), MenuTarget::Track(track.clone())),
+                ("menu-sort-right", Point::new(w - 30.0, 200.0), MenuTarget::Sort("tracks")),
+                ("menu-output-bar", Point::new(w - 120.0, h - 30.0), MenuTarget::Output),
+            ] {
+                app.menu = Some((at, target));
+                app.page_at = Instant::now() - Duration::from_secs(2);
+                save(&format!("{tag}-{name}"), size, &settle_with(&mut app, &mut renderer, size, None));
+            }
+            app.menu = None;
+        }
+    }
+    theme::set_light(false);
+}
