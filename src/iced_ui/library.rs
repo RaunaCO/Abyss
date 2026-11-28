@@ -528,7 +528,7 @@ impl App {
                     },
                 )
             }
-            Page::Search(q) if !q.trim().is_empty() && !self.search.contains_key(&q) => self.load_search(q),
+            Page::Search(q) if !q.trim().is_empty() && !self.search_known(&q) => self.load_search(q),
             Page::MyTracks if self.fav_tracks.is_idle() && self.signed_in => {
                 self.fav_tracks = Load::Loading;
                 self.fetch(
@@ -891,6 +891,12 @@ impl App {
         )
     }
 
+    /// Results for `q` are there or on their way. A failed search is not:
+    /// typing the same query again (or reopening its page) retries it.
+    fn search_known(&self, q: &str) -> bool {
+        self.search.get(q).is_some_and(|l| !matches!(l, Load::Failed(_)))
+    }
+
     /// The text in the search box changed: show the menu and search after a short pause.
     pub fn search_typed(&mut self, text: String) -> Task<Message> {
         self.search_query = text;
@@ -898,12 +904,12 @@ impl App {
         self.search_gen += 1;
         let gen = self.search_gen;
         let q = self.search_query.trim().to_string();
-        if q.is_empty() || self.search.contains_key(&q) {
+        if q.is_empty() || self.search_known(&q) {
             return Task::none();
         }
         Task::perform(blocking(|| std::thread::sleep(DEBOUNCE)), move |_| {
             Message::Done(Callback::new(move |app: &mut App| {
-                if app.search_gen == gen && !app.search.contains_key(&q) {
+                if app.search_gen == gen && !app.search_known(&q) {
                     return app.load_search(q);
                 }
                 Task::none()

@@ -253,14 +253,16 @@ fn motion_on_app_idle_home_asks_for_no_frames() {
     screen.settle(&mut app);
     // Nothing moves by itself: no frame subscription.
     assert!(!app.animating(), "animating at rest: now {} ambient {}", app.animating_now(), app.animating_ambient());
-    // In use: the featured pane's lights drift at 20 fps, not at vsync.
+    // In use: the featured pane's lights drift on the shared 30 fps ambient
+    // grid (`liquid_glass::ambient_deadline`), not at vsync.
     let (vsync, timed) = screen.frames_split(&mut app, Duration::from_millis(1000), VSYNC_200);
     assert_eq!(vsync, 0, "nothing should ask for vsync frames at rest");
-    assert!(timed <= 25, "the drift at its slow pace: {timed} frames in 1 s");
+    assert!(timed <= 35, "the drift on its 30 fps grid: {timed} frames in 1 s");
     // Idle with nothing playing: it comes to rest, then no frames at all.
     motion::idle_for_tests();
     let settling = screen.frames_asked(&mut app, Duration::from_millis(3000), VSYNC_200);
-    assert!(settling <= 60, "came to rest in {settling} frames");
+    // Fewer than 3 s of the 30 fps grid: it slows down and stops within the window.
+    assert!(settling < 85, "came to rest in {settling} frames");
     let frames = screen.frames_asked(&mut app, Duration::from_millis(1500), VSYNC_200);
     assert_eq!(frames, 0, "widgets kept asking for frames on the idle Home");
     // A pointer move wakes it: the hover glides at vsync, then only the drift.
