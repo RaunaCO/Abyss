@@ -13,7 +13,7 @@ use iced::{Color, Pixels, Rectangle, Renderer};
 use serde_json::json;
 
 /// Real covers from a cache folder (`ABYSS_COVERS`, or the installed app's).
-fn covers() -> Vec<String> {
+pub(super) fn covers() -> Vec<String> {
     let dir = std::env::var_os("ABYSS_COVERS").map(std::path::PathBuf::from).unwrap_or_else(|| crate::config::cache_dir().join("images"));
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "img")).collect())
@@ -24,7 +24,7 @@ fn covers() -> Vec<String> {
 
 /// One frame: the view diffed into the tree kept between frames (so fades
 /// and menus animate in as they do on screen), a redraw event, then drawn.
-fn draw(app: &App, renderer: &mut Renderer, tree: &mut Option<Tree>, size: Size) -> Vec<u8> {
+pub(super) fn draw(app: &App, renderer: &mut Renderer, tree: &mut Option<Tree>, size: Size) -> Vec<u8> {
     let mut view = app.view();
     let tree = match tree {
         Some(tree) => {
@@ -53,7 +53,7 @@ fn draw(app: &App, renderer: &mut Renderer, tree: &mut Option<Tree>, size: Size)
 }
 
 /// Draw until the artwork has arrived and every fade has settled.
-fn settle(app: &App, renderer: &mut Renderer, size: Size) -> Vec<u8> {
+pub(super) fn settle(app: &App, renderer: &mut Renderer, size: Size) -> Vec<u8> {
     let mut tree = None;
     let mut quiet = 0;
     for _ in 0..80 {
@@ -71,7 +71,7 @@ fn settle(app: &App, renderer: &mut Renderer, size: Size) -> Vec<u8> {
     draw(app, renderer, &mut tree, size)
 }
 
-fn renderer_new() -> Renderer {
+pub(super) fn renderer_new() -> Renderer {
     // The bundled Inter weights, as `run` gives them to the application.
     static FONTS_LOADED: std::sync::Once = std::sync::Once::new();
     FONTS_LOADED.call_once(|| {
@@ -83,12 +83,19 @@ fn renderer_new() -> Renderer {
     iced::futures::executor::block_on(<Renderer as Headless>::new(INTER, Pixels(16.0), None)).expect("offscreen wgpu adapter")
 }
 
-fn save(name: &str, size: Size, pixels: &[u8]) {
-    let dir = std::env::temp_dir().join("abyss-shots");
+pub(super) fn save(name: &str, size: Size, pixels: &[u8]) {
+    let dir = std::env::var_os("ABYSS_SHOT_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("abyss-shots"));
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join(format!("{name}.png"));
     image::save_buffer(&path, pixels, size.width as u32, size.height as u32, image::ColorType::Rgba8).expect("write the PNG");
     println!("{}", path.display());
+}
+
+/// The size every shot is drawn at, from `ABYSS_SHOT_SIZE=<w>x<h>` (design px).
+pub(super) fn forced_size() -> Option<Size> {
+    let v = std::env::var("ABYSS_SHOT_SIZE").ok()?;
+    let (w, h) = v.split_once('x')?;
+    Some(Size::new(w.trim().parse().ok()?, h.trim().parse().ok()?))
 }
 
 #[test]
@@ -255,11 +262,12 @@ fn page_shots() {
     let mut size = Size::new(1440.0, 900.0);
     app.viewport = size;
     let mut shoot = |app: &mut App, name: &str, prep: &dyn Fn(&mut App)| {
-        if name.starts_with("narrow") {
-            size = Size::new(1000.0, 700.0);
-        } else {
-            size = Size::new(1440.0, 900.0);
-        }
+        // `ABYSS_SHOT_SIZE=1366x768` draws every shot at that size (design px).
+        size = match forced_size() {
+            Some(forced) => forced,
+            None if name.starts_with("narrow") => Size::new(1000.0, 700.0),
+            None => Size::new(1440.0, 900.0),
+        };
         app.viewport = size;
         for light in [false, true] {
             let full = format!("{}-{name}", if light { "light" } else { "dark" });
