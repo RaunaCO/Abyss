@@ -236,13 +236,14 @@ impl Lyrics {
     fn layout_key(&self, width: f32) -> (u64, u32, u32, u32) {
         (
             self.doc.generation,
-            (width * 4.0) as u32,
+            layout_width(width) as u32,
             (self.style.font * 100.0) as u32,
             u32::from(self.reading_first) | ((self.style.kind == Kind::Side) as u32) << 1,
         )
     }
 
     fn build_layout(&self, width: f32) -> Layout {
+        let width = layout_width(width);
         let st = &self.style;
         let max_text_w = (width - st.left - st.right - 2.0 * st.pad_x).max(40.0);
         let mut fs = iced::advanced::graphics::text::font_system().write().expect("font system");
@@ -269,9 +270,15 @@ impl Lyrics {
             let mut rows = Vec::new();
             let mut h = st.pad_y;
             let mut w: f32 = 0.0;
-            for (text, font, line_h, weight, alpha) in std::iter::once((primary, st.font, st.line_h, st.weight, 1.0))
+            for (k, (text, font, line_h, weight, alpha)) in std::iter::once((primary, st.font, st.line_h, st.weight, 1.0))
                 .chain(secondary.map(|s| (s, st.sec_font, st.sec_line_h, 500u16, 0.8)))
+                .enumerate()
             {
+                // A breath between a line and its reading (or original), so the
+                // pair reads as one line with a caption, not as two lines.
+                if k == 1 {
+                    h += (st.sec_line_h * 0.15).round();
+                }
                 for (row_text, row_w) in wrap(fs, &text, font, line_h, weight, max_text_w) {
                     rows.push(Row { text: row_text, x: st.pad_x, y: h, line_h, font, weight, alpha });
                     w = w.max(row_w);
@@ -349,6 +356,15 @@ impl Lyrics {
     }
 }
 
+/// The width the lines are wrapped for: whole steps of 8 px below the
+/// widget's. Dragging the side panel's edge changes the width every frame;
+/// each new width re-shapes every line and re-rasterises and re-blurs the
+/// ones that wrap differently, so it now happens once per 8 px (the text
+/// keeps at most 8 px more of the right margin meanwhile).
+fn layout_width(width: f32) -> f32 {
+    (width / 8.0).floor() * 8.0
+}
+
 /// Lines of `text` wrapped at `max_w` (logical px): (row text, row width).
 fn wrap(fs: &mut ct::FontSystem, text: &str, font: f32, line_h: f32, weight: u16, max_w: f32) -> Vec<(String, f32)> {
     let mut buffer = ct::Buffer::new(fs, ct::Metrics::new(font, line_h));
@@ -372,6 +388,36 @@ fn wrap(fs: &mut ct::FontSystem, text: &str, font: f32, line_h: f32, weight: u16
         out.push((text.to_string(), 0.0));
     }
     out
+}
+
+/// `text` (Inter at `size`, `weight`) as it shows in at most `lines` lines
+/// `max_w` px wide: whole when it fits, else the last line cut with "…".
+/// Wraps as Iced's `Wrapping::WordOrGlyph` does, with the same shaper.
+pub fn clamp(text: &str, size: f32, weight: u16, max_w: f32, lines: usize) -> String {
+    let mut fs = iced::advanced::graphics::text::font_system().write().expect("font system");
+    let fs = fs.raw();
+    let attrs = ct::Attrs::new().family(ct::Family::Name("Inter")).weight(ct::Weight(weight));
+    let metrics = ct::Metrics::new(size, size * 1.2);
+    let mut buffer = ct::Buffer::new(fs, metrics);
+    buffer.set_wrap(fs, ct::Wrap::WordOrGlyph);
+    buffer.set_size(fs, Some(max_w), None);
+    buffer.set_text(fs, text, &attrs, ct::Shaping::Advanced, None);
+    buffer.shape_until_scroll(fs, false);
+    // Byte where the last allowed visual line starts.
+    let starts: Vec<usize> = buffer.layout_runs().filter_map(|run| run.glyphs.iter().map(|g| g.start.min(g.end)).min()).collect();
+    if starts.len() <= lines || lines == 0 {
+        return text.to_string();
+    }
+    let from = starts[lines - 1];
+    let (head, tail) = text.split_at(from.min(text.len()));
+    let mut single = ct::Buffer::new(fs, metrics);
+    single.set_wrap(fs, ct::Wrap::None);
+    let cut = super::ellipsis::cut(tail.trim(), max_w - 1.0, |s| {
+        single.set_text(fs, s, &attrs, ct::Shaping::Advanced, None);
+        single.shape_until_scroll(fs, false);
+        single.layout_runs().map(|r| r.line_w).fold(0.0, f32::max)
+    });
+    format!("{head}{cut}")
 }
 
 impl shader::Program<Message> for Lyrics {
