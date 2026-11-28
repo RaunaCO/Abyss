@@ -35,6 +35,51 @@ pub fn fmt_date(iso: &str) -> String {
     crate::i18n::text("date.full", &[d.to_string(), months.get(m.wrapping_sub(1)).copied().unwrap_or("").into(), y.into()])
 }
 
+/// The shared design scale of the catalogue and library panels (art-audit.md
+/// §3): spacing, radii and type sizes in whole steps.
+// TODO(theme): arte is adding the same tokens to `theme.rs` (`SPACE_*`,
+// `R_*`, `TYPE_*`); once merged these become re-exports of them.
+#[allow(dead_code)] // The whole scale is listed, even steps no panel uses yet.
+pub mod scale {
+    pub const SPACE_2XS: f32 = 2.0;
+    pub const SPACE_XS: f32 = 4.0;
+    pub const SPACE_SM: f32 = 8.0;
+    pub const SPACE_MD: f32 = 12.0;
+    pub const SPACE_LG: f32 = 16.0;
+    pub const SPACE_XL: f32 = 24.0;
+    pub const SPACE_XXL: f32 = 32.0;
+    pub const SPACE_XXXL: f32 = 48.0;
+
+    pub const R_XS: f32 = 4.0;
+    pub const R_SM: f32 = 6.0;
+    pub const R_MD: f32 = 8.0;
+    pub const R_LG: f32 = 12.0;
+    pub const R_XL: f32 = 18.0;
+
+    pub const TYPE_MICRO: f32 = 10.0;
+    pub const TYPE_CAPTION: f32 = 11.0;
+    pub const TYPE_LABEL: f32 = 12.0;
+    pub const TYPE_SMALL: f32 = 13.0;
+    pub const TYPE_BODY: f32 = 14.0;
+    pub const TYPE_SECTION: f32 = 16.0;
+    pub const TYPE_HEADING: f32 = 20.0;
+    pub const TYPE_TITLE: f32 = 28.0;
+    pub const TYPE_DISPLAY: f32 = 40.0;
+
+    /// Every page's title (Home, Library, Playlists, Search...), one size for
+    /// all: DISPLAY, a step down (TITLE) when the column is narrow.
+    pub fn page_title(width: f32) -> f32 {
+        if width < 640.0 {
+            TYPE_TITLE
+        } else {
+            TYPE_DISPLAY
+        }
+    }
+}
+
+pub fn medium() -> iced::Font {
+    font(iced::font::Weight::Medium)
+}
 pub fn semibold() -> iced::Font {
     font(iced::font::Weight::Semibold)
 }
@@ -62,8 +107,18 @@ pub fn cover<'a>(url: Option<String>, size: f32, round: bool) -> Element<'a, Mes
 }
 
 pub fn cover_at_opacity<'a>(url: Option<String>, size: f32, round: bool, opacity: f32) -> Element<'a, Message> {
-    let radius = if round { images::snap(size) / 2.0 } else { 4.0 };
+    let radius = if round { images::snap(size) / 2.0 } else { cover_radius(size) };
     cover_with(url, size, radius, opacity)
+}
+
+/// Corners of square artwork: thumbnails in rows and lists `R_SM`, covers in
+/// grids and shelves `R_MD` (art-audit.md §3).
+pub fn cover_radius(size: f32) -> f32 {
+    if size >= 96.0 {
+        scale::R_MD
+    } else {
+        scale::R_SM
+    }
 }
 
 /// A cover with `radius` corners (GPUI clips the catalog header's to 12 px).
@@ -280,8 +335,13 @@ pub fn faded_text(color: Color) -> impl Fn(&iced::Theme) -> text::Style {
 pub fn tip<'a>(content: impl Into<Element<'a, Message>>, label: &'a str) -> Element<'a, Message> {
     // After a short rest, so sweeping the pointer along a bar does not flash
     // a bubble on every icon it crosses.
+    // 6 px clear of the control; the tooltip keeps the bubble inside the
+    // window (`snap_within_viewport`), so at the right edge (the caption
+    // buttons) it slides left instead of being cut.
     iced::widget::tooltip(content, tip_bubble(label), iced::widget::tooltip::Position::Bottom)
+        .gap(6)
         .padding(0)
+        .snap_within_viewport(true)
         .delay(std::time::Duration::from_millis(450))
         .into()
 }
@@ -289,10 +349,65 @@ pub fn tip<'a>(content: impl Into<Element<'a, Message>>, label: &'a str) -> Elem
 /// The tooltips' bubble: GPUI's `sidebar::Tip` metrics (12 px text, 10 x 6
 /// padding, 7 px corners) on a small pane of glass.
 pub fn tip_bubble<'a>(label: impl text::IntoFragment<'a>) -> Element<'a, Message> {
-    super::liquid_glass::glass(container(text(label).size(theme::TYPE_LABEL).color(theme::text())).padding([6, 10]), 7.0)
+    let pane = super::liquid_glass::glass(container(text(label).size(theme::TYPE_LABEL).color(theme::text())).padding([6, 10]), 7.0)
         .optics(super::liquid_glass::Optics::POPOVER)
-        .shadow(theme::popover_shadow())
-        .into()
+        .shadow(theme::popover_shadow());
+    // Iced's tooltip draws its bubble with an infinite viewport; the glass
+    // pane draws its label in a layer clipped to that viewport, and a layer
+    // of infinite size drew nothing (an empty capsule). See [`Finite`].
+    // 6 px of air at the sides, so a bubble pushed against the window's
+    // edge (the caption buttons) does not touch it.
+    Element::new(Finite { content: container(pane).padding([0, 6]).into() })
+}
+
+/// Draws its content with a finite viewport (its own bounds and room for a
+/// shadow) when it is given an unbounded one, as overlays such as Iced's
+/// tooltip do: widgets that open a clipped layer of the viewport (the glass
+/// panes) then draw nothing.
+struct Finite<'a> {
+    content: Element<'a, Message>,
+}
+
+impl iced::advanced::Widget<Message, iced::Theme, iced::Renderer> for Finite<'_> {
+    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+        vec![iced::advanced::widget::Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn size(&self) -> iced::Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> iced::Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        self.content.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        let finite = viewport.width.is_finite() && viewport.height.is_finite() && viewport.x.is_finite() && viewport.y.is_finite();
+        let viewport = if finite { *viewport } else { layout.bounds().expand(48.0) };
+        self.content.as_widget().draw(&tree.children[0], renderer, theme, style, layout, cursor, &viewport);
+    }
 }
 
 /// 7728 -> "2:08:48"; 968 -> "16:08".
@@ -331,11 +446,11 @@ pub fn quality_badge<'a>(tags: &[String]) -> Option<Element<'a, Message>> {
 }
 
 pub fn badge<'a>(label: &'a str, fg: Color, bg: Color) -> Element<'a, Message> {
-    container(text(label).size(10).font(bold()).color(fg))
+    container(text(label).size(scale::TYPE_MICRO).font(semibold()).color(fg))
         .padding([1, 5])
         .style(move |_| container::Style {
             background: Some(bg.into()),
-            border: Border { radius: 3.0.into(), ..Default::default() },
+            border: Border { radius: scale::R_XS.into(), ..Default::default() },
             ..Default::default()
         })
         .into()
@@ -352,13 +467,14 @@ pub fn explicit_badge<'a>() -> Element<'a, Message> {
         .into()
 }
 
-/// Height of [`section_title`]: 22 px above, an 18 px line, 12 px below.
-pub const SECTION_H: f32 = 22.0 + 18.0 * 1.3 + 12.0;
+/// Height of [`section_title`]: 24 px above, a HEADING line, 12 px below.
+pub const SECTION_H: f32 = scale::SPACE_XL + scale::TYPE_HEADING * 1.3 + scale::SPACE_MD;
 
-/// A section's heading in a page (GPUI's `section_title`: 18 px bold, 22 px above, 12 below).
+/// A section's heading in a page: HEADING, semibold (the page title above it
+/// is the bold one), 24 px above, 12 below.
 pub fn section_title<'a>(title: impl text::IntoFragment<'a>) -> Element<'a, Message> {
-    container(text(title).size(18).font(bold()).color(theme::text()))
-        .padding(iced::Padding { top: 22.0, bottom: 12.0, ..Default::default() })
+    container(text(title).size(scale::TYPE_HEADING).font(semibold()).color(theme::text()))
+        .padding(iced::Padding { top: scale::SPACE_XL, bottom: scale::SPACE_MD, ..Default::default() })
         .height(SECTION_H)
         .into()
 }
@@ -573,7 +689,7 @@ fn catalogue_card<'a>(item: &Item, width: f32, rating: Option<(Element<'a, Messa
         // GPUI `card`: under the pointer a soft shadow grows under the cover,
         // a gradient to 55 % black fades over it and the play button fades in,
         // all with the card's eased hover (read at draw time).
-        let r = if round { images::snap(width) / 2.0 } else { 4.0 };
+        let r = if round { images::snap(width) / 2.0 } else { cover_radius(width) };
         let shade = move |_: &iced::Theme| {
             let phase = super::wash::phase();
             let h = phase.hover;
@@ -598,7 +714,7 @@ fn catalogue_card<'a>(item: &Item, width: f32, rating: Option<(Element<'a, Messa
         ]
         .into()
     };
-    let name = line(title.clone(), theme::TYPE_LABEL, theme::text()).font(bold()).underline_on_hover();
+    let name = line(title.clone(), scale::TYPE_SMALL, theme::text()).font(semibold()).underline_on_hover();
     let title_row = row![]
         .push(if explicit { leave_room(name, 20.0) } else { name.into() })
         .push(explicit.then(explicit_badge))
@@ -610,12 +726,15 @@ fn catalogue_card<'a>(item: &Item, width: f32, rating: Option<(Element<'a, Messa
         None => (None, None),
     };
     let year_row = (!year.is_empty() || visible_stars.is_some() || hover_stars.is_some()).then(|| {
-        row![line(year, 10.0, theme::text_dim()).font(bold()).width(Length::Fill)].push(visible_stars).height(13).align_y(Alignment::Center)
+        row![line(year, scale::TYPE_CAPTION, theme::text_dim()).width(Length::Fill)]
+            .push(visible_stars)
+            .height(13)
+            .align_y(Alignment::Center)
     });
     let body = column![
         art,
         // GPUI's caption: 12 px bold title, 11.5 px subtitle, 10 px bold year.
-        column![title_row, line(subtitle, 11.5, theme::text_secondary())].push(year_row).spacing(3)
+        column![title_row, line(subtitle, scale::TYPE_LABEL, theme::text_secondary())].push(year_row).spacing(3)
     ]
     .spacing(7)
     .width(width);

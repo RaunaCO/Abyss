@@ -12,7 +12,7 @@ use iced::{alignment, Alignment, Border, Color, Element, Length, Padding};
 use super::icons::Icon;
 use super::library::lib_section;
 use super::rows::{track_row, RowStyle, Source};
-use super::widgets::{self, card, cover, error_message, fmt_hms, fmt_long, icon_button, line, loading, pill, section_title};
+use super::widgets::{self, card, cover, error_message, fmt_hms, fmt_long, icon_button, line, loading, pill, scale, section_title};
 use super::{theme, App, Dialog, MenuTarget, Message, RemoveKind};
 use crate::shared::{Load, Page};
 use crate::tidal::{share_url, *};
@@ -21,7 +21,9 @@ pub const PAGE_SCROLL: &str = "abyss-page";
 pub const DIALOG_TITLE_ID: &str = "abyss-dialog-title";
 
 /// Height of a track row including its margins.
-const TRACK_ROW_H: f32 = theme::ROW_H + 4.0;
+const TRACK_ROW_H: f32 = super::rows::ROW_PITCH;
+/// Space above every page's content column (GPUI: 22 px with the title's own 4).
+pub const PAGE_TOP: f32 = 18.0;
 
 pub fn scroll_style(_: &iced::Theme, status: scrollable::Status) -> scrollable::Style {
     let (horizontal, vertical) = match status {
@@ -355,7 +357,7 @@ pub fn content(app: &App) -> Element<'_, Message> {
     let width = content_width(app);
     let body = page_body(app, width);
     // GPUI ends every page with a 32 px spacer.
-    let column = container(body).width(width).padding(Padding { top: 18.0, bottom: 32.0, ..Default::default() });
+    let column = container(body).width(width).padding(Padding { top: PAGE_TOP, bottom: 32.0, ..Default::default() });
     let page = container(column)
         .width(Length::Fill)
         .align_x(alignment::Horizontal::Center)
@@ -472,8 +474,8 @@ impl iced::widget::canvas::Program<Message> for PageFade {
     }
 }
 
-/// Height of [`title`] without a subtitle: 4 + a 30 px line + 14.
-const TITLE_H: f32 = 4.0 + 30.0 * 1.3 + 14.0;
+/// Height of [`title`] without a subtitle: 4 + a DISPLAY line + 14.
+const TITLE_H: f32 = 4.0 + scale::TYPE_DISPLAY * 1.3 + 14.0;
 /// Height of [`filter_box`] with the space under it.
 const FILTER_H: f32 = 34.0 + 16.0;
 /// Height of [`top_hit`]: a 112 px cover, 20 px around it and the edge.
@@ -499,8 +501,11 @@ fn top_hit<'a>(item: &Item) -> Element<'a, Message> {
         Item::Link(l) => (l.title.clone(), String::new(), None, false),
         Item::Promo(p) => (p.title.clone(), p.subtitle.clone(), p.image_url(), false),
     };
-    let names =
-        column![line(title, 22.0, theme::text()).font(widgets::bold()), line(sub, theme::TYPE_BODY, theme::text_secondary())].spacing(6);
+    let names = column![
+        line(title, scale::TYPE_HEADING, theme::text()).font(widgets::semibold()),
+        line(sub, theme::TYPE_BODY, theme::text_secondary())
+    ]
+    .spacing(6);
     let body = row![cover(url, 112.0, round), container(names).width(Length::Fill).clip(true)].spacing(20).align_y(Alignment::Center);
     // `theme::liquid_glass` is a real pane of glass now (see `liquid_glass`).
     // A card that opens as a whole: a control, so its glass follows the pointer.
@@ -510,9 +515,10 @@ fn top_hit<'a>(item: &Item) -> Element<'a, Message> {
     mouse_area(card).on_press(Message::OpenItem(item.clone())).interaction(iced::mouse::Interaction::Pointer).into()
 }
 
-/// A page's title, as GPUI's `Block::Title`: 30 px (36 on Home).
+/// A page's title: DISPLAY, the same on every page (Home, Explore,
+/// Playlists, Search...), with its subtitle under it.
 fn title<'a>(t: impl text::IntoFragment<'a>, sub: Option<String>) -> Element<'a, Message> {
-    title_sized(t, sub, 30.0, 14.0)
+    title_sized(t, sub, scale::TYPE_DISPLAY, 14.0)
 }
 
 fn title_sized<'a>(t: impl text::IntoFragment<'a>, sub: Option<String>, size: f32, below: f32) -> Element<'a, Message> {
@@ -527,8 +533,23 @@ fn title_sized<'a>(t: impl text::IntoFragment<'a>, sub: Option<String>, size: f3
 fn load_state<'a, T>(l: Option<&Load<T>>) -> Option<Element<'a, Message>> {
     match l {
         Some(Load::Ready(_)) => None,
-        Some(Load::Failed(e)) => Some(page_error(e, Message::RetryPage)),
+        // The failure takes the place of the dots, centred in the same band:
+        // nothing jumps when the loading turns into an error.
+        Some(Load::Failed(e)) => Some(container(page_error(e, Message::RetryPage)).center(Length::Fill).height(240).into()),
         _ => Some(container(widgets::loading_dots()).width(Length::Fill).height(240).center(Length::Fill).into()),
+    }
+}
+
+/// A catalogue page that is not ready: its failure (with Retry) centred in
+/// the view, where the page's loading dots were, so the error does not jump
+/// to the top when the loading fails.
+fn whole_page_state<'a, T>(app: &App, l: Option<&Load<T>>) -> Element<'a, Message> {
+    match l {
+        Some(Load::Failed(e)) => {
+            let h = (page_area(app).height - PAGE_TOP - 32.0).max(240.0);
+            container(page_error(e, Message::RetryPage)).center(Length::Fill).height(h).into()
+        }
+        other => load_state(other).unwrap_or_else(loading),
     }
 }
 
@@ -547,9 +568,9 @@ fn strip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
 /// 15 px title 26 px below the block above, 130 px cards 12 px apart).
 pub(super) fn card_row<'a>(t: String, items: &[Item]) -> Element<'a, Message> {
     let cards = row(items.iter().map(|i| card(i, theme::ROW_CARD_W))).spacing(theme::GAP);
-    let heading = container(text(t).size(15).font(widgets::bold()).color(theme::text())).padding(Padding {
-        top: 26.0,
-        bottom: 12.0,
+    let heading = container(text(t).size(scale::TYPE_HEADING).font(widgets::semibold()).color(theme::text())).padding(Padding {
+        top: scale::SPACE_XL,
+        bottom: scale::SPACE_MD,
         ..Default::default()
     });
     column![heading, strip(cards)].into()
@@ -559,9 +580,9 @@ pub(super) fn card_row<'a>(t: String, items: &[Item]) -> Element<'a, Message> {
 fn home_row<'a>(t: String, items: &[Item], width: f32) -> Element<'a, Message> {
     let card_w = (width * 0.17).clamp(112.0, 152.0).min(width);
     let cards = row(items.iter().map(|i| card(i, card_w))).spacing(theme::GAP);
-    let heading = container(text(t).size(19).font(widgets::bold()).color(theme::text())).padding(Padding {
-        top: 18.0,
-        bottom: 12.0,
+    let heading = container(text(t).size(scale::TYPE_HEADING).font(widgets::semibold()).color(theme::text())).padding(Padding {
+        top: scale::SPACE_LG,
+        bottom: scale::SPACE_MD,
         ..Default::default()
     });
     column![rule(), heading, strip(cards), Space::new().height((24.0 - STRIP_BAR).max(0.0))].into()
@@ -593,7 +614,8 @@ pub(super) fn shelf_panel<'a>(t: String, items: &[Item], width: f32) -> Element<
     let available = (width - 2.0 * inset - 2.0).max(1.0);
     let card_w = (available * 0.17).clamp(112.0, 152.0).min(available);
     let cards = row(items.iter().map(|i| card(i, card_w))).spacing(theme::GAP);
-    let inner = column![text(t).size(16).font(widgets::bold()).color(theme::text()), strip(cards)].spacing(14);
+    let inner =
+        column![text(t).size(scale::TYPE_SECTION).font(widgets::semibold()).color(theme::text()), strip(cards)].spacing(scale::SPACE_MD);
     flat_panel(inner, width)
 }
 
@@ -604,20 +626,22 @@ fn chips<'a>(t: String, items: &[Item], home: bool) -> Element<'a, Message> {
             Item::Link(l) => l.title.clone(),
             _ => String::new(),
         };
-        let b = button(container(text(label).size(12.5).font(widgets::bold())).height(36).align_y(alignment::Vertical::Center))
-            .padding([0, 16])
-            // The hover fades in with the eased phase of the `track` below.
-            .style(|_, _| button::Style {
-                background: Some(super::wash::mix(theme::control(), theme::active(), super::wash::phase().hover).into()),
-                text_color: theme::text(),
-                border: Border { radius: 18.0.into(), ..Default::default() },
-                ..Default::default()
-            })
-            .on_press(Message::OpenItem(i.clone()));
+        let b = button(
+            container(text(label).size(scale::TYPE_SMALL).font(widgets::semibold())).height(36).align_y(alignment::Vertical::Center),
+        )
+        .padding([0, 16])
+        // The hover fades in with the eased phase of the `track` below.
+        .style(|_, _| button::Style {
+            background: Some(super::wash::mix(theme::control(), theme::active(), super::wash::phase().hover).into()),
+            text_color: theme::text(),
+            border: Border { radius: 18.0.into(), ..Default::default() },
+            ..Default::default()
+        })
+        .on_press(Message::OpenItem(i.clone()));
         super::wash::track(b).into()
     });
-    let heading = container(text(t).size(theme::TYPE_SECTION).font(widgets::bold()).color(theme::text())).padding(Padding {
-        top: if home { 0.0 } else { 26.0 },
+    let heading = container(text(t).size(theme::TYPE_SECTION).font(widgets::semibold()).color(theme::text())).padding(Padding {
+        top: if home { 0.0 } else { scale::SPACE_XL },
         bottom: 12.0,
         ..Default::default()
     });
@@ -653,9 +677,10 @@ fn links<'a>(items: &[Item], width: f32, home: bool) -> Element<'a, Message> {
             }
             _ => (String::new(), Icon::Mix),
         };
-        let body = row![super::icons::icon(glyph, 18.0, theme::text()), line(label, 12.5, theme::text()).font(widgets::bold())]
-            .spacing(12)
-            .align_y(Alignment::Center);
+        let body =
+            row![super::icons::icon(glyph, 18.0, theme::text()), line(label, scale::TYPE_SMALL, theme::text()).font(widgets::semibold())]
+                .spacing(12)
+                .align_y(Alignment::Center);
         widgets::soft(
             button(container(body).height(46).align_y(alignment::Vertical::Center))
                 .width(cell)
@@ -687,17 +712,19 @@ fn featured<'a>(t: String, items: &[Item], width: f32, home: bool) -> Element<'a
         };
         let body = column![
             art,
-            container(text(p.label.to_uppercase()).size(8.5).font(widgets::bold()).color(theme::accent()))
+            container(text(p.label.to_uppercase()).size(scale::TYPE_MICRO).font(widgets::semibold()).color(theme::accent()))
                 .padding(Padding { top: 4.0, ..Default::default() }),
-            line(p.title.clone(), 13.0, theme::text()).font(widgets::bold()),
+            line(p.title.clone(), scale::TYPE_SMALL, theme::text()).font(widgets::semibold()),
             line(p.subtitle.clone(), 11.5, theme::text_secondary()),
         ]
         .spacing(6)
         .width(w);
         Some(mouse_area(body).on_press(Message::OpenItem(it.clone())).interaction(iced::mouse::Interaction::Pointer).into())
     });
-    let heading = container(text(t).size(if home { 18 } else { 15 }).font(widgets::bold()).color(theme::text()))
-        .padding(Padding { bottom: 12.0, ..Default::default() });
+    let heading = container(
+        text(t).size(if home { scale::TYPE_SECTION } else { scale::TYPE_HEADING }).font(widgets::semibold()).color(theme::text()),
+    )
+    .padding(Padding { bottom: 12.0, ..Default::default() });
     column![heading, strip(row(promos).spacing(14))].into()
 }
 
@@ -721,7 +748,7 @@ fn shortcuts<'a>(t: String, items: &[Item], width: f32, home: bool) -> Element<'
                 .style(|_| container::Style { background: Some(theme::accent().into()), ..Default::default() })
                 .into(),
         };
-        let names = column![line(title, 11.0, theme::text()).font(widgets::bold())]
+        let names = column![line(title, scale::TYPE_LABEL, theme::text()).font(widgets::semibold())]
             .push((!subtitle.is_empty()).then(|| line(subtitle, 10.0, theme::text_dim())))
             .spacing(2);
         let body = row![art, container(names).width(Length::Fill).clip(true)]
@@ -744,7 +771,7 @@ fn shortcuts<'a>(t: String, items: &[Item], width: f32, home: bool) -> Element<'
             .on_press(Message::OpenItem(it.clone()));
         super::wash::track(b).into()
     });
-    let heading = text(t).size(theme::TYPE_SECTION).font(widgets::bold()).color(theme::text());
+    let heading = text(t).size(theme::TYPE_SECTION).font(widgets::semibold()).color(theme::text());
     column![heading, row(tiles).spacing(8).wrap().vertical_spacing(8)]
         .spacing(12)
         .padding(Padding { top: if home { 0.0 } else { 22.0 }, ..Default::default() })
@@ -863,7 +890,7 @@ fn page_body(app: &App, width: f32) -> Element<'_, Message> {
 fn home(app: &App, width: f32) -> Element<'_, Message> {
     // GPUI has no tabs here: Staff picks and Uploads are sections of
     // "Mixes & new releases" (see `discover`).
-    let mut c = column![title_sized(crate::i18n::t("home"), None, 36.0, 20.0)];
+    let mut c = column![title_sized(crate::i18n::t("home"), None, scale::TYPE_DISPLAY, 20.0)];
     let data = Some(&app.home);
     match data {
         Some(Load::Ready(rows)) => c = c.push(super::home::view(app, rows, width)),
@@ -876,10 +903,12 @@ fn home(app: &App, width: f32) -> Element<'_, Message> {
 /// (GPUI's `Block::SourceTag`).
 pub(super) fn source_tag<'a>(tag: String, note: String) -> Element<'a, Message> {
     let chip =
-        container(text(tag).size(10).font(widgets::bold()).color(theme::text_secondary())).padding([3, 8]).style(|_| container::Style {
-            background: Some(theme::control().into()),
-            border: Border { radius: 5.0.into(), ..Default::default() },
-            ..Default::default()
+        container(text(tag).size(scale::TYPE_MICRO).font(widgets::semibold()).color(theme::text_secondary())).padding([3, 8]).style(|_| {
+            container::Style {
+                background: Some(theme::control().into()),
+                border: Border { radius: 5.0.into(), ..Default::default() },
+                ..Default::default()
+            }
         });
     let rule = container(Space::new().width(Length::Fill).height(1))
         .style(|_| container::Style { background: Some(theme::divider().into()), ..Default::default() });
@@ -976,7 +1005,7 @@ pub fn bare_field_style(_: &iced::Theme, _: text_input::Status) -> text_input::S
 /// Mixes look like sections of a page rather than pages).
 fn title_sort<'a>(t: &'a str, section: &'static str) -> Element<'a, Message> {
     let more = icon_button(Icon::More, 18.0, theme::text_secondary(), Message::OpenMenu(MenuTarget::Sort(section)));
-    row![text(t).size(30).font(widgets::bold()).color(theme::text()), container(more).id(super::menus::SORT_ANCHOR)]
+    row![text(t).size(scale::TYPE_DISPLAY).font(widgets::bold()).color(theme::text()), container(more).id(super::menus::SORT_ANCHOR)]
         .spacing(8)
         .align_y(Alignment::Center)
         // With the column's own 18 px, 22 px above.
@@ -1016,17 +1045,64 @@ fn head_pad(width: f32) -> f32 {
     }
 }
 
-pub(super) fn catalog_cover_size(width: f32) -> f32 {
-    (if width < 480.0 { width * 0.43 } else { width * 0.21 }).clamp(42.0, 200.0)
+/// The metrics of a catalogue header: from the column's width and, in a short
+/// window (under 720 design px, e.g. 1366x768 at 125 % or 960x600), a compact
+/// variant (smaller cover and title, tighter insides) so the first tracks show
+/// under the header instead of a whole screen of header.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Head {
+    width: f32,
+    short: bool,
 }
 
-fn head_row_h(width: f32) -> f32 {
-    catalog_cover_size(width).max(HEAD_INFO)
-}
+impl Head {
+    pub(super) fn of(app: &App, width: f32) -> Self {
+        Self { width, short: app.viewport.height < 720.0 }
+    }
 
-/// Height of [`header`] at `width`.
-pub(super) fn header_h(width: f32) -> f32 {
-    HEAD_TOP + 2.0 * head_pad(width) + head_row_h(width) + 18.0 + 13.0 + HEAD_ACTIONS + HEAD_BOTTOM
+    fn pad(self) -> f32 {
+        if self.short {
+            head_pad(self.width).min(16.0)
+        } else {
+            head_pad(self.width)
+        }
+    }
+
+    /// The cover's side.
+    pub(super) fn cover(self) -> f32 {
+        let max = if self.short { 148.0 } else { 200.0 };
+        (if self.width < 480.0 { self.width * 0.43 } else { self.width * 0.21 }).clamp(42.0, max)
+    }
+
+    /// Height of the cover row: the cover, or the details beside it if taller.
+    fn row_h(self) -> f32 {
+        self.cover().max(if self.short { 152.0 } else { HEAD_INFO })
+    }
+
+    /// Space between the cover row and the rule over the actions.
+    fn gap(self) -> f32 {
+        if self.short {
+            12.0
+        } else {
+            18.0
+        }
+    }
+
+    /// The title's size and line height (at most three lines).
+    fn title(self) -> (f32, f32) {
+        if self.width < 480.0 {
+            (28.0, 32.0)
+        } else if self.short {
+            (34.0, 40.0)
+        } else {
+            (scale::TYPE_DISPLAY, 46.0)
+        }
+    }
+
+    /// Height of the whole header: the tracks below it are virtualised from it.
+    pub(super) fn h(self) -> f32 {
+        HEAD_TOP + 2.0 * self.pad() + self.row_h() + self.gap() + 13.0 + HEAD_ACTIONS + HEAD_BOTTOM
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1035,13 +1111,13 @@ fn header<'a>(
     kind: String,
     name: String,
     details: Element<'a, Message>,
-    width: f32,
+    head: Head,
     primary: Vec<Element<'a, Message>>,
     secondary: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let row_h = head_row_h(width);
+    let row_h = head.row_h();
     // GPUI: 40 px on a 46 px line (28 on 32 when the header stacks), at most three lines.
-    let (size, lead) = if width < 480.0 { (28.0, 32.0) } else { (40.0, 46.0) };
+    let (size, lead) = head.title();
     let title = text(name)
         .size(size)
         .line_height(text::LineHeight::Absolute(lead.into()))
@@ -1053,7 +1129,7 @@ fn header<'a>(
         container(title).max_height(3.0 * lead).clip(true),
         details,
     ]
-    .spacing(8);
+    .spacing(if head.short { 6 } else { 8 });
     let top = row![art, container(info).width(Length::Fill).height(row_h).align_y(alignment::Vertical::Center).clip(true)]
         .spacing(18)
         .align_y(Alignment::Center)
@@ -1067,17 +1143,17 @@ fn header<'a>(
     ]
     .align_y(Alignment::Center)
     .height(HEAD_ACTIONS);
-    let inner = column![top, column![rule, Space::new().height(12), bottom]].spacing(18);
-    let surface = container(inner).padding(head_pad(width)).width(Length::Fill);
+    let inner = column![top, column![rule, Space::new().height(12), bottom]].spacing(head.gap());
+    let surface = container(inner).padding(head.pad()).width(Length::Fill);
     let surface = super::liquid_glass::glass(surface, super::liquid_glass::PANEL_R).shadow(theme::popover_shadow());
-    container(surface).padding(Padding { top: HEAD_TOP, bottom: HEAD_BOTTOM, ..Default::default() }).height(header_h(width)).into()
+    container(surface).padding(Padding { top: HEAD_TOP, bottom: HEAD_BOTTOM, ..Default::default() }).height(head.h()).into()
 }
 
 /// A labelled action under a header: icon with a small caption (GPUI's `action`).
 fn head_action<'a>(i: Icon, label: &'a str, active: bool, msg: Message) -> Element<'a, Message> {
-    let color = if active { theme::accent() } else { theme::text() };
+    let (glyph, caption) = if active { (theme::accent(), theme::accent()) } else { (theme::text(), theme::text_secondary()) };
     let b = button(
-        column![super::icons::icon(i, 18.0, color), text(label).size(10).font(widgets::bold()).color(color)]
+        column![super::icons::icon(i, 18.0, glyph), text(label).size(scale::TYPE_CAPTION).font(widgets::medium()).color(caption)]
             .spacing(5)
             .align_x(Alignment::Center),
     )
@@ -1126,6 +1202,7 @@ fn track_list<'a>(
     menu: impl Fn(usize, &Track) -> MenuTarget,
 ) -> Element<'a, Message> {
     let count = shown.map_or(tracks.len(), <[usize]>::len);
+    super::rows::note_list(y0 + super::rows::HEADER_H, tracks.len(), shown);
     let range = visible_rows(app, y0 + super::rows::HEADER_H, TRACK_ROW_H, count);
     let list = virtual_list(count, TRACK_ROW_H, range, |k| {
         let i = shown.map_or(k, |shown| shown[k]);
@@ -1135,21 +1212,34 @@ fn track_list<'a>(
 }
 
 /// An album with several discs: a heading before each one.
-fn disc_list<'a>(app: &App, tracks: &[Track], style: RowStyle) -> Element<'a, Message> {
+fn disc_list<'a>(app: &App, tracks: &[Track], y0: f32, style: RowStyle) -> Element<'a, Message> {
+    // The arrow keys move along the rows (the disc headings shift them a little).
+    super::rows::note_list(y0 + super::rows::HEADER_H, tracks.len(), None);
     let mut list = column![super::rows::header(app, style)];
     let mut disc = 0;
     for (i, track) in tracks.iter().enumerate() {
         if track.volume_number != disc {
             disc = track.volume_number;
-            list = list.push(note_text(crate::i18n::text("disc.number", &[disc.to_string()])));
+            list = list.push(disc_heading(disc, disc > 1));
         }
         list = list.push(track_row(app, i, track, style, &Source::Page, MenuTarget::Track(track.clone())));
     }
     list.into()
 }
 
+/// A disc's heading in an album's list: a dim caption in capitals over the
+/// number column, as the unfolded album's (more air above a later disc).
+fn disc_heading<'a>(disc: u32, later: bool) -> Element<'a, Message> {
+    let label = crate::i18n::text("disc.heading", &[disc.to_string()]);
+    container(text(label).size(widgets::scale::TYPE_CAPTION).font(widgets::semibold()).color(theme::text_dim()))
+        .height(if later { 40.0 } else { 28.0 })
+        .padding(Padding { left: 12.0, bottom: 6.0, ..Default::default() })
+        .align_y(alignment::Vertical::Bottom)
+        .into()
+}
+
 fn album_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
-    let Some(Load::Ready((album, tracks))) = app.albums.get(&id) else { return load_state(app.albums.get(&id)).unwrap_or_else(loading) };
+    let Some(Load::Ready((album, tracks))) = app.albums.get(&id) else { return whole_page_state(app, app.albums.get(&id)) };
     let total: u64 = tracks.iter().map(|t| t.duration as u64).sum();
     let count = if tracks.len() == 1 {
         crate::i18n::t("1_track").to_string()
@@ -1165,7 +1255,7 @@ fn album_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
     let fav = app.fav_album_ids.contains(&id);
     let artist_name = row![
         super::icons::icon(Icon::Artist, 14.0, theme::text_secondary()),
-        line(album.artist_names(), 12.5, theme::text()).font(widgets::bold()).underline_on_hover()
+        line(album.artist_names(), scale::TYPE_SMALL, theme::text()).font(widgets::semibold()).underline_on_hover()
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -1197,24 +1287,24 @@ fn album_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
         secondary.push(head_action(Icon::Link, crate::i18n::t("share"), false, Message::CopyLink(share_url("album", &id.to_string()))));
     }
     secondary.push(head_action(Icon::More, crate::i18n::t("more"), false, Message::OpenMenu(MenuTarget::Album(album.clone()))));
-    let size = catalog_cover_size(width);
-    let art = mouse_area(widgets::cover_rounded(album.cover(640), size, 12.0))
+    let metrics = Head::of(app, width);
+    let art = mouse_area(widgets::cover_rounded(album.cover(640), metrics.cover(), scale::R_MD))
         .on_press(Message::OpenCover(album.cover(1280).unwrap_or_default()));
     let head = header(
         art.into(),
         (if local { crate::i18n::t("local_album") } else { crate::i18n::t("album") }).to_string(),
         album.title.clone(),
         details.into(),
-        width,
+        metrics,
         play_pills(app, !tracks.is_empty()),
         secondary,
     );
-    let head_h = header_h(width);
+    let head_h = metrics.h();
     let style = RowStyle::new(false, false, true).fit(width);
     let list = if tracks.is_empty() {
         widgets::notice(Icon::Album, crate::i18n::t("this_album_has_no_available_tracks"))
     } else if tracks.iter().any(|t| t.volume_number > 1) {
-        disc_list(app, tracks, style)
+        disc_list(app, tracks, head_h + widgets::SECTION_H, style)
     } else {
         track_list(app, tracks, None, head_h + widgets::SECTION_H, style, |_, t| MenuTarget::Track(t.clone()))
     };
@@ -1242,7 +1332,7 @@ fn album_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
 }
 
 fn artist_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
-    let Some(Load::Ready(a)) = app.artists.get(&id) else { return load_state(app.artists.get(&id)).unwrap_or_else(loading) };
+    let Some(Load::Ready(a)) = app.artists.get(&id) else { return whole_page_state(app, app.artists.get(&id)) };
     let tracks = &a.top_tracks;
     let follows = app.fav_artist_ids.contains(&id);
     let local = crate::local::is_local_id(id);
@@ -1274,16 +1364,17 @@ fn artist_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
         1 => crate::i18n::t("1_featured_track").to_string(),
         n => crate::i18n::text("featured_tracks", &[n.to_string()]),
     };
+    let metrics = Head::of(app, width);
     let head = header(
-        cover(a.artist.picture(640), catalog_cover_size(width), true),
+        cover(a.artist.picture(640), metrics.cover(), true),
         crate::i18n::t("artist").into(),
         a.artist.name.clone(),
         text(featured).size(theme::TYPE_LABEL).color(theme::text_secondary()).into(),
-        width,
+        metrics,
         primary,
         secondary,
     );
-    let head_h = header_h(width);
+    let head_h = metrics.h();
     let mut c = column![head];
     if !tracks.is_empty() {
         let style = RowStyle::new(true, true, false).fit(width);
@@ -1310,7 +1401,7 @@ fn artist_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
         // GPUI: a flat panel with a 16 px heading and 13 px text on 21 px lines, 900 px at most.
         let body = text(bio.clone()).size(13).line_height(text::LineHeight::Absolute(21.0.into())).color(theme::text_secondary());
         let inner = column![
-            text(crate::i18n::t("biography")).size(theme::TYPE_SECTION).font(widgets::bold()).color(theme::text()),
+            text(crate::i18n::t("biography")).size(theme::TYPE_SECTION).font(widgets::semibold()).color(theme::text()),
             container(body).max_width(900)
         ]
         .spacing(14);
@@ -1321,7 +1412,7 @@ fn artist_page(app: &App, id: u64, width: f32) -> Element<'_, Message> {
 
 fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Message> {
     let Some(Load::Ready((pl, tracks))) = app.playlists.get(uuid) else {
-        return load_state(app.playlists.get(uuid)).unwrap_or_else(loading);
+        return whole_page_state(app, app.playlists.get(uuid));
     };
     let total: u64 = tracks.iter().map(|t| t.duration as u64).sum();
     let own = app.is_own_playlist(uuid);
@@ -1329,7 +1420,7 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
     // As GPUI: creator, up to two lines of description, then the count.
     let mut details = column![].spacing(8);
     if !pl.creator.is_empty() {
-        details = details.push(line(pl.creator.clone(), 12.5, theme::text()).font(widgets::bold()));
+        details = details.push(line(pl.creator.clone(), scale::TYPE_SMALL, theme::text()).font(widgets::semibold()));
     }
     if !pl.description.is_empty() {
         details = details.push(
@@ -1341,8 +1432,7 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
     }
     details = details.push(
         text(crate::i18n::text("tracks.count_detail", &[tracks.len().to_string(), fmt_hms(total)]))
-            .size(11.5)
-            .font(widgets::semibold())
+            .size(scale::TYPE_LABEL)
             .color(theme::text_secondary()),
     );
     let mut secondary: Vec<Element<'a, Message>> = Vec::new();
@@ -1357,12 +1447,13 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
     }
     secondary.push(head_action(Icon::Link, crate::i18n::t("share"), false, Message::CopyLink(share_url("playlist", uuid))));
     secondary.push(head_action(Icon::More, crate::i18n::t("more"), false, Message::OpenMenu(MenuTarget::AddToPlaylist(tracks.clone()))));
+    let metrics = Head::of(app, width);
     let head = header(
-        widgets::cover_rounded(pl.cover(640), catalog_cover_size(width), 12.0),
+        widgets::cover_rounded(pl.cover(640), metrics.cover(), scale::R_MD),
         crate::i18n::t("playlist").into(),
         pl.title.clone(),
         details.into(),
-        width,
+        metrics,
         play_pills(app, !tracks.is_empty()),
         secondary,
     );
@@ -1373,7 +1464,7 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
     };
     let style = RowStyle { date: true, bpm, rating, ..RowStyle::new(true, true, false) }.fit(width);
     let u = uuid.to_string();
-    let list = track_list(app, tracks, Some(&shown), header_h(width) + FILTER_H, style, move |i, t| {
+    let list = track_list(app, tracks, Some(&shown), metrics.h() + FILTER_H, style, move |i, t| {
         if own {
             MenuTarget::PlaylistTrack { uuid: u.clone(), index: i, track: t.clone() }
         } else {
@@ -1384,18 +1475,19 @@ fn playlist_page<'a>(app: &'a App, uuid: &str, width: f32) -> Element<'a, Messag
 }
 
 fn mix_page<'a>(app: &'a App, id: &str, width: f32) -> Element<'a, Message> {
-    let Some(Load::Ready((mix, tracks))) = app.mixes.get(id) else { return load_state(app.mixes.get(id)).unwrap_or_else(loading) };
+    let Some(Load::Ready((mix, tracks))) = app.mixes.get(id) else { return whole_page_state(app, app.mixes.get(id)) };
+    let metrics = Head::of(app, width);
     let head = header(
-        widgets::cover_rounded(mix.image.clone(), catalog_cover_size(width), 12.0),
+        widgets::cover_rounded(mix.image.clone(), metrics.cover(), scale::R_MD),
         crate::i18n::t("mix").into(),
         mix.title.clone(),
         text(mix.subtitle.clone()).size(theme::TYPE_LABEL).color(theme::text_secondary()).into(),
-        width,
+        metrics,
         play_pills(app, !tracks.is_empty()),
         Vec::new(),
     );
     let style = RowStyle::new(true, true, false).fit(width);
-    column![head, track_list(app, tracks, None, header_h(width), style, |_, t| MenuTarget::Track(t.clone()))].into()
+    column![head, track_list(app, tracks, None, metrics.h(), style, |_, t| MenuTarget::Track(t.clone()))].into()
 }
 
 fn search_page<'a>(app: &'a App, q: &str, width: f32) -> Element<'a, Message> {
@@ -1603,7 +1695,7 @@ fn library_controls<'a>(
         .optics(super::liquid_glass::Optics::POPOVER)
         .shadow(theme::popover_shadow());
     let header = column![
-        text(heading).size(34).font(widgets::bold()).color(theme::text()),
+        text(heading).size(scale::TYPE_DISPLAY).font(widgets::bold()).color(theme::text()),
         text(crate::i18n::t("your_library")).size(theme::TYPE_LABEL).color(theme::text_secondary()),
     ]
     .spacing(4)
@@ -1720,8 +1812,9 @@ fn loading_block<'a>() -> Element<'a, Message> {
     container(widgets::loading_dots()).width(Length::Fill).height(320).center(Length::Fill).into()
 }
 
+/// A Library section that failed to load, where its loading dots were ([`loading_block`]).
 fn library_failed(error: &str) -> Element<'_, Message> {
-    page_error(error, Message::RetryPage)
+    container(page_error(error, Message::RetryPage)).center(Length::Fill).height(320).into()
 }
 
 fn page_error<'a>(error: &str, retry: Message) -> Element<'a, Message> {
@@ -1733,7 +1826,8 @@ fn page_error<'a>(error: &str, retry: Message) -> Element<'a, Message> {
 /// the artist and, for albums, year, tracks and length where there is room.
 fn list_row<'a>(art: Element<'a, Message>, t: String, sub: String, meta: Vec<(String, f32)>, item: Item) -> Element<'a, Message> {
     let names =
-        column![line(t, 13.0, theme::text()).font(widgets::semibold()), line(sub, theme::TYPE_LABEL, theme::text_secondary())].spacing(2);
+        column![line(t, scale::TYPE_SMALL, theme::text()).font(widgets::medium()), line(sub, theme::TYPE_LABEL, theme::text_secondary())]
+            .spacing(2);
     let mut r = row![art, container(names).width(Length::Fill).clip(true)].spacing(14).align_y(Alignment::Center);
     for (value, w) in meta {
         r = r.push(container(line(value, theme::TYPE_LABEL, theme::text_secondary())).width(w).clip(true));
@@ -1790,7 +1884,11 @@ fn inline_track<'a>(app: &App, i: usize, track: &Track, source: &Source, multi_d
             border: Border { radius: 6.0.into(), ..Default::default() },
             ..Default::default()
         });
-    let title = line(track.display_title(), 13.0, if current { theme::accent() } else { theme::text() });
+    let title = line(track.display_title(), scale::TYPE_SMALL, if current { theme::accent() } else { theme::text() }).font(if current {
+        widgets::semibold()
+    } else {
+        widgets::medium()
+    });
     // Ratings give way to the title in the narrowest layout; a rated track
     // shows its stars, the like shows once given.
     let rated = app.ratings.get(track.id) > 0;
@@ -1818,8 +1916,8 @@ fn inline_track<'a>(app: &App, i: usize, track: &Track, source: &Source, multi_d
         .height(Length::Fill)
         .align_y(Alignment::Center);
     let base = container(base).height(41).padding([0, 10]).style(move |_| container::Style {
-        background: current.then(|| theme::accent_dim().into()),
-        border: Border { radius: 6.0.into(), ..Default::default() },
+        background: current.then(|| super::rows::tone::playing_fill().into()),
+        border: Border { radius: scale::R_SM.into(), ..Default::default() },
         ..Default::default()
     });
     let hover_stars: Option<Element<'a, Message>> = room_for_stars.then(|| {
@@ -1837,7 +1935,9 @@ fn inline_track<'a>(app: &App, i: usize, track: &Track, source: &Source, multi_d
         .height(Length::Fill)
         .align_y(Alignment::Center);
     let overlay = container(overlay).width(Length::Fill).height(41).padding([0, 10]);
-    let body = super::wash::wash(iced::widget::hover(base, overlay), theme::hover(), 6.0).press(theme::active()).strip(theme::accent());
+    let body = super::wash::wash(iced::widget::hover(base, overlay), super::rows::tone::hover(), scale::R_SM)
+        .press(super::rows::tone::press())
+        .strip(super::rows::tone::strip());
     let body = column![body, rule()];
     mouse_area(body)
         .on_double_click(play)
@@ -1911,7 +2011,10 @@ fn album_inline<'a>(app: &'a App, album: &Album, grid_w: f32, tip_cx: f32) -> El
                 let entries = chunk.iter().map(|e| match e {
                     Ok(i) => inline_track(app, *i, &tracks[*i], &source, multi_disc, list_w),
                     Err(d) => container(
-                        text(crate::i18n::text("disc.heading", &[d.to_string()])).size(10.5).font(widgets::bold()).color(theme::text_dim()),
+                        text(crate::i18n::text("disc.heading", &[d.to_string()]))
+                            .size(scale::TYPE_CAPTION)
+                            .font(widgets::semibold())
+                            .color(theme::text_dim()),
                     )
                     .height(30)
                     .padding(Padding { left: 10.0, right: 10.0, bottom: 4.0, top: 0.0 })
@@ -1942,10 +2045,10 @@ fn album_inline<'a>(app: &'a App, album: &Album, grid_w: f32, tip_cx: f32) -> El
         .on_press(Message::OpenCover(album.cover(1280).or_else(|| album.cover(640)).unwrap_or_default()))
         .interaction(iced::mouse::Interaction::Pointer);
     let title = mouse_area(super::wash::track(
-        container(text(album.title.clone()).size(17).font(widgets::bold()).style(|_| text::Style {
+        container(text(album.title.clone()).size(scale::TYPE_HEADING).font(widgets::bold()).style(|_| text::Style {
             color: Some(theme::lerp(theme::text(), theme::text_secondary(), 0.35 * (1.0 - super::wash::phase().hover))),
         }))
-        .max_height(2.0 * 17.0 * 1.3)
+        .max_height(2.0 * scale::TYPE_HEADING * 1.3)
         .clip(true)
         .padding(Padding { top: 6.0, ..Default::default() }),
     ))
@@ -2222,7 +2325,8 @@ pub fn dialog_overlay<'a>(app: &'a App, dialog: &'a Dialog) -> Element<'a, Messa
     .spacing(12);
     // GPUI: 460 px wide, 20 px padding, 18 px between parts, 16 px corners.
     let panel = container(
-        column![text(heading).size(20).font(widgets::bold()).style(widgets::faded_text(theme::text())), body, footer].spacing(18),
+        column![text(heading).size(scale::TYPE_HEADING).font(widgets::semibold()).style(widgets::faded_text(theme::text())), body, footer]
+            .spacing(scale::SPACE_LG),
     )
     .width(460)
     .padding(20);
@@ -2516,3 +2620,7 @@ mod library_layout_tests {
 #[cfg(test)]
 #[path = "shots.rs"]
 mod shots;
+
+#[cfg(test)]
+#[path = "catalog_shots.rs"]
+mod catalog_shots;

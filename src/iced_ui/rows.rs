@@ -9,7 +9,7 @@ use iced::{alignment, Alignment, Border, Element, Length, Task};
 
 use super::icons::Icon;
 use super::library::SortKey;
-use super::widgets::{self, cover, explicit_badge, fmt_date, fmt_time, icon_box, line};
+use super::widgets::{self, cover, explicit_badge, fmt_date, fmt_time, icon_box, line, scale};
 use super::{theme, App, MenuTarget, Message};
 use crate::shared::{Load, Page};
 use crate::tidal::Track;
@@ -24,6 +24,8 @@ const BPM: f32 = 36.0;
 const RATING: f32 = 84.0;
 /// Height of the column header with its margin.
 pub const HEADER_H: f32 = 39.0;
+/// Height of a track row with the 2 px above and below it.
+pub const ROW_PITCH: f32 = theme::ROW_H + 4.0;
 
 /// Where the rows of a list come from. A page's list is only copied when it
 /// is played, not every time the page is drawn.
@@ -105,12 +107,117 @@ pub enum RowMsg {
     Enter(usize),
     Leave(usize),
     Release,
+    /// A click on row `.0` (track id `.1`) of the page's list selects it.
+    Select(usize, u64),
+    /// A right click: select the row, then open its menu.
+    Menu(usize, u64, Box<MenuTarget>),
+}
+
+/// The selected row of the page's track list: the one clicked last (or
+/// moved to with the arrow keys), drawn with a neutral ring so it never reads
+/// as the playing row (accent tint, accent title, moving bars).
+#[derive(Debug, Clone, PartialEq)]
+struct Selected {
+    page: Page,
+    ix: usize,
+    id: u64,
+}
+
+thread_local! {
+    // TODO(state): belongs in `App` (requested from rendimiento in
+    // team/requests.md); a thread-local until then. Only the UI thread
+    // builds views and handles messages, so it is never shared.
+    static SELECTED: std::cell::RefCell<Option<Selected>> = const { std::cell::RefCell::new(None) };
+    /// Where the page's track list starts (page px) and its display order, as
+    /// last drawn: the arrow keys move along what is shown and scroll to it.
+    static LIST: std::cell::RefCell<(f32, Vec<usize>)> = const { std::cell::RefCell::new((0.0, Vec::new())) };
+}
+
+/// The index (into the page's tracks) of the selected row, if it is on `page`.
+fn selected_on(page: &Page) -> Option<(usize, u64)> {
+    SELECTED.with(|s| s.borrow().as_ref().filter(|s| &s.page == page).map(|s| (s.ix, s.id)))
+}
+
+fn select(page: Page, ix: usize, id: u64) {
+    SELECTED.with(|s| *s.borrow_mut() = Some(Selected { page, ix, id }));
+}
+
+/// Note where the list drawn now starts and which rows it shows, in order
+/// (`None`: all of them), for [`App::row_key`].
+pub(super) fn note_list(y0: f32, count: usize, shown: Option<&[usize]>) {
+    LIST.with(|l| {
+        let mut l = l.borrow_mut();
+        l.0 = y0;
+        l.1.clear();
+        match shown {
+            Some(shown) => l.1.extend_from_slice(shown),
+            None => l.1.extend(0..count),
+        }
+    });
 }
 
 impl App {
+    /// Keyboard over the page's track list: Up / Down move the selection
+    /// (Home / End to the ends), Enter plays from it, Escape clears it. `None`
+    /// when the key is not for the list (no selection on this page, a
+    /// modifier held, a field or a floating surface has the keyboard).
+    // Called from `on_key_inner` once rendimiento wires it (team/requests.md).
+    #[allow(dead_code)]
+    pub(super) fn row_key(&mut self, key: &iced::keyboard::Key, mods: iced::keyboard::Modifiers) -> Option<Task<Message>> {
+        use iced::keyboard::{key::Named, Key};
+        if mods.command() || mods.alt() || self.menu.is_some() || self.dialog.is_some() || self.search_open || self.now_playing_open {
+            return None;
+        }
+        let (ix, _) = selected_on(&self.page)?;
+        let Key::Named(named) = key else { return None };
+        let (y0, order) = LIST.with(|l| l.borrow().clone());
+        let pos = order.iter().position(|&i| i == ix);
+        let to = match named {
+            Named::Escape => {
+                SELECTED.with(|s| *s.borrow_mut() = None);
+                return Some(Task::none());
+            }
+            Named::Enter => return Some(Task::done(Message::PlayFrom(Source::Page, ix))),
+            Named::ArrowDown => pos.map_or(0, |p| (p + 1).min(order.len().saturating_sub(1))),
+            Named::ArrowUp => pos.map_or(0, |p| p.saturating_sub(1)),
+            Named::Home => 0,
+            Named::End => order.len().saturating_sub(1),
+            _ => return None,
+        };
+        let Some(&next) = order.get(to) else { return Some(Task::none()) };
+        let id = self.page_tracks().get(next).map_or(0, |t| t.id);
+        select(self.page.clone(), next, id);
+        // Keep the row in view, with a row of context above or below it.
+        let top = y0 + to as f32 * ROW_PITCH;
+        let view = self.page_view_h.max(1.0);
+        let target = if top - ROW_PITCH < self.page_scroll {
+            Some((top - ROW_PITCH).max(0.0))
+        } else if top + 2.0 * ROW_PITCH > self.page_scroll + view {
+            Some(top + 2.0 * ROW_PITCH - view)
+        } else {
+            None
+        };
+        Some(match target {
+            Some(y) => iced::widget::operation::scroll_to(
+                super::pages::PAGE_SCROLL,
+                iced::widget::scrollable::AbsoluteOffset { x: 0.0, y: y + super::pages::PAGE_TOP },
+            ),
+            None => Task::none(),
+        })
+    }
+
     pub(super) fn row_update(&mut self, msg: RowMsg) -> Task<Message> {
         match msg {
-            RowMsg::Grab(uuid, from) => self.row_drag = Some(RowDrag { uuid, from, over: None }),
+            RowMsg::Select(ix, id) => select(self.page.clone(), ix, id),
+            RowMsg::Menu(ix, id, menu) => {
+                select(self.page.clone(), ix, id);
+                return Task::done(Message::OpenMenu(*menu));
+            }
+            RowMsg::Grab(uuid, from) => {
+                let id = self.page_tracks().get(from).map_or(0, |t| t.id);
+                select(self.page.clone(), from, id);
+                self.row_drag = Some(RowDrag { uuid, from, over: None });
+            }
             RowMsg::Enter(i) => {
                 if let Some(drag) = &mut self.row_drag {
                     drag.over = Some(i);
@@ -169,7 +276,39 @@ fn cell<'a>(content: impl Into<Element<'a, Message>>, width: impl Into<Length>) 
     container(content).width(width).clip(true).into()
 }
 
-/// The column names over a list; in the Library they change its order.
+/// Colours of a track row's states (art-audit.md §4): playing is the accent
+/// (title, moving bars, a faint accent tint), selected is neutral (a soft fill
+/// and a ring), so both read at once on the same row and neither looks like
+/// the hover wash.
+// TODO(theme): row state tokens; move to theme.rs with arte's.
+pub(super) mod tone {
+    use super::theme;
+    use iced::Color;
+
+    pub fn playing_fill() -> Color {
+        theme::with_alpha(theme::accent(), if theme::is_light() { 0.11 } else { 0.10 })
+    }
+    pub fn selected_fill() -> Color {
+        theme::ink(if theme::is_light() { 0.05 } else { 0.06 })
+    }
+    pub fn selected_ring() -> Color {
+        theme::ink(if theme::is_light() { 0.34 } else { 0.30 })
+    }
+    pub fn hover() -> Color {
+        theme::ink(if theme::is_light() { 0.05 } else { 0.06 })
+    }
+    pub fn press() -> Color {
+        theme::ink(0.04)
+    }
+    /// The strip that grows on the left with the hover: neutral, since the
+    /// accent marks the playing row.
+    pub fn strip() -> Color {
+        theme::ink(0.45)
+    }
+}
+
+/// The column names over a list; in the Library they change its order. No
+/// box: small dim captions over one hairline, so the rows carry the table.
 pub fn header<'a>(app: &App, style: RowStyle) -> Element<'a, Message> {
     let current = style.sortable.map(|section| app.sort_of(section));
     let label = |name: &'static str, key: Option<SortKey>| -> Element<'a, Message> {
@@ -179,8 +318,9 @@ pub fn header<'a>(app: &App, style: RowStyle) -> Element<'a, Message> {
             (true, Some((_, false))) => " ▲",
             _ => "",
         };
-        let color = if active { theme::accent() } else { theme::text_dim() };
-        let shown = line(format!("{name}{arrow}"), 10.5, color)
+        // The order's column in the text colour (the accent means "playing").
+        let color = if active { theme::text() } else { theme::text_dim() };
+        let shown = line(format!("{name}{arrow}"), scale::TYPE_CAPTION, color)
             .font(widgets::semibold())
             // Room above the cap height for accented capitals (TÍTULO, ÁLBUM).
             .line_height(text::LineHeight::Relative(1.6));
@@ -196,9 +336,9 @@ pub fn header<'a>(app: &App, style: RowStyle) -> Element<'a, Message> {
         }
     };
     let (title_w, artist_w, album_w) = style.portions();
-    let mut r = row![].spacing(style.gap()).padding([0.0, PAD]).height(HEADER_H - 3.0).align_y(Alignment::Center);
+    let mut r = row![].spacing(style.gap()).padding([0.0, PAD]).height(HEADER_H - 1.0 - scale::SPACE_XS).align_y(Alignment::Center);
     if !style.tiny {
-        let hash = text("#").size(9.5).font(widgets::bold()).color(theme::text_dim());
+        let hash = text("#").size(scale::TYPE_CAPTION).font(widgets::semibold()).color(theme::text_dim());
         r = r.push(container(hash).width(NUM).align_x(alignment::Horizontal::Center));
     }
     let indent = if style.cover { COVER + COVER_GAP } else { 0.0 };
@@ -223,36 +363,37 @@ pub fn header<'a>(app: &App, style: RowStyle) -> Element<'a, Message> {
         r = r.push(cell(label(crate::i18n::t("bpm"), None), BPM));
     }
     r = r.push(Space::new().width(style.actions_width()));
-    let bar = container(r).width(Length::Fill).style(|_| container::Style {
-        background: Some(theme::ink(0.035).into()),
-        border: Border { color: theme::panel_border(), width: 1.0, radius: 8.0.into() },
-        ..Default::default()
-    });
-    container(bar).height(HEADER_H).into()
+    let rule = container(Space::new().width(Length::Fill).height(1))
+        .style(|_| container::Style { background: Some(theme::divider().into()), ..Default::default() });
+    column![r, rule, Space::new().height(scale::SPACE_XS)].height(HEADER_H).into()
 }
 
-/// A track line. Double click (or the play button in place of its number)
-/// plays from this row, middle click queues it, right click opens its menu;
-/// in the user's own playlists it can be dragged to another place.
+/// A track line. A click selects it, a double click (or the play button in
+/// place of its number) plays from it, middle click queues it, right click
+/// selects it and opens its menu; in the user's own playlists it can be
+/// dragged to another place.
 pub fn track_row<'a>(app: &App, ix: usize, track: &Track, style: RowStyle, source: &Source, menu: MenuTarget) -> Element<'a, Message> {
     let playing = app.now.as_ref().map(|n| n.track.id) == Some(track.id);
+    // Selected: clicked last on this page, or the row whose menu is open.
+    let menu_open = app.menu.as_ref().is_some_and(|(_, m)| match m {
+        MenuTarget::Track(t) | MenuTarget::PlaylistTrack { track: t, .. } => t.id == track.id,
+        _ => false,
+    });
+    let selected = menu_open || selected_on(&app.page) == Some((ix, track.id));
     let fade = |c: iced::Color| if track.streamable { c } else { theme::with_alpha(c, 0.4) };
     let title_color = fade(if playing { theme::accent() } else { theme::text() });
     let secondary = fade(theme::text_secondary());
-    // As GPUI: the artist and album columns and the numbers on the right are
-    // semibold in the text colour; under the title (compact) the artist is quiet.
-    let strong = fade(theme::text());
+    let quiet = fade(theme::text_dim());
     let play = Message::PlayFrom(source.clone(), ix);
     let link = |label: String, page: Option<Page>, column: bool| -> Element<'a, Message> {
-        let shown = if column { line(label, 11.5, strong).font(widgets::semibold()) } else { line(label, 11.5, secondary) };
+        let size = if column { scale::TYPE_LABEL } else { scale::TYPE_CAPTION };
+        let shown = line(label, size, secondary);
         match page {
-            // GPUI `nav_link`: a link rests a little softer and turns full text,
+            // GPUI `nav_link`: a link rests quiet and turns full text,
             // underlined, while hovered (fading with the pointer).
             Some(page) => {
-                let rest = if column { theme::lerp(theme::text(), theme::text_secondary(), 0.35) } else { theme::text_secondary() };
-                let rest = fade(rest);
                 let full = fade(theme::text());
-                let shown = shown.live(move |_| theme::lerp(rest, full, super::wash::phase().hover)).underline_on_hover();
+                let shown = shown.live(move |_| theme::lerp(secondary, full, super::wash::phase().hover)).underline_on_hover();
                 mouse_area(super::wash::track(shown))
                     .on_press(Message::Navigate(page))
                     .interaction(iced::mouse::Interaction::Pointer)
@@ -272,19 +413,21 @@ pub fn track_row<'a>(app: &App, ix: usize, track: &Track, style: RowStyle, sourc
             widgets::playing_indicator(app.is_playing(), 14.0)
         } else {
             let n = if style.number && track.track_number > 0 { track.track_number as usize } else { ix + 1 };
-            text(n.to_string()).size(11).color(theme::text_dim()).into()
+            text(n.to_string()).size(scale::TYPE_CAPTION).color(theme::text_dim()).into()
         };
         r = r.push(container(number).center(NUM));
         let glyph = if playing && app.is_playing() { Icon::Pause } else { Icon::Play };
         let hover = container(icon_box(glyph, 15.0, NUM, theme::text(), play.clone())).center(NUM).style(move |_| container::Style {
+            // Opaque: it covers the number (or the playing bars) under it.
             background: Some(if playing { theme::active() } else { theme::hover() }.into()),
-            border: Border { radius: 6.0.into(), ..Default::default() },
+            border: Border { radius: scale::R_SM.into(), ..Default::default() },
             ..Default::default()
         });
         hover_play = Some(hover);
     }
     // The badge keeps its 14 px (and the 6 before it) when the title is cut.
-    let name = line(track.display_title(), 13.0, title_color).font(widgets::semibold());
+    let weight = if playing { widgets::semibold() } else { widgets::medium() };
+    let name = line(track.display_title(), scale::TYPE_SMALL, title_color).font(weight);
     let name = if track.explicit { widgets::leave_room(name, 20.0) } else { name.into() };
     let title = row![name].push(track.explicit.then(explicit_badge)).spacing(6).align_y(Alignment::Center);
     let names = column![title].push(style.compact.then(|| link(track.artist_names(), artist_page.clone(), false))).spacing(2);
@@ -302,13 +445,13 @@ pub fn track_row<'a>(app: &App, ix: usize, track: &Track, style: RowStyle, sourc
         r = r.push(cell(widgets::stars(app, track.id, false), RATING));
     }
     if style.date {
-        r = r.push(cell(line(track.added.as_deref().map(fmt_date).unwrap_or_default(), 11.5, strong).font(widgets::semibold()), DATE));
+        r = r.push(cell(line(track.added.as_deref().map(fmt_date).unwrap_or_default(), scale::TYPE_LABEL, quiet), DATE));
     }
     if !style.tiny {
-        r = r.push(cell(line(fmt_time(track.duration as f64), 11.5, strong).font(widgets::semibold()), TIME));
+        r = r.push(cell(line(fmt_time(track.duration as f64), scale::TYPE_LABEL, secondary), TIME));
     }
     if style.bpm {
-        r = r.push(cell(line(track.bpm.map_or_else(|| "-".to_string(), |b| b.to_string()), 11.5, strong).font(widgets::semibold()), BPM));
+        r = r.push(cell(line(track.bpm.map_or_else(|| "–".to_string(), |b| b.to_string()), scale::TYPE_LABEL, quiet), BPM));
     }
     let mut actions = row![].spacing(2).align_y(Alignment::Center);
     if !style.tiny && track.local_path.is_none() {
@@ -336,20 +479,27 @@ pub fn track_row<'a>(app: &App, ix: usize, track: &Track, style: RowStyle, sourc
         _ => None,
     };
     let dropping = own.is_some() && app.row_drag.as_ref().is_some_and(|d| d.over == Some(ix) && d.from != ix);
-    let (edge, width) = if dropping {
-        (theme::accent(), 2.0)
-    } else if playing {
-        (theme::with_alpha(theme::accent(), 0.35), 1.0)
-    } else {
-        (theme::divider(), 1.0)
-    };
-    let boxed = container(r).width(Length::Fill).style(move |_| container::Style {
-        background: playing.then(|| theme::accent_dim().into()),
-        border: Border { color: edge, width, radius: 7.0.into() },
-        ..Default::default()
+    // No box at rest: the row sits flat on the page. Playing tints it with the
+    // accent; the selection (gliding in with the wash's `active`) adds a soft
+    // fill and a neutral ring; a drop target shows the accent edge.
+    let boxed = container(r).width(Length::Fill).style(move |_| {
+        let sel = super::wash::phase().active;
+        let fill = match (playing, sel > 0.0) {
+            (true, true) => Some(theme::lerp(tone::playing_fill(), theme::with_alpha(theme::accent(), 0.16), sel)),
+            (true, false) => Some(tone::playing_fill()),
+            (false, true) => Some(theme::with_alpha(tone::selected_fill(), tone::selected_fill().a * sel)),
+            (false, false) => None,
+        };
+        let border = if dropping {
+            Border { color: theme::accent(), width: 2.0, radius: scale::R_MD.into() }
+        } else {
+            let ring = tone::selected_ring();
+            Border { color: theme::with_alpha(ring, ring.a * sel), width: if sel > 0.0 { 1.0 } else { 0.0 }, radius: scale::R_MD.into() }
+        };
+        container::Style { background: fill.map(Into::into), border, ..Default::default() }
     });
-    // As GPUI: the hover fades in (with an accent strip growing on the left)
-    // and pressing deepens it; "more" shows over the row while hovered.
+    // As GPUI: the hover fades in (with a strip growing on the left) and
+    // pressing deepens it; "more" shows over the row while hovered.
     let row_actions = container(
         row![]
             .push(hover_play)
@@ -361,19 +511,25 @@ pub fn track_row<'a>(app: &App, ix: usize, track: &Track, style: RowStyle, sourc
     )
     .width(Length::Fill)
     .height(Length::Fill);
-    let washed = super::wash::wash(iced::widget::hover(boxed, row_actions), theme::with_alpha(theme::hover(), 0.8), 7.0)
-        .press(theme::active())
-        .strip(theme::accent());
-    let mut area = mouse_area(container(washed).padding([2, 0]))
+    let washed = super::wash::wash(iced::widget::hover(boxed, row_actions), tone::hover(), scale::R_MD)
+        .press(tone::press())
+        .strip(tone::strip())
+        .active(selected);
+    let area = mouse_area(container(washed).padding([2, 0]))
         .on_double_click(play)
         .on_middle_press(Message::AddToQueue(track.clone(), false))
-        .on_right_press(Message::OpenMenu(menu));
-    if let Some(uuid) = own {
-        area = area.on_press(Message::Row(RowMsg::Grab(uuid, ix)));
-        if app.row_drag.is_some() {
-            area = area.on_enter(Message::Row(RowMsg::Enter(ix))).on_exit(Message::Row(RowMsg::Leave(ix)));
+        .on_right_press(Message::Row(RowMsg::Menu(ix, track.id, Box::new(menu))));
+    let area = match own {
+        Some(uuid) => {
+            let area = area.on_press(Message::Row(RowMsg::Grab(uuid, ix)));
+            if app.row_drag.is_some() {
+                area.on_enter(Message::Row(RowMsg::Enter(ix))).on_exit(Message::Row(RowMsg::Leave(ix)))
+            } else {
+                area
+            }
         }
-    }
+        None => area.on_press(Message::Row(RowMsg::Select(ix, track.id))),
+    };
     area.into()
 }
 
