@@ -190,25 +190,24 @@ fn crumbs(app: &App) -> Vec<(String, Option<Page>)> {
     }
 }
 
-/// GPUI's title bar: 16 px inset, 30 px tool buttons 8 px apart.
+/// GPUI's title bar: 16 px inset, 28 px tool buttons 2 px apart on one capsule.
 const TOP_PADDING: f32 = 16.0;
 const TOP_GAP: f32 = 12.0;
 const TOOL: f32 = 30.0;
-const TOOL_GAP: f32 = 8.0;
+/// Between the tools' capsule and the window's buttons.
+const CAPTION_GAP: f32 = 10.0;
 /// Back and forward (Iced only; GPUI relies on the mouse's side buttons).
 const TOP_LEFT_MIN: f32 = 2.0 * 28.0 + 2.0 + 4.0;
-const TOP_RIGHT_MIN: f32 = 3.0 * TOOL + 3.0 * TOOL_GAP + super::chrome::CAPTION_WIDTH;
+const TOP_RIGHT_MIN: f32 = 3.0 * (TOOL - 2.0) + 2.0 * 2.0 + 2.0 * 2.0 + CAPTION_GAP + super::chrome::CAPTION_WIDTH;
 
 /// Both the text field and its results use the same anchor in window coordinates.
-/// As GPUI's `titlebar::layout`: up to 380 px, centred in the bar, leaving the
-/// tools' width (and 26 px) free on each side.
+/// Centred in the bar, 30 % of its width between 260 and 420 px: narrow
+/// windows keep room for the breadcrumbs, wide ones do not get a field lost
+/// in the middle of the bar; never over the tools.
 pub(super) fn search_anchor(viewport_width: f32) -> (f32, f32) {
     let bar_x = super::sidebar::RAIL_W;
     let bar_w = (viewport_width - bar_x - theme::FRAME_GAP).max(0.0);
-    let actions_w = 3.0 * (TOOL + TOOL_GAP + 34.0) + 8.0 + 2.0;
-    // Below 640 px GPUI moves the search to a row of its own; Iced keeps it in
-    // the bar and gives it the room between the tools instead.
-    let wanted = if bar_w < 640.0 { 380.0 } else { (bar_w - 2.0 - 2.0 * (actions_w + TOP_PADDING + 10.0)).clamp(1.0, 380.0) };
+    let wanted = (bar_w * 0.30).clamp(260.0, 420.0);
     let left = bar_x + TOP_PADDING + TOP_LEFT_MIN + TOP_GAP;
     let right = viewport_width - theme::FRAME_GAP - TOP_PADDING - TOP_RIGHT_MIN - TOP_GAP;
     let width = wanted.min(right - left).max(0.0);
@@ -244,30 +243,32 @@ pub fn top_bar(app: &App) -> Element<'_, Message> {
         }
         let last = i + 1 == n;
         crumb_row = crumb_row.push(match target {
-            Some(p) if !last => widgets::text_link(line(label, 12.5, theme::text_secondary()), Message::Navigate(p)),
+            // A link keeps its click; the rest of the trail moves the window.
+            Some(p) if !last => super::chrome::hole(widgets::text_link(line(label, 12.5, theme::text_secondary()), Message::Navigate(p))),
             _ => Element::from(line(label, 12.5, theme::text()).font(widgets::semibold())),
         });
     }
     // Signed out there is no sidebar to carry the mark.
     // Back and forward share one capsule of glass (a group, not two pills).
     let nav: Element<'_, Message> = if app.signed_in {
-        super::liquid_glass::control(
-            container(
-                row![
-                    icon_button(Icon::Back, 16.0, if app.can_go_back() { theme::text() } else { theme::text_dim() }, Message::Back),
-                    icon_button(
-                        Icon::Forward,
-                        16.0,
-                        if app.can_go_forward() { theme::text() } else { theme::text_dim() },
-                        Message::Forward
-                    ),
-                ]
-                .spacing(2),
+        super::chrome::hole(
+            super::liquid_glass::control(
+                container(
+                    row![
+                        icon_button(Icon::Back, 16.0, if app.can_go_back() { theme::text() } else { theme::text_dim() }, Message::Back),
+                        icon_button(
+                            Icon::Forward,
+                            16.0,
+                            if app.can_go_forward() { theme::text() } else { theme::text_dim() },
+                            Message::Forward
+                        ),
+                    ]
+                    .spacing(2),
+                )
+                .padding(2),
             )
-            .padding(2),
+            .on_chrome(),
         )
-        .on_chrome()
-        .into()
     } else {
         iced::widget::image(super::images::logo()).width(28).height(28).into()
     };
@@ -300,7 +301,7 @@ pub fn top_bar(app: &App) -> Element<'_, Message> {
             }
         })
         .width(search_w);
-    let search = super::liquid_glass::control(search).on_chrome();
+    let search = super::chrome::hole(super::liquid_glass::control(search).on_chrome());
     let light = theme::is_light();
     let tools = row![
         toolbar_button(
@@ -315,26 +316,20 @@ pub fn top_bar(app: &App) -> Element<'_, Message> {
     .align_y(Alignment::Center);
     // The three tools are one group on one capsule of glass; the window's
     // caption buttons sit on a pane of their own beside it.
-    let tools = super::liquid_glass::control(container(tools).padding(2)).on_chrome();
-    let caption = super::liquid_glass::glass(super::chrome::caption_buttons(app), 9.0)
-        .optics(super::liquid_glass::Optics::CONTROL)
-        .on_chrome()
-        .interactive()
-        .shadow(theme::control_shadow());
-    let navigation = row![
-        nav,
-        super::chrome::drag_area(
-            container(crumb_row).width(Length::Fill).height(theme::TOP_H - 1.0).align_y(alignment::Vertical::Center).clip(true)
-        )
-    ]
-    .spacing(TOP_GAP)
-    .align_y(Alignment::Center);
+    let tools = super::chrome::hole(super::liquid_glass::control(container(tools).padding(2)).on_chrome());
+    // The window's own buttons are plain glyphs with a hover wash, as on
+    // Windows: no capsule of their own (one rim less in the row).
+    let caption = super::chrome::caption_buttons(app);
+    let navigation =
+        row![nav, container(crumb_row).width(Length::Fill).height(theme::TOP_H - 1.0).align_y(alignment::Vertical::Center).clip(true)]
+            .spacing(TOP_GAP)
+            .align_y(Alignment::Center);
     let nav_width =
         if app.signed_in { Length::Fixed((search_x - super::sidebar::RAIL_W - TOP_PADDING - TOP_GAP).max(0.0)) } else { Length::Fill };
     let bar = row![navigation.width(nav_width)]
         .push(app.signed_in.then_some(search))
         .push(
-            container(row![tools, caption].spacing(TOOL_GAP).align_y(Alignment::Center))
+            container(row![tools, caption].spacing(CAPTION_GAP).align_y(Alignment::Center))
                 .align_x(alignment::Horizontal::Right)
                 .width(Length::Fill),
         )
@@ -350,7 +345,8 @@ pub fn top_bar(app: &App) -> Element<'_, Message> {
         background: Some(theme::with_alpha(theme::divider(), theme::divider().a * k).into()),
         ..Default::default()
     });
-    column![bar, edge].width(Length::Fill).into()
+    // The whole bar is the window's title bar; its controls are holes in it.
+    super::chrome::caption(column![bar, edge].width(Length::Fill))
 }
 
 // ----------------------------------------------------------------- content

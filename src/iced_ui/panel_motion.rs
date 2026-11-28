@@ -29,12 +29,22 @@ impl Reveal {
     /// folds 150 ms after the pointer left, GPUI's `CLOSE_DELAY`). Turning
     /// back during the delay leaves it where it is.
     pub fn set_after(&mut self, open: bool, delay: Duration) {
+        self.set_at(open, delay, Instant::now());
+    }
+
+    /// [`Self::set_after`] at `now`. Turning round mid-way starts from the
+    /// width it has at `now` (reversible: no jump, no restart from an end).
+    pub fn set_at(&mut self, open: bool, delay: Duration, now: Instant) {
         if open != self.target {
-            let now = Instant::now();
             self.from = self.progress(now, false);
             self.started = now + delay;
             self.target = open;
         }
+    }
+
+    /// The eased fraction open at `now` (1 open, 0 closed).
+    pub fn fraction_at(self, now: Instant) -> f32 {
+        self.progress(now, crate::shared::lyrics::reduced_motion())
     }
 
     pub fn visible(self) -> bool {
@@ -42,7 +52,7 @@ impl Reveal {
     }
 
     pub fn fraction(self) -> f32 {
-        self.progress(Instant::now(), crate::shared::lyrics::reduced_motion())
+        self.fraction_at(Instant::now())
     }
 
     fn progress(self, now: Instant, reduced: bool) -> f32 {
@@ -327,6 +337,29 @@ impl<Message> Widget<Message, Theme, Renderer> for Slide<'_, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toggling_fast_reverses_from_where_it_is_and_never_accumulates() {
+        let t0 = Instant::now();
+        let mut r = Reveal::closed(PANEL);
+        let mut now = t0;
+        let mut last = r.progress(now, false);
+        // Open/close every 40 ms, ten times: each turn starts where the panel is.
+        for i in 0..10 {
+            now += Duration::from_millis(40);
+            let before = r.progress(now, false);
+            r.set_at(i % 2 == 0, Duration::ZERO, now);
+            let after = r.progress(now, false);
+            assert!((after - before).abs() < 1e-6, "turn {i}: jumped {before} -> {after}");
+            assert!((0.0..=1.0).contains(&after));
+            last = after;
+        }
+        // Last asked for: closed (i = 9). It gets there within one PANEL, from where it was.
+        assert!(last > 0.0);
+        assert_eq!(r.progress(now + PANEL, false), 0.0);
+        let mid = r.progress(now + PANEL / 4, false);
+        assert!(mid < last, "heads for closed at once: {mid} vs {last}");
+    }
 
     #[test]
     fn revealing_and_closing_follow_the_same_curve_and_reduced_motion_snaps() {
