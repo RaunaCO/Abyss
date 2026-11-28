@@ -109,8 +109,53 @@ pub fn cover_size(vw: f32, vh: f32) -> f32 {
 pub fn queue_height(vw: f32, vh: f32) -> f32 {
     let margin = (vw * 0.035).clamp(20.0, 64.0);
     let details = if np_stacked(vw, vh) { (vh * 0.36).clamp(320.0, 900.0) } else { vh - 2.0 * margin };
-    // The tabs (a line of 11 px text in 6 px of padding, 20 px under) and the tab's own inset.
-    (details - 46.3 - 2.0 * margin).max(0.0)
+    // The tabs (a line of 12 or 13 px text in 6 or 7 px of padding, 20 px
+    // under; see `tab_button`) and the tab's own inset.
+    let tabs = if vh >= 1000.0 { 13.0 * 1.3 + 14.0 } else { 12.0 * 1.3 + 12.0 };
+    (details - tabs - 20.0 - 2.0 * margin).max(0.0)
+}
+
+// TODO(theme): the shared spacing scale (`theme::SPACE_*`) once arte's tokens are merged.
+const SPACE_MD: f32 = 12.0;
+const SPACE_LG: f32 = 16.0;
+const SPACE_XL: f32 = 24.0;
+const SPACE_XXL: f32 = 32.0;
+
+/// Width of the column under the cover (titles), as laid out by `view`.
+fn titles_width(vw: f32, vh: f32) -> f32 {
+    let margin = (vw * 0.035).clamp(20.0, 64.0);
+    let column = if np_stacked(vw, vh) { vw - 2.0 * margin } else { vw * 0.46 - margin };
+    // Never narrower than a big cover above it.
+    column.clamp(120.0, cover_size(vw, vh).max(560.0)).floor()
+}
+
+/// Sizes of the title and the artists: they grow with the cover, so the
+/// block under a 640 px cover is not a caption under a poster.
+fn title_sizes(vw: f32, vh: f32) -> (f32, f32) {
+    let title = if np_stacked(vw, vh) { (vw * 0.028).clamp(22.0, 34.0) } else { (cover_size(vw, vh) * 0.075).clamp(26.0, 36.0) };
+    (title.round(), (title * 0.56).clamp(15.0, 21.0).round())
+}
+
+/// `text` as it shows in at most `lines` lines `width` px wide: whole when it
+/// fits, else cut at the last line with "…" (Iced only clips). Cached: the
+/// view is built far more often than the track or the window changes.
+fn clamp_lines(text: &str, size: f32, weight: u16, width: f32, lines: usize) -> String {
+    type Key = (String, u32, u16, u32, usize);
+    thread_local! {
+        static CACHE: std::cell::RefCell<Vec<(Key, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let key: Key = (text.to_string(), (size * 10.0) as u32, weight, width as u32, lines);
+    if let Some(hit) = CACHE.with_borrow(|c| c.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone())) {
+        return hit;
+    }
+    let out = super::lyrics::clamp(text, size, weight, width, lines);
+    CACHE.with_borrow_mut(|c| {
+        if c.len() >= 8 {
+            c.remove(0);
+        }
+        c.push((key, out.clone()));
+    });
+    out
 }
 
 /// Human labels for TIDAL credit roles.
@@ -235,7 +280,7 @@ fn with_sync_button<'a>(app: &'a App, content: Element<'a, Message>) -> Element<
         container(
             row![
                 turned(Icon::Sync, 15.0, theme::text(), deg),
-                text(crate::i18n::t("sync")).size(12.5).font(super::widgets::semibold()).color(theme::text())
+                text(crate::i18n::t("sync")).size(13).font(super::widgets::semibold()).color(theme::text())
             ]
             .spacing(7)
             .align_y(Alignment::Center),
@@ -261,21 +306,63 @@ fn with_sync_button<'a>(app: &'a App, content: Element<'a, Message>) -> Element<
     super::widgets::layered(content, vec![Some(overlay.into())])
 }
 
+/// An empty state centred in the space given, a little above the middle
+/// (the optical centre), so it does not cling to the tabs or the heading.
+fn centred_state<'a>(block: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(block)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(iced::Padding { bottom: SPACE_XXL, left: SPACE_LG, right: SPACE_LG, top: 0.0 })
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Center)
+        .into()
+}
+
+/// The icon tile of the empty states (`widgets::notice`'s, without its 48 px
+/// padding, so the actions under it keep one rhythm).
+fn state_tile<'a>(i: Icon) -> Element<'a, Message> {
+    container(super::icons::icon(i, 20.0, theme::text_secondary()))
+        .center(48)
+        .style(|_| container::Style {
+            background: Some(theme::ink(0.06).into()),
+            border: Border { color: theme::ink(0.08), width: 1.0, radius: 24.0.into() },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// A note under its tile, as every empty state: `widgets::notice` centred in the space.
+pub fn empty_state<'a>(i: Icon, note: &'a str) -> Element<'a, Message> {
+    centred_state(
+        column![state_tile(i), text(note).size(theme::TYPE_BODY).color(theme::text_secondary()).center()]
+            .spacing(14)
+            .align_x(Alignment::Center)
+            .max_width(420),
+    )
+}
+
 /// No lyrics: retry, and offer third-party providers when they are off.
 fn missing_lyrics(app: &App) -> Element<'_, Message> {
     let external = app.settings.lock().external_lyrics;
-    // The shape every empty state shares (icon tile, centred note), with the
-    // actions centred under it.
-    let block = column![
-        super::widgets::notice(Icon::Lyrics, crate::i18n::t("no_provider_has_lyrics_for_this_track")),
-        pill(crate::i18n::t("lyrics.retry"), Some(Icon::Sync), false, Some(Message::RetryLyrics)),
-    ]
-    .push((!external).then(|| text(crate::i18n::t("lyrics.external_offer")).size(13).color(theme::text_secondary()).center()))
-    .push((!external).then(|| pill(crate::i18n::t("lyrics.external_enable"), None, false, Some(Message::ToggleSetting("external_lyrics")))))
-    .spacing(12)
-    .align_x(Alignment::Center)
-    .max_width(420);
-    container(block).width(Length::Fill).padding(16).align_x(alignment::Horizontal::Center).into()
+    // The shape every empty state shares (icon tile, centred note), then the
+    // actions: the retry, and the offer as a second, quieter paragraph.
+    let note = |s: &'static str, color: Color| {
+        text(s).size(theme::TYPE_BODY).line_height(iced::widget::text::LineHeight::Absolute(20.0.into())).color(color).center()
+    };
+    let head = column![state_tile(Icon::Lyrics), note(crate::i18n::t("no_provider_has_lyrics_for_this_track"), theme::text_secondary())]
+        .spacing(14)
+        .align_x(Alignment::Center);
+    let retry = pill(crate::i18n::t("lyrics.retry"), Some(Icon::Sync), false, Some(Message::RetryLyrics));
+    let offer = (!external).then(|| {
+        column![
+            note(crate::i18n::t("lyrics.external_offer"), theme::text_dim()),
+            pill(crate::i18n::t("lyrics.external_enable"), None, false, Some(Message::ToggleSetting("external_lyrics"))),
+        ]
+        .spacing(SPACE_MD)
+        .align_x(Alignment::Center)
+    });
+    let block = column![head, retry].push(offer).spacing(SPACE_XL).align_x(Alignment::Center).max_width(400);
+    centred_state(block)
 }
 
 fn credits_view(app: &App, id: u64) -> Element<'_, Message> {
@@ -283,20 +370,24 @@ fn credits_view(app: &App, id: u64) -> Element<'_, Message> {
         Some(Load::Ready(list)) if !list.is_empty() => scrollable(
             column(list.iter().map(|(role, names)| {
                 column![
-                    text(role_label(role).to_uppercase()).size(11).font(super::widgets::bold()).color(Color { a: 0.5, ..Color::WHITE }),
-                    text(names.join(", ")).size(20).font(super::widgets::bold()).color(theme::text()),
+                    text(role_label(role).to_uppercase())
+                        .size(11)
+                        .font(super::widgets::semibold())
+                        .color(Color { a: 0.55, ..Color::WHITE }),
+                    text(names.join(", ")).size(18).font(super::widgets::semibold()).color(theme::text()),
                 ]
                 .spacing(4)
                 .into()
             }))
             .spacing(20)
-            .padding(iced::Padding { right: 24.0, bottom: 64.0, ..Default::default() }),
+            // The names start where the queue's covers do (12 + 8 px in the pane).
+            .padding(iced::Padding { left: 20.0, right: 24.0, top: 6.0, bottom: 64.0 }),
         )
         .height(Length::Fill)
         .style(super::pages::scroll_style)
         .into(),
         Some(Load::Loading) => loading(),
-        _ => text(crate::i18n::t("no_credits_for_this_track")).size(16).color(Color { a: 0.6, ..Color::WHITE }).into(),
+        _ => empty_state(Icon::List, crate::i18n::t("no_credits_for_this_track")),
     }
 }
 
@@ -304,7 +395,7 @@ fn similar_view(app: &App, id: u64) -> Element<'_, Message> {
     let tracks = match app.similar.get(&id) {
         Some(Load::Ready(t)) => std::sync::Arc::new(t.clone()),
         Some(Load::Loading) => return loading(),
-        _ => return text(crate::i18n::t("no_similar_tracks")).size(16).color(Color { a: 0.6, ..Color::WHITE }).into(),
+        _ => return empty_state(Icon::Mix, crate::i18n::t("no_similar_tracks")),
     };
     let playing = app.now.as_ref().map(|n| n.track.id);
     let rows = tracks.iter().enumerate().map(|(i, t)| {
@@ -313,7 +404,7 @@ fn similar_view(app: &App, id: u64) -> Element<'_, Message> {
             cover(t.cover(80), 38.0, false),
             column![
                 line(t.display_title(), 13.0, if current { theme::accent() } else { theme::text() }).font(super::widgets::bold()),
-                line(t.artist_names(), 11.5, Color { a: 0.6, ..Color::WHITE }),
+                line(t.artist_names(), 12.0, Color { a: 0.6, ..Color::WHITE }),
             ]
             .spacing(2)
             .width(Length::Fill),
@@ -332,7 +423,7 @@ fn similar_view(app: &App, id: u64) -> Element<'_, Message> {
         .into()
     });
     super::glide::glide(
-        scrollable(column(rows).padding(iced::Padding { right: 24.0, bottom: 64.0, ..Default::default() }))
+        scrollable(column(rows).padding(iced::Padding { left: 12.0, right: 12.0, bottom: 64.0, top: 0.0 }))
             .height(Length::Fill)
             .style(super::pages::scroll_style),
     )
@@ -340,8 +431,10 @@ fn similar_view(app: &App, id: u64) -> Element<'_, Message> {
 
 fn tab_button(app: &App, tab: NpTab) -> Element<'_, Message> {
     let active = app.np_tab == tab;
-    let b = button(text(tab.label()).size(11).font(super::widgets::bold()))
-        .padding([6, 13])
+    // A step larger on tall windows, where the lyrics beside them are 50 px.
+    let large = app.viewport.height >= 1000.0;
+    let b = button(text(tab.label()).size(if large { 13 } else { 12 }).font(super::widgets::semibold()))
+        .padding(if large { [7, 16] } else { [6, 14] })
         .style(move |_, _| button::Style {
             background: active.then(|| theme::with_alpha(theme::text(), 1.0 - 0.1 * super::wash::phase().hover).into()),
             text_color: if active {
@@ -414,34 +507,34 @@ pub fn view(app: &App) -> Element<'_, Message> {
         art_layers.push(container(heart).center(size).into());
     }
     let artwork = mouse_area(stack(art_layers).width(size).height(size)).on_double_click(Message::CoverDoubleClick);
-    // GPUI: the title on 36 px lines, the artists on 24 px lines, two lines each at most.
+    // The title and the artists, two lines each at most, ending in "…" when
+    // longer; the lines are 1.2 em apart whatever the size.
+    let (title_size, artist_size) = title_sizes(vw, vh);
+    let title_w = titles_width(vw, vh);
+    let title = clamp_lines(&track.display_title(), title_size, 700, title_w, 2);
+    let artists = clamp_lines(&track.artist_names(), artist_size, 400, title_w, 2);
     let titles = column![
-        container(
-            text(track.display_title())
-                .size(if stacked { (vw * 0.028).clamp(24.0, 38.0) } else { 30.0 })
-                .line_height(iced::widget::text::LineHeight::Absolute(36.0.into()))
-                .font(super::widgets::bold())
-                .color(theme::text())
-                .align_x(alignment::Horizontal::Center)
-                .width(Length::Fill)
-        )
-        .max_height(72)
-        .clip(true),
-        container(
-            text(track.artist_names())
-                .size(if stacked { (vw * 0.015).clamp(17.0, 22.0) } else { 17.0 })
-                .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
-                .color(Color { a: 0.7, ..Color::WHITE })
-                .align_x(alignment::Horizontal::Center)
-                .width(Length::Fill)
-        )
-        .max_height(48)
-        .clip(true),
+        text(title)
+            .size(title_size)
+            .line_height(iced::widget::text::LineHeight::Relative(1.2))
+            .font(super::widgets::bold())
+            .color(theme::text())
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+            .align_x(alignment::Horizontal::Center)
+            .width(Length::Fill),
+        text(artists)
+            .size(artist_size)
+            .line_height(iced::widget::text::LineHeight::Relative(1.25))
+            .color(Color { a: 0.72, ..Color::WHITE })
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+            .align_x(alignment::Horizontal::Center)
+            .width(Length::Fill),
     ]
-    .spacing(8)
-    .max_width(520);
+    .spacing(6)
+    .width(title_w);
     let controls = container(super::player_bar::controls(app, true, vw))
-        .max_width(if stacked { (vw * 0.45).clamp(500.0, 760.0) } else { 500.0 })
+        // As wide as a big cover (the bar under a 640 px cover was 500 px).
+        .max_width(if stacked { (vw * 0.45).clamp(500.0, 760.0) } else { size.clamp(500.0, 660.0) })
         .width(Length::Fill);
     let left = column![artwork, titles, controls].spacing(24).align_x(Alignment::Center);
     let left: Element<'_, Message> = if stacked {
@@ -477,10 +570,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
     };
     // The tabs on a capsule of glass: a control (one pane for the group).
     let tabs = super::liquid_glass::control(container(tabs).padding(4));
+    // Centred over the pane under them (which sits half a margin in on the
+    // left, a whole one on the right).
     let details = column![
         container(tabs).width(Length::Fill).align_x(alignment::Horizontal::Center).padding(iced::Padding {
             bottom: 20.0,
-            left: margin,
+            left: margin * 0.5,
             right: margin,
             top: 0.0
         }),
@@ -522,3 +617,7 @@ fn big_art<'a>(url: Option<String>, size: f32) -> Element<'a, Message> {
         })
         .into()
 }
+
+#[cfg(test)]
+#[path = "panel_shots.rs"]
+mod panel_shots;

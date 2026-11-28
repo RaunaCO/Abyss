@@ -206,7 +206,8 @@ fn stat<'a>(label: &'a str, value: String, detail: String, fraction: Option<f32>
         None => Space::new().width(meter_w).height(4).into(),
     };
     let body = column![
-        text(label).size(theme::TYPE_LABEL).color(theme::text_secondary()),
+        // A label as the others ("plays" is also the lower-case note of a list).
+        text(sentence_case(label)).size(theme::TYPE_LABEL).color(theme::text_secondary()),
         text(value).size(if compact { 22 } else { 32 }).font(widgets::bold()).color(theme::text()),
         text(detail).size(11).color(theme::text_secondary()),
         bar,
@@ -226,10 +227,33 @@ fn stat<'a>(label: &'a str, value: String, detail: String, fraction: Option<f32>
         .into()
 }
 
+/// `s` with its first letter in upper case.
+fn sentence_case(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
 /// The surface of the dashboard's panels (GPUI's `flat_panel`, 18 px
 /// corners): a pane of liquid glass over the scene (see `liquid_glass`).
 fn flat<'a>(content: impl Into<Element<'a, Message>>, inset: f32) -> Element<'a, Message> {
     super::liquid_glass::glass(container(content).padding(inset).width(Length::Fill), super::liquid_glass::PANEL_R).into()
+}
+
+/// [`flat`] as tall as the row it sits in, its content centred.
+fn flat_fill<'a>(content: impl Into<Element<'a, Message>>, inset: f32) -> Element<'a, Message> {
+    let body = container(content).padding(inset).width(Length::Fill).height(Length::Fill).align_y(alignment::Vertical::Center);
+    super::liquid_glass::glass(body, super::liquid_glass::PANEL_R).into()
+}
+
+/// The top track beside the overview, both as tall as the taller one: the
+/// left one has a fixed width and fills the height, so Iced's row lays it out
+/// last, with the overview's height (see `iced_core::layout::flex`).
+fn top_pair<'a>(most: Element<'a, Message>, overview: Element<'a, Message>, section_w: f32, wide: bool) -> Element<'a, Message> {
+    if wide {
+        row![container(most).width(section_w.floor()).height(Length::Fill), container(overview).width(Length::Fill)].spacing(GAP).into()
+    } else {
+        column![most, overview].spacing(GAP).into()
+    }
 }
 
 /// A titled part of the dashboard (GPUI's `section`): a rule on top, a 17 px
@@ -322,7 +346,7 @@ fn header<'a>(app: &'a App, stats: &Stats, width: f32) -> Element<'a, Message> {
     let medium = super::font(iced::font::Weight::Medium);
     let options = Period::ALL.into_iter().map(|p| {
         let on = p == period;
-        let label = text(p.label()).size(12.5).font(if on { widgets::semibold() } else { medium }).color(if on {
+        let label = text(p.label()).size(13).font(if on { widgets::semibold() } else { medium }).color(if on {
             theme::text()
         } else {
             theme::text_secondary()
@@ -410,7 +434,14 @@ fn dashboard<'a>(app: &'a App, stats: &Stats, width: f32) -> Element<'a, Message
     let overview = flat(overview, inset);
 
     let most: Element<'a, Message> = match stats.top_tracks.first() {
-        None => flat(container(empty(crate::i18n::t("replay.period_empty"))).center_x(Length::Fill), inset),
+        None => {
+            let note = container(empty(crate::i18n::t("replay.period_empty"))).center_x(Length::Fill);
+            if wide {
+                flat_fill(note, inset)
+            } else {
+                flat(note, inset)
+            }
+        }
         Some(top) => {
             let vertical = !wide && width < 420.0;
             let size = (body_w * if vertical { 0.55 } else { 0.42 }).clamp(76.0, 220.0).min(body_w);
@@ -435,7 +466,11 @@ fn dashboard<'a>(app: &'a App, stats: &Stats, width: f32) -> Element<'a, Message
             } else {
                 row![cover(top.cover.clone(), size, false), about].spacing(20).align_y(Alignment::Center).into()
             };
-            flat(body, inset)
+            if wide {
+                flat_fill(body, inset)
+            } else {
+                flat(body, inset)
+            }
         }
     };
 
@@ -459,7 +494,7 @@ fn dashboard<'a>(app: &'a App, stats: &Stats, width: f32) -> Element<'a, Message
         .padding(iced::Padding { top: 14.0, ..Default::default() });
     column![
         column![
-            pair(most, overview, wide),
+            top_pair(most, overview, section_w, wide),
             pair(
                 section(crate::i18n::t("also_on_repeat"), Some(crate::i18n::t("plays").to_string()), inset, repeats(app, stats, body_w)),
                 section(crate::i18n::t("your_listening_over_time"), Some(peak), inset, chart),
@@ -490,7 +525,7 @@ fn repeats<'a>(app: &App, stats: &Stats, width: f32) -> Element<'a, Message> {
     let mut list = column![];
     for (i, track) in stats.top_tracks.iter().enumerate().take(shown).skip(1) {
         let names = column![
-            line(track.name.clone(), 12.5, theme::text()).font(widgets::semibold()),
+            line(track.name.clone(), 13.0, theme::text()).font(widgets::semibold()),
             line(track.sub.clone(), 11.0, theme::text_secondary())
         ];
         let entry = row![
@@ -562,9 +597,8 @@ fn bars<'a>(values: &[(String, u64)], width: f32) -> Element<'a, Message> {
         let bar = column![Space::new().height(Length::Fill), bar].width(Length::Fill).height(height);
         let bar: Element<'a, Message> = iced::widget::tooltip(
             super::wash::track(bar),
-            // A small pane of glass, as every tooltip.
-            super::liquid_glass::glass(container(text(tip).size(theme::TYPE_LABEL).color(theme::text())).padding([6, 10]), 7.0)
-                .optics(super::liquid_glass::Optics::POPOVER),
+            // The shared bubble (it gives the glass the finite viewport its label needs).
+            widgets::tip_bubble(tip),
             iced::widget::tooltip::Position::Top,
         )
         .into();
@@ -573,22 +607,40 @@ fn bars<'a>(values: &[(String, u64)], width: f32) -> Element<'a, Message> {
     let plot = row(columns.collect::<Vec<Element<'a, Message>>>()).spacing(gap).height(height);
     let rule = container(Space::new().width(Length::Fill).height(1))
         .style(|_| container::Style { background: Some(theme::divider().into()), ..Default::default() });
-    let captions = (0..labels).map(|i| {
-        let index = if labels == 1 { 0 } else { i * (n - 1) / (labels - 1) };
-        let align = if i == 0 {
+    // Each label under its own bar (the first and last flush with the plot's
+    // edges), at evenly spaced bars: Jan Mar May… rather than Jan Feb Apr….
+    let picked = caption_bars(n, labels);
+    let captions = values.iter().enumerate().map(|(j, (label, _))| -> Element<'a, Message> {
+        if !picked.contains(&j) {
+            return Space::new().width(Length::FillPortion(1)).into();
+        }
+        let align = if j == 0 {
             alignment::Horizontal::Left
-        } else if i + 1 == labels {
+        } else if j + 1 == n {
             alignment::Horizontal::Right
         } else {
             alignment::Horizontal::Center
         };
-        container(line(values[index].0.clone(), 10.0, theme::text_secondary()))
-            .width(Length::FillPortion(1))
+        let caption = text(label.clone())
+            .size(10)
+            .color(theme::text_secondary())
+            .wrapping(iced::widget::text::Wrapping::None)
             .align_x(align)
-            .clip(true)
-            .into()
+            .width(Length::Fill);
+        container(caption).width(Length::FillPortion(1)).into()
     });
-    column![column![plot, rule], row(captions.collect::<Vec<Element<'a, Message>>>()).spacing(4)].spacing(6).into()
+    column![column![plot, rule], row(captions.collect::<Vec<Element<'a, Message>>>()).spacing(gap)].spacing(6).into()
+}
+
+/// Which of `n` bars get a caption, at most `max`: the first, the last and
+/// evenly spaced ones between (the most that divide the range evenly).
+fn caption_bars(n: usize, max: usize) -> Vec<usize> {
+    if n <= 1 || max <= 1 {
+        return (0..n.min(1)).collect();
+    }
+    let max = max.min(n);
+    let k = (2..=max).rev().find(|k| (n - 1).is_multiple_of(k - 1)).filter(|k| *k * 2 > max).unwrap_or(max);
+    (0..k).map(|i| i * (n - 1) / (k - 1)).collect()
 }
 
 /// Picture, entry and the page it opens.
@@ -648,7 +700,18 @@ fn carousel<'a>(items: Vec<Tile<'_>>, round: bool, width: f32) -> Element<'a, Me
 
 #[cfg(test)]
 mod tests {
-    use super::pixel_region;
+    use super::{caption_bars, pixel_region};
+
+    #[test]
+    fn chart_captions_sit_under_evenly_spaced_bars() {
+        // Eleven months, room for seven: Jan Mar May Jul Sep Nov.
+        assert_eq!(caption_bars(11, 7), vec![0, 2, 4, 6, 8, 10]);
+        // 31 days: every fifth.
+        assert_eq!(caption_bars(31, 7), vec![0, 5, 10, 15, 20, 25, 30]);
+        // Nothing divides 23 evenly: as many as fit, spread out.
+        assert_eq!(caption_bars(24, 4), vec![0, 7, 15, 23]);
+        assert_eq!(caption_bars(1, 7), vec![0]);
+    }
     use iced::Rectangle;
 
     #[test]
