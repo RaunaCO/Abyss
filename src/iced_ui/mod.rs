@@ -24,6 +24,7 @@ mod motion;
 mod now_playing;
 mod pages;
 mod panel_motion;
+mod perf;
 mod playback;
 mod player_bar;
 mod queue;
@@ -960,11 +961,6 @@ impl App {
         }
     }
 
-    /// Something on screen moves by itself: the view is rebuilt for frames.
-    fn animating(&self) -> bool {
-        self.animating_now() || self.animating_ambient()
-    }
-
     /// Motion the eye follows (the swipe's disc, the sync glyph's turn):
     /// a new view on every vsync.
     fn animating_now(&self) -> bool {
@@ -988,6 +984,7 @@ impl App {
     // ------------------------------------------------------------ update
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        perf::note_message(|| message_kind(&message));
         let task = self.dispatch(message);
         // A dismissed menu fades out unless another one took its place.
         if self.menu.is_some() || self.menu_exit.as_ref().is_some_and(|(_, _, at)| at.elapsed() > motion::EXIT) {
@@ -1323,14 +1320,14 @@ impl App {
         images::evict();
         // What the glass surfaces refract in this view.
         liquid_glass::update_scene(self);
-        let root = self.view_root();
-        self.perf_note(t0.elapsed());
+        let root = perf::root(self.view_root());
+        perf::note_view(t0.elapsed(), || self.perf_context());
         root
     }
 
     fn view_root(&self) -> Element<'_, Message> {
         if self.welcome_step.is_some() {
-            let screen = chrome::caption_strip(self, pages::welcome(self));
+            let screen = chrome::caption_strip(self, perf::probe("welcome", pages::welcome(self)));
             return self.with_overlays(screen);
         }
         let offline_ok = match &self.page {
@@ -1339,25 +1336,29 @@ impl App {
             _ => false,
         };
         if !self.signed_in && !offline_ok {
-            let screen = chrome::caption_strip(self, pages::login_screen(self));
+            let screen = chrome::caption_strip(self, perf::probe("login", pages::login_screen(self)));
             return self.with_overlays(screen);
         }
         if self.now_playing_open {
             // Built and drawn in the dark palette (styles are evaluated at draw time).
-            let np = dark_draw::dark(theme::dark_scope(|| now_playing::view(self)));
+            let np = perf::probe("now_playing", dark_draw::dark(theme::dark_scope(|| now_playing::view(self))));
             return self.with_overlays(np);
         }
         let gap = theme::FRAME_GAP;
-        let content = row![pages::content(self)].push(pages::side_panel(self)).height(Length::Fill);
-        let panel = container(column![pages::top_bar(self), content]).width(Length::Fill).height(Length::Fill).clip(true).style(|_| {
-            container::Style {
+        let content = row![perf::probe("content", pages::content(self))]
+            .push(pages::side_panel(self).map(|p| perf::probe("side_panel", p)))
+            .height(Length::Fill);
+        let panel = container(column![perf::probe("top_bar", pages::top_bar(self)), content])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .clip(true)
+            .style(|_| container::Style {
                 background: Some(theme::bg().into()),
                 border: iced::Border { color: theme::panel_border(), width: 1.0, radius: theme::PANEL_R.into() },
                 ..Default::default()
-            }
-        });
+            });
         let body = row![]
-            .push(self.signed_in.then(|| sidebar::view(self, false)))
+            .push(self.signed_in.then(|| perf::probe("sidebar", sidebar::view(self, false))))
             .push(container(panel).padding(iced::Padding {
                 top: gap,
                 right: gap,
@@ -1365,7 +1366,7 @@ impl App {
                 left: if self.signed_in { 0.0 } else { gap },
             }))
             .height(Length::Fill);
-        let bar = container(container(player_bar::view(self)).clip(true).style(|_| container::Style {
+        let bar = container(container(perf::probe("player_bar", player_bar::view(self))).clip(true).style(|_| container::Style {
             border: iced::Border { color: theme::divider(), width: 1.0, radius: theme::PANEL_R.into() },
             background: Some(theme::bg().into()),
             ..Default::default()
@@ -1388,19 +1389,20 @@ impl App {
                 .padding(iced::Padding { bottom: theme::PLAYER_H + theme::FRAME_GAP, ..Default::default() })
                 .into()
         });
+        let named = |name: &'static str, layer: Option<Element<'a, Message>>| layer.map(|l| perf::probe(name, l));
         let over = vec![
-            sidebar,
-            home::search_overlay(self),
-            self.cover_view.as_ref().map(|cover| pages::cover_overlay(self, cover)),
-            self.info_panel.as_ref().map(|target| info::overlay(self, target)),
-            self.menu.as_ref().map(|(at, target)| menus::overlay(self, *at, target)),
-            self.menu_exit.as_ref().map(|(at, target, closed)| menus::ghost(self, *at, target, *closed)),
-            self.dialog.as_ref().map(|dialog| pages::dialog_overlay(self, dialog)),
+            named("sidebar_overlay", sidebar),
+            named("search_overlay", home::search_overlay(self)),
+            named("cover_view", self.cover_view.as_ref().map(|cover| pages::cover_overlay(self, cover))),
+            named("info_panel", self.info_panel.as_ref().map(|target| info::overlay(self, target))),
+            named("menu", self.menu.as_ref().map(|(at, target)| menus::overlay(self, *at, target))),
+            named("menu_exit", self.menu_exit.as_ref().map(|(at, target, closed)| menus::ghost(self, *at, target, *closed))),
+            named("dialog", self.dialog.as_ref().map(|dialog| pages::dialog_overlay(self, dialog))),
             // A toast rises 8 px into place as it fades in, once per message
             // (a shortcut's toast, such as the zoom's, is there at once).
-            self.toast.as_ref().map(|(text, at)| wash::rise(widgets::toast(text), motion::PANEL, toast_key(*at), 8.0)),
-            widgets::swipe_indicator(self.swipe),
-            chrome::resize_edges(self),
+            named("toast", self.toast.as_ref().map(|(text, at)| wash::rise(widgets::toast(text), motion::PANEL, toast_key(*at), 8.0))),
+            named("swipe", widgets::swipe_indicator(self.swipe)),
+            named("resize_edges", chrome::resize_edges(self)),
             // Over everything while Ctrl is held, so the wheel reaches nothing else.
             self.ctrl_held.then(|| {
                 iced::widget::mouse_area(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
@@ -1424,58 +1426,54 @@ impl App {
 
     // ------------------------------------------------------------ subscriptions
 
-    /// Every tick rebuilds and redraws the window, so an app at rest ticks once a second.
+    /// Every tick rebuilds and redraws the window. While playing (or just
+    /// after an input) it follows the engine 5 times a second; while
+    /// something waits on it (a toast to hide, an import, a retry, Last.fm
+    /// connecting) once a second; otherwise every 5 s: media keys, finished
+    /// jobs and the audio engine's events wake the window by themselves
+    /// (`wake`), so an idle Abyss has nothing to poll for.
     fn poll_ms(&self) -> u64 {
         let playing = self.now.is_some() && !self.ended && !self.snap.paused;
         if playing || self.active_at.elapsed() < Duration::from_secs(3) {
-            200
+            POLL_ACTIVE_MS
+        } else if self.waiting_on_tick() {
+            POLL_WAITING_MS
         } else {
-            1000
+            POLL_IDLE_MS
         }
+    }
+
+    /// Something the tick finishes is under way.
+    fn waiting_on_tick(&self) -> bool {
+        self.toast.is_some()
+            || self.local_busy
+            || !self.dropped.is_empty()
+            || self.queue_restoring
+            || self.autoplay_loading
+            || self.ratings.has_pending()
+            || self.now.as_ref().is_some_and(|_| self.snap.buffering)
+            || !matches!(self.scrobbler.status.lock().phase, crate::scrobble::worker::Phase::Idle)
     }
 
     fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![
             every(self.poll_ms()).map(|_| Message::Tick),
             Subscription::run(wake_stream),
-            event::listen_with(|event, status, _window| match event {
-                iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modified_key, physical_key, modifiers, .. })
-                    if status == event::Status::Ignored =>
-                {
-                    // Characters as typed (Shift and the layout applied), named keys as they are.
-                    Some(Message::Key(
-                        if matches!(modified_key, keyboard::Key::Character(_)) { modified_key } else { key },
-                        physical_key,
-                        modifiers,
-                    ))
+            event::listen_with(|event, status, _window| {
+                // A person is there: ambient motion runs (see `shared::activity`).
+                let woke = match &event {
+                    iced::Event::Keyboard(_) | iced::Event::Touch(_) => crate::shared::activity::input(),
+                    iced::Event::Mouse(
+                        mouse::Event::CursorMoved { .. } | mouse::Event::ButtonPressed(_) | mouse::Event::WheelScrolled { .. },
+                    ) => crate::shared::activity::input(),
+                    _ => false,
+                };
+                let message = Self::on_event(event, status);
+                // The first input after a rest: a new view so the motion starts again.
+                if message.is_none() && woke {
+                    return Some(Message::Wake);
                 }
-                iced::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => Some(Message::Modifiers(mods)),
-                iced::Event::Window(window::Event::Unfocused) => {
-                    // Ambient motion slows down behind other windows (see `motion::ambient_interval`).
-                    motion::set_focused(false);
-                    Some(Message::Modifiers(keyboard::Modifiers::empty()))
-                }
-                iced::Event::Window(window::Event::Focused) => {
-                    motion::set_focused(true);
-                    None
-                }
-                iced::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
-                iced::Event::Window(window::Event::Rescaled(f)) => Some(Message::WindowRescaled(f)),
-                iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
-                iced::Event::Window(window::Event::FileDropped(path)) => Some(Message::FilesDropped(path)),
-                iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PointerUp),
-                iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Back)) => Some(Message::MouseBack),
-                iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Forward)) => Some(Message::MouseForward),
-                iced::Event::Mouse(mouse::Event::CursorMoved { position }) => chrome::pointer_moved(position),
-                // Horizontal swipes nothing else scrolled with: back / forward (GPUI's wheel catcher).
-                iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) if status == event::Status::Ignored => {
-                    let (dx, dy) = match delta {
-                        mouse::ScrollDelta::Pixels { x, y } => (x, y),
-                        mouse::ScrollDelta::Lines { x, y } => (x * 60.0, y * 60.0),
-                    };
-                    (dx != 0.0 && dx.abs() > dy.abs() * 1.5).then_some(Message::Swipe(dx))
-                }
-                _ => None,
+                message
             }),
         ];
         if self.eq_visible() {
@@ -1486,10 +1484,10 @@ impl App {
             subs.push(window::frames().map(|_| Message::Frame));
         } else if self.animating_ambient() {
             subs.push(every(AMBIENT_FRAME_MS).map(|_| Message::Frame));
-        } else if self.is_playing() {
-            // The progress bar and time still move: a few updates a second.
-            subs.push(every(250).map(|_| Message::Frame));
         }
+        // While playing, the 200 ms tick already rebuilds the view (the
+        // progress and the time move with it): a separate 250 ms frame timer
+        // made it 9 views a second instead of 5, out of step with each other.
         // The volume's percentage stays still until it goes: one wake-up when
         // it is due (it was a whole view per vsync for 1.1 s on every change).
         if let Some(at) = self.volume_tip.filter(|_| self.drag != Some(Drag::Volume)) {
@@ -1498,35 +1496,111 @@ impl App {
         Subscription::batch(subs)
     }
 
-    /// `TIDE_PERF=1`: once a second, log views built and what they cost.
-    fn perf_note(&self, spent: Duration) {
-        use std::cell::RefCell;
-        thread_local!(static ACC: RefCell<(Option<Instant>, u32, f64, f64)> = const { RefCell::new((None, 0, 0.0, 0.0)) });
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if !*ON.get_or_init(|| std::env::var("TIDE_PERF").is_ok() || std::env::var("ABYSS_PERF").is_ok()) {
-            return;
-        }
-        ACC.with(|a| {
-            let mut a = a.borrow_mut();
-            let start = *a.0.get_or_insert_with(Instant::now);
-            let ms = spent.as_secs_f64() * 1000.0;
-            a.1 += 1;
-            a.2 += ms;
-            a.3 = a.3.max(ms);
-            if start.elapsed().as_secs_f64() >= 1.0 {
-                let (dec, enc) = images::usage();
-                log::info!(
-                    "perf: {} views/s, view avg {:.2} ms, max {:.2} ms, animating {}, images {:.1}+{:.1} MB",
-                    a.1,
-                    a.2 / a.1 as f64,
-                    a.3,
-                    self.animating(),
-                    dec as f64 / 1048576.0,
-                    enc as f64 / 1048576.0
-                );
-                *a = (Some(Instant::now()), 0, 0.0, 0.0);
+    /// The window events the interface listens to, as messages.
+    fn on_event(event: iced::Event, status: event::Status) -> Option<Message> {
+        match event {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modified_key, physical_key, modifiers, .. })
+                if status == event::Status::Ignored =>
+            {
+                // Characters as typed (Shift and the layout applied), named keys as they are.
+                Some(Message::Key(
+                    if matches!(modified_key, keyboard::Key::Character(_)) { modified_key } else { key },
+                    physical_key,
+                    modifiers,
+                ))
             }
-        });
+            iced::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => Some(Message::Modifiers(mods)),
+            iced::Event::Window(window::Event::Unfocused) => {
+                // Ambient motion slows down behind other windows (see `motion::ambient_interval`).
+                motion::set_focused(false);
+                let _ = crate::shared::activity::set_focused(false);
+                Some(Message::Modifiers(keyboard::Modifiers::empty()))
+            }
+            iced::Event::Window(window::Event::Focused) => {
+                motion::set_focused(true);
+                crate::shared::activity::set_focused(true).then_some(Message::Wake)
+            }
+            iced::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
+            iced::Event::Window(window::Event::Rescaled(f)) => Some(Message::WindowRescaled(f)),
+            iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
+            iced::Event::Window(window::Event::FileDropped(path)) => Some(Message::FilesDropped(path)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PointerUp),
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Back)) => Some(Message::MouseBack),
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Forward)) => Some(Message::MouseForward),
+            iced::Event::Mouse(mouse::Event::CursorMoved { position }) => chrome::pointer_moved(position),
+            // Horizontal swipes nothing else scrolled with: back / forward (GPUI's wheel catcher).
+            iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) if status == event::Status::Ignored => {
+                let (dx, dy) = match delta {
+                    mouse::ScrollDelta::Pixels { x, y } => (x, y),
+                    mouse::ScrollDelta::Lines { x, y } => (x * 60.0, y * 60.0),
+                };
+                (dx != 0.0 && dx.abs() > dy.abs() * 1.5).then_some(Message::Swipe(dx))
+            }
+            _ => None,
+        }
+    }
+
+    /// The state behind the numbers of the `ABYSS_PERF` line: what the
+    /// subscriptions tick at, and how big the caches are.
+    fn perf_context(&self) -> String {
+        let (dec, enc) = images::usage();
+        let frames = if self.animating_now() {
+            "vsync"
+        } else if self.animating_ambient() {
+            "ambient-33ms"
+        } else if self.is_playing() {
+            "playing-250ms"
+        } else {
+            "none"
+        };
+        format!(
+            "tick {} ms, frame sub {frames}{}, playing {} | images {:.1}+{:.1} MB ({} entries) | maps albums {} artists {} playlists {} mixes {} search {} lyrics {}/{} credits {} similar {} tech {} pics {} history {}+{}",
+            self.poll_ms(),
+            if self.eq_visible() { " + eq-33ms" } else { "" },
+            self.is_playing(),
+            dec as f64 / 1048576.0,
+            enc as f64 / 1048576.0,
+            images::entries(),
+            self.albums.len(),
+            self.artists.len(),
+            self.playlists.len(),
+            self.mixes.len(),
+            self.search.len(),
+            self.lyrics.len(),
+            self.lyrics_docs.len(),
+            self.credits.len(),
+            self.similar.len(),
+            self.tech_info.len(),
+            self.artist_pics.len(),
+            self.back.len(),
+            self.forward.len(),
+        )
+    }
+}
+
+/// The name of a message's variant for the `ABYSS_PERF` log (the payload of
+/// most is not formatted: a `PlayTracks` would print whole track lists).
+fn message_kind(message: &Message) -> String {
+    match message {
+        Message::Tick => "Tick".into(),
+        Message::Frame => "Frame".into(),
+        Message::Wake => "Wake".into(),
+        Message::Done(_) => "Done".into(),
+        Message::Modifiers(_) => "Modifiers".into(),
+        Message::Chrome(m) => format!("Chrome::{}", perf::variant(&format!("{m:?}"))),
+        Message::PageScrolled(..) => "PageScrolled".into(),
+        Message::QueueScrolled(_) => "QueueScrolled".into(),
+        Message::Eq(m) => format!("Eq::{}", perf::variant(&format!("{m:?}"))),
+        Message::Row(_) => "Row".into(),
+        Message::Key(..) => "Key".into(),
+        Message::Swipe(_) => "Swipe".into(),
+        Message::PlayTracks(..) => "PlayTracks".into(),
+        Message::PlayShuffled(_) => "PlayShuffled".into(),
+        Message::AddToPlaylist(..) => "AddToPlaylist".into(),
+        Message::OpenMenu(_) => "OpenMenu".into(),
+        Message::OpenItem(_) => "OpenItem".into(),
+        Message::PlayItem(_) => "PlayItem".into(),
+        other => perf::variant(&format!("{other:?}")),
     }
 }
 
@@ -1537,6 +1611,11 @@ fn toast_key(at: Instant) -> u64 {
     at.hash(&mut h);
     h.finish()
 }
+
+/// Tick intervals (see `App::poll_ms`).
+const POLL_ACTIVE_MS: u64 = 200;
+const POLL_WAITING_MS: u64 = 1000;
+const POLL_IDLE_MS: u64 = 5000;
 
 /// GPUI's `AMBIENT_FPS`: 30 views a second for colour-only changes.
 const AMBIENT_FRAME_MS: u64 = 33;

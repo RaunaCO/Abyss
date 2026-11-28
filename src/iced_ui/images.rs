@@ -416,6 +416,24 @@ pub fn usage() -> (usize, usize) {
         .unwrap_or_default()
 }
 
+/// Entries held, for the performance log: "sized/encoded/derived".
+pub fn entries() -> String {
+    images()
+        .map(|im| {
+            let g = im.inner.lock();
+            format!(
+                "{} sized, {} encoded, {} colours, {} palettes, {} pending, {} shown",
+                g.sized.len(),
+                g.encoded.len(),
+                g.colors.len(),
+                g.palettes.len(),
+                g.derive_pending.len(),
+                g.first_shown.len()
+            )
+        })
+        .unwrap_or_default()
+}
+
 /// Compute something from the bytes of `url` once, in the background.
 fn derive<T: Send + 'static>(
     url: &str,
