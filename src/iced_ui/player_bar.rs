@@ -124,6 +124,8 @@ pub fn controls(app: &App, over_fullscreen: bool, width: f32) -> Element<'_, Mes
         if app.drag == Some(Drag::Progress) { app.drag_value as f64 * duration } else { app.display_position().clamp(0.0, duration) };
     let frac = if duration > 0.0 { (position / duration) as f32 } else { 0.0 };
     let playing = app.now.is_some() && !app.snap.paused && !app.ended;
+    // While music plays the ambient drift never comes to rest (`motion::AMBIENT_IDLE`).
+    super::motion::note_playing(app.is_playing());
     let shuffle_color = if app.shuffle { theme::accent() } else { theme::text_secondary() };
     let repeat_icon = if app.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
     let repeat_color = if app.repeat == Repeat::Off { theme::text_secondary() } else { theme::accent() };
