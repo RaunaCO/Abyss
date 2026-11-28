@@ -1,7 +1,9 @@
 //! The play queue, in the side panel and in Now Playing. It starts at the top
-//! while it fits and scrolls once its rows are taller than the space (1.6.0);
-//! only full screen adds room to centre the first and last tracks. The rows
-//! are virtualised: a whole library can be queued.
+//! while it fits and scrolls once its rows are taller than the space (1.6.0),
+//! keeping the current track in the middle where the list allows. Full screen
+//! used to pad the list so even the first track sat in the middle: the glass
+//! pane then showed an empty, refracting top half (1.8). The rows are
+//! virtualised: a whole library can be queued.
 
 use iced::widget::{button, column, container, mouse_area, row, scrollable, text, Space};
 use iced::{Alignment, Border, Element, Length, Task};
@@ -10,7 +12,7 @@ use super::icons::Icon;
 use super::widgets::{self, fmt_time, icon_button, line};
 use super::{theme, App, MenuTarget, Message, NpTab};
 
-const SCROLL_ID: &str = "abyss-queue";
+pub(super) const SCROLL_ID: &str = "abyss-queue";
 const ROW_H: f32 = 60.0;
 /// Extra height of the current row (its margins).
 const CURRENT_EXTRA: f32 = 18.0;
@@ -28,17 +30,12 @@ struct Geometry {
     centred: f32,
 }
 
-fn geometry(count: usize, current: Option<usize>, height: f32, fullscreen: bool) -> Geometry {
+fn geometry(count: usize, current: Option<usize>, height: f32) -> Geometry {
     let content = count as f32 * ROW_H + if current.is_some() { CURRENT_EXTRA } else { 0.0 };
-    if content <= height {
-        let lead = if fullscreen { (height - content) / 2.0 } else { 0.0 };
-        return Geometry { lead, tail: 0.0, centred: 0.0 };
-    }
-    let Some(i) = current else { return Geometry { lead: 0.0, tail: 0.0, centred: 0.0 } };
-    let spacer = if fullscreen { ((height - ROW_H - CURRENT_EXTRA) / 2.0).max(0.0) } else { 0.0 };
-    let middle = spacer + i as f32 * ROW_H + (ROW_H + CURRENT_EXTRA) / 2.0;
-    let centred = (middle - height / 2.0).clamp(0.0, content + 2.0 * spacer - height);
-    Geometry { lead: spacer, tail: spacer, centred }
+    let Some(i) = current.filter(|_| content > height) else { return Geometry { lead: 0.0, tail: 0.0, centred: 0.0 } };
+    let middle = i as f32 * ROW_H + (ROW_H + CURRENT_EXTRA) / 2.0;
+    let centred = (middle - height / 2.0).clamp(0.0, content - height);
+    Geometry { lead: 0.0, tail: 0.0, centred }
 }
 
 /// What the centring last answered to.
@@ -75,7 +72,7 @@ impl App {
             return Task::none();
         }
         let before = self.queue_centred.replace(key);
-        let centred = geometry(self.queue.len(), current.map(|(_, i)| i), height, fullscreen).centred;
+        let centred = geometry(self.queue.len(), current.map(|(_, i)| i), height).centred;
         // The track moved on in a queue already showing: it glides the row or
         // two, as a wheel notch, so the eye can follow where the song went.
         if let Some(by) = glide_by(before, key, self.queue_scroll, centred) {
@@ -97,14 +94,15 @@ fn glide_by(before: Option<Centred>, key: Centred, at: f32, centred: f32) -> Opt
     (same_view && before.uid != key.uid && by.abs() > 0.5 && by.abs() <= GLIDE_MAX).then_some(by)
 }
 
-pub fn panel(app: &App, fullscreen: bool) -> Element<'_, Message> {
+/// The queue's list (`_fullscreen`: both presentations now lay it out alike).
+pub fn panel(app: &App, _fullscreen: bool) -> Element<'_, Message> {
     if app.queue.is_empty() {
-        return widgets::notice(Icon::Queue, crate::i18n::t("add_music_to_the_queue_to_see_it_here"));
+        return super::now_playing::empty_state(Icon::Queue, crate::i18n::t("add_music_to_the_queue_to_see_it_here"));
     }
     let height = app.queue_view().map_or(app.viewport.height, |(_, h)| h);
     let count = app.queue.len();
     let current = app.now.as_ref().map(|n| n.index).filter(|&i| i < count);
-    let geo = geometry(count, current, height, fullscreen);
+    let geo = geometry(count, current, height);
 
     // Whole rows around what shows; the current one may be taller.
     let first = (((app.queue_scroll - geo.lead) / ROW_H).floor().max(0.0) as usize).saturating_sub(6).min(count);
@@ -204,20 +202,16 @@ mod tests {
     }
 
     #[test]
-    fn a_short_queue_starts_at_the_top_of_the_panel_and_is_centred_in_full_screen() {
-        assert_eq!(geometry(3, Some(1), 600.0, false), Geometry { lead: 0.0, tail: 0.0, centred: 0.0 });
-        let full = geometry(3, Some(1), 600.0, true);
-        assert_eq!((full.lead, full.centred), ((600.0 - 198.0) / 2.0, 0.0));
+    fn a_short_queue_starts_at_the_top_in_either_presentation() {
+        assert_eq!(geometry(3, Some(1), 600.0), Geometry { lead: 0.0, tail: 0.0, centred: 0.0 });
     }
 
     #[test]
     fn a_long_queue_centres_the_current_track_within_its_range() {
-        assert_eq!(geometry(100, Some(0), 600.0, false).centred, 0.0);
-        assert_eq!(geometry(100, Some(50), 600.0, false).centred, 3000.0 + 39.0 - 300.0);
-        assert_eq!(geometry(100, Some(99), 600.0, false).centred, 6018.0 - 600.0);
-        // Full screen has room to centre the first and the last too.
-        let first = geometry(100, Some(0), 600.0, true);
-        assert_eq!((first.lead, first.centred), (261.0, 0.0));
-        assert_eq!(geometry(100, Some(99), 600.0, true).centred, 99.0 * 60.0);
+        assert_eq!(geometry(100, Some(0), 600.0).centred, 0.0);
+        assert_eq!(geometry(100, Some(50), 600.0).centred, 3000.0 + 39.0 - 300.0);
+        assert_eq!(geometry(100, Some(99), 600.0).centred, 6018.0 - 600.0);
+        // Nothing playing: the top.
+        assert_eq!(geometry(100, None, 600.0).centred, 0.0);
     }
 }
