@@ -374,3 +374,52 @@ fn motion_on_app_menu_closed_mid_entrance_leaves_from_where_it_was() {
     }
     panic!("the menu never drew its entrance");
 }
+
+impl Screen {
+    /// The window's pixels as last drawn (after a [`Self::frame`]).
+    pub fn pixels(&mut self) -> Vec<u8> {
+        Headless::screenshot(&mut self.renderer, Size::new(self.size.width as u32, self.size.height as u32), 1.0, iced::Color::BLACK)
+    }
+}
+
+/// Save the bottom `h` px of `pixels` (a window `size` wide) as `<name>.png`
+/// in `ABYSS_SHOT_DIR` (or `%TEMP%\abyss-shots`).
+pub(super) fn save_bottom(name: &str, size: Size, pixels: &[u8], h: u32) {
+    let (w, full) = (size.width as u32, size.height as u32);
+    let h = h.min(full);
+    let start = ((full - h) * w * 4) as usize;
+    let dir = std::env::var_os("ABYSS_SHOT_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("abyss-shots"));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(format!("{name}.png"));
+    image::save_buffer(&path, &pixels[start..], w, h, image::ColorType::Rgba8).expect("write the PNG");
+    println!("{}", path.display());
+}
+
+/// The player bar with a track, at the widths that matter (960 minimum,
+/// 1366, 1536 = 1080p@125 %, 2048 = the 1440p@125 % main screen), in both
+/// themes, at rest and with the pointer over the transport.
+#[test]
+#[ignore = "requires an isolated profile and a wgpu adapter; writes PNGs for review"]
+fn motion_on_app_player_bar_shots() {
+    let _theme = theme::THEME_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut app = booted_app();
+    play_something(&mut app);
+    app.fav_ids.insert(1001);
+    for (w, h) in [(960.0, 600.0), (1150.0, 700.0), (1366.0, 768.0), (1536.0, 864.0), (2048.0, 1152.0)] {
+        let size = Size::new(w, h);
+        app.viewport = size;
+        for light in [false, true] {
+            theme::set_light(light);
+            let mut screen = Screen::new(size);
+            screen.settle(&mut app);
+            app.track_colors();
+            app.palette.at = Instant::now() - Duration::from_secs(2);
+            app.ambient.at = Instant::now() - Duration::from_secs(2);
+            let _ = screen.frame(&mut app, &[]);
+            let px = screen.pixels();
+            let name = format!("bar-{}-{}", if light { "light" } else { "dark" }, w as u32);
+            save_bottom(&name, size, &px, 96);
+        }
+    }
+    theme::set_light(false);
+}

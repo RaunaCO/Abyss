@@ -179,6 +179,7 @@ pub fn note_playing(on: bool) {
 /// Seconds on the ambient drift's clock (0 with reduced motion): what the
 /// slow lights move by. It slows to a stop when the window goes idle and
 /// resumes from there, instead of jumping ahead by the time it rested.
+#[allow(dead_code)] // For `liquid_glass` / `gpu::backdrop` (requested from arte): their lights still read the wall clock.
 pub fn ambient_clock() -> f32 {
     if reduced() {
         return 0.0;
@@ -194,6 +195,7 @@ pub fn ambient_moving(now: Instant) -> bool {
 /// When an ambient effect drawn at `now` wants its next frame (`slow`: the
 /// album banners' lights, which take 5-8 s to cross), or `None` once the
 /// drift has come to rest.
+#[allow(dead_code)] // As `ambient_clock`.
 pub fn ambient_next(now: Instant, slow: bool) -> Option<Instant> {
     ambient_moving(now).then(|| now + if slow { slow_interval() } else { interval() })
 }

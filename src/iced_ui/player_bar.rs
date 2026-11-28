@@ -52,7 +52,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             // GPUI: a new track slides its title in, once per track
             // (`opacity(0.7 + 0.3 t).left((1 - t) * 3)` over `FAST`).
             let names = super::wash::appear(column![title, sub].spacing(3).width(Length::Fill), super::motion::FAST, track.id, 0.7, 3.0);
-            row![cover(track.cover(160), 42.0, false), names]
+            row![crossfaded_cover(track.cover(160), 42.0), names]
                 .push((!local).then(|| {
                     super::widgets::glyph_button(
                         super::widgets::soft_glyph(
@@ -230,11 +230,11 @@ pub fn controls(app: &App, over_fullscreen: bool, width: f32) -> Element<'_, Mes
     };
     // As GPUI, every toggle names itself in a tooltip.
     let right = row![
-        super::widgets::tip(
+        tip_above(
             toggle(Icon::Queue, if big { app.np_tab == NpTab::Queue } else { app.show_queue }, Message::ToggleQueue),
             crate::i18n::t("queue"),
         ),
-        super::widgets::tip(
+        tip_above(
             toggle(Icon::Lyrics, if big { app.np_tab == NpTab::Lyrics } else { app.show_lyrics }, Message::ToggleLyrics),
             crate::i18n::t("lyrics"),
         ),
@@ -246,7 +246,7 @@ pub fn controls(app: &App, over_fullscreen: bool, width: f32) -> Element<'_, Mes
         ))
         .on_right_press(Message::OpenMenu(MenuTarget::Output)),
         volume,
-        super::widgets::tip(
+        tip_above(
             toggle(if big { Icon::ExitFullscreen } else { Icon::Fullscreen }, big, Message::ToggleNowPlaying),
             if big { crate::i18n::t("exit_full_screen_esc") } else { crate::i18n::t("full_screen") },
         ),
@@ -261,5 +261,243 @@ pub fn controls(app: &App, over_fullscreen: bool, width: f32) -> Element<'_, Mes
             .align_y(Alignment::Center)
             .width(Length::Fill)
             .into()
+    }
+}
+
+/// A toggle's name over it: the bar sits at the window's bottom edge, where a
+/// tooltip below would be pushed back up over the button it names.
+fn tip_above<'a>(content: impl Into<Element<'a, Message>>, label: &'a str) -> Element<'a, Message> {
+    iced::widget::tooltip(content, super::widgets::tip_bubble(label), iced::widget::tooltip::Position::Top)
+        .padding(0)
+        .gap(6)
+        .delay(std::time::Duration::from_millis(450))
+        .into()
+}
+
+// ------------------------------------------------------------------ cover
+
+/// The bar's cover, cross-fading from the previous track's: on a skip the
+/// old cover holds until the new one has arrived (at most [`HOLD`]), then
+/// fades out over it in [`super::motion::COVER_FADE`], instead of blinking to
+/// the note placeholder for the frames the new artwork takes to load.
+/// Skipping several tracks fast fades from the cover that is on screen,
+/// never stacking.
+fn crossfaded_cover<'a>(url: Option<String>, size: f32) -> Element<'a, Message> {
+    let side = super::images::snap(size);
+    let ready = url.as_deref().and_then(|u| super::images::sized(u, side, side));
+    Element::new(CoverFade { child: cover(url.clone(), size, false), url, ready, side })
+}
+
+/// How long the previous cover waits for the new one before giving way.
+const HOLD: std::time::Duration = std::time::Duration::from_millis(600);
+
+type Handle = iced::widget::image::Handle;
+
+struct CoverFade<'a> {
+    child: Element<'a, Message>,
+    url: Option<String>,
+    ready: Option<Handle>,
+    side: f32,
+}
+
+#[derive(Default)]
+struct Fading {
+    /// The URL the child draws, and its image once it has one.
+    url: Option<String>,
+    shown: Option<Handle>,
+    /// The cover being faded out, and since when the new one is waiting.
+    previous: Option<Handle>,
+    changed: Option<std::time::Instant>,
+    /// When the new cover arrived and the fade-out began.
+    fading: Option<std::time::Instant>,
+}
+
+impl Fading {
+    /// Opacity of the previous cover over the new one at `now` (0 when none).
+    fn veil(&self, now: std::time::Instant) -> f32 {
+        use super::motion::{ease_out, progress, COVER_FADE};
+        if self.previous.is_none() {
+            return 0.0;
+        }
+        match (self.fading, self.changed) {
+            (Some(at), _) => 1.0 - ease_out(progress(at, now, COVER_FADE)),
+            // Still waiting for the new artwork: hold the old one, then let it go.
+            (None, Some(at)) if now.saturating_duration_since(at) < HOLD => 1.0,
+            (None, Some(at)) => 1.0 - ease_out(progress(at + HOLD, now, COVER_FADE)),
+            (None, None) => 0.0,
+        }
+    }
+
+    /// The view now shows `url`, drawn with `ready` once it has loaded.
+    fn see(&mut self, url: &Option<String>, ready: &Option<Handle>, now: std::time::Instant) {
+        if *url != self.url {
+            // What is on screen right now fades out: the old cover while it
+            // still mostly covers the new one, else the new one (no stacking).
+            let on_screen = if self.veil(now) > 0.5 { self.previous.clone() } else { None };
+            self.previous = on_screen.or_else(|| self.shown.clone());
+            self.url = url.clone();
+            self.shown = None;
+            self.changed = Some(now);
+            self.fading = None;
+        }
+        if self.shown.is_none() {
+            if let Some(h) = ready {
+                self.shown = Some(h.clone());
+                if self.changed.is_some() && self.fading.is_none() {
+                    self.fading = Some(now);
+                }
+            }
+        }
+    }
+}
+
+impl iced::advanced::Widget<Message, iced::Theme, iced::Renderer> for CoverFade<'_> {
+    fn tag(&self) -> iced::advanced::widget::tree::Tag {
+        iced::advanced::widget::tree::Tag::of::<Fading>()
+    }
+
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        // The first cover just appears (with its own fade-in on first load).
+        iced::advanced::widget::tree::State::new(Fading { url: self.url.clone(), shown: self.ready.clone(), ..Default::default() })
+    }
+
+    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+        vec![iced::advanced::widget::Tree::new(&self.child)]
+    }
+
+    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+        tree.state.downcast_mut::<Fading>().see(&self.url, &self.ready, std::time::Instant::now());
+        tree.diff_children(std::slice::from_ref(&self.child));
+    }
+
+    fn size(&self) -> iced::Size<Length> {
+        self.child.as_widget().size()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        self.child.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        viewport: &iced::Rectangle,
+    ) {
+        if let iced::Event::Window(iced::window::Event::RedrawRequested(now)) = event {
+            let state = tree.state.downcast_mut::<Fading>();
+            if state.previous.is_some() {
+                match (state.fading, state.changed) {
+                    _ if state.veil(*now) <= 0.0 => {
+                        state.previous = None;
+                        state.changed = None;
+                        state.fading = None;
+                    }
+                    // Holding: one wake-up when the hold ends, no frames meanwhile.
+                    (None, Some(at)) if now.saturating_duration_since(at) < HOLD => shell.request_redraw_at(at + HOLD),
+                    _ => shell.request_redraw(),
+                }
+            }
+        }
+        self.child.as_widget_mut().update(&mut tree.children[0], event, layout, cursor, renderer, clipboard, shell, viewport);
+    }
+
+    fn draw(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        self.child.as_widget().draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+        let state = tree.state.downcast_ref::<Fading>();
+        let veil = state.veil(std::time::Instant::now());
+        if let Some(previous) = state.previous.clone().filter(|_| veil > 0.002) {
+            use iced::advanced::image::Renderer as _;
+            let b = layout.bounds();
+            let bounds = iced::Rectangle { x: b.x, y: b.y, width: self.side, height: self.side };
+            let image = iced::advanced::image::Image {
+                handle: previous,
+                filter_method: iced::advanced::image::FilterMethod::Linear,
+                rotation: iced::Radians(0.0),
+                border_radius: 4.0.into(),
+                opacity: super::wash::fade() * veil,
+                snap: true,
+            };
+            renderer.draw_image(image, bounds, bounds);
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+        renderer: &iced::Renderer,
+    ) -> iced::mouse::Interaction {
+        self.child.as_widget().mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn handle(n: u8) -> Handle {
+        Handle::from_rgba(1, 1, vec![n, n, n, 255])
+    }
+
+    #[test]
+    fn a_skip_holds_the_old_cover_until_the_new_one_arrives_then_cross_fades() {
+        let fade = super::super::motion::COVER_FADE;
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let (a, b) = (Some("a".to_string()), Some("b".to_string()));
+        let mut f = Fading { url: a.clone(), shown: Some(handle(1)), ..Default::default() };
+        assert_eq!(f.veil(t0), 0.0);
+        // Skip: B is not loaded yet, A holds.
+        f.see(&b, &None, ms(10));
+        assert_eq!(f.veil(ms(50)), 1.0);
+        // B arrives: A fades out over COVER_FADE.
+        f.see(&b, &Some(handle(2)), ms(80));
+        assert!(f.veil(ms(80)) > 0.99);
+        let mid = f.veil(ms(80) + fade / 3);
+        assert!(mid > 0.0 && mid < 0.7, "{mid}");
+        assert_eq!(f.veil(ms(80) + fade), 0.0);
+        // B never arrives: A lets go after HOLD rather than stay on the wrong track.
+        let mut g = Fading { url: a, shown: Some(handle(1)), ..Default::default() };
+        g.see(&b, &None, t0);
+        assert_eq!(g.veil(t0 + HOLD + fade), 0.0);
+    }
+
+    #[test]
+    fn skipping_fast_fades_from_what_is_on_screen_without_stacking() {
+        let fade = super::super::motion::COVER_FADE;
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let a = handle(1);
+        let mut f = Fading { url: Some("a".into()), shown: Some(a.clone()), ..Default::default() };
+        f.see(&Some("b".into()), &None, ms(0));
+        // C before B ever showed: A (on screen) is still what fades, once.
+        f.see(&Some("c".into()), &None, ms(40));
+        assert_eq!(f.previous, Some(a));
+        f.see(&Some("c".into()), &Some(handle(3)), ms(60));
+        assert!(f.veil(ms(60)) > 0.99);
+        assert_eq!(f.veil(ms(60) + fade), 0.0);
     }
 }
