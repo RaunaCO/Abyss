@@ -562,6 +562,8 @@ fn idle_frames_and_who_asks_for_them() {
     drop(app.update(Message::Navigate(Page::Home)));
     app.page_at = Instant::now() - Duration::from_secs(2);
     let _ = run_frames(&app, &renderer, &mut tree, 1000);
+    // (Other tests in this process may have left a track "playing".)
+    crate::shared::activity::set_playing(false);
     crate::shared::activity::input_ago(crate::shared::activity::REST_AFTER + Duration::from_secs(1));
     assert!(crate::shared::activity::at_rest());
     let resting = report("home, paused, nobody there", run_frames(&app, &renderer, &mut tree, 2000), 2.0);
@@ -735,8 +737,10 @@ fn back_and_forward_restore_where_the_page_was_scrolled() {
     // Visiting the album anew (not through the history) starts at its top.
     drop(app.update(Message::Navigate(Page::Album(album.id))));
     assert_eq!(app.page_scroll, 0.0);
-    // The mouse's back button goes the same way.
+    // The mouse's back button goes the same way, and closes a menu left open.
+    app.menu = Some((Point::new(300.0, 300.0), MenuTarget::Album(album.clone())));
     drop(app.update(Message::MouseBack));
+    assert!(app.menu.is_none(), "a menu does not outlive its page");
     assert_eq!((app.page.clone(), app.page_scroll), (Page::MyTracks, 120.0));
 }
 
@@ -799,4 +803,23 @@ fn skipping_fast_through_the_queue_lands_on_the_last_press() {
     let playing = app.queue[34].uid;
     drop(app.update(Message::RemoveQueued(playing)));
     assert_eq!(app.queue[34].uid, playing);
+}
+
+/// Releasing the progress: the thumb stays at the target while the engine
+/// catches up (it used to snap back for one tick, then jump forward).
+#[test]
+#[ignore = "requires an isolated profile (ABYSS_CONFIG_DIR, ABYSS_CACHE_DIR)"]
+fn a_seek_is_shown_at_its_target_until_the_engine_gets_there() {
+    let (mut app, _, _) = playing_app();
+    app.snap.duration = 240.0;
+    drop(app.update(Message::ProgressDrag(0.5)));
+    drop(app.update(Message::ProgressRelease));
+    assert!((app.snap.position - 120.0).abs() < 0.01);
+    // The engine has not seen the seek: its snapshot still says ~0 s.
+    drop(app.update(Message::Tick));
+    assert!((app.snap.position - 120.0).abs() < 0.01, "held at the target: {}", app.snap.position);
+    assert!(app.seek_hold.is_some());
+    app.seek_hold = Some((120.0, Instant::now() - Duration::from_secs(2)));
+    drop(app.update(Message::Tick));
+    assert!(app.seek_hold.is_none(), "an engine that never gets there is believed after 1.5 s");
 }

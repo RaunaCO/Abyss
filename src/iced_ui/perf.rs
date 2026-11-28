@@ -229,13 +229,13 @@ fn line(a: &Acc, secs: f64) -> String {
         secs,
     );
     let mut messages: Vec<_> = a.messages.iter().collect();
-    messages.sort_by(|x, y| y.1.cmp(&x.1));
+    messages.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (k, n) in messages {
         let _ = write!(s, " {k}={n}");
     }
     s.push_str(" | frames asked by");
     let mut asks: Vec<_> = a.asks.iter().collect();
-    asks.sort_by(|x, y| y.frames.cmp(&x.frames));
+    asks.sort_by_key(|x| std::cmp::Reverse(x.frames));
     if asks.is_empty() {
         s.push_str(" nobody");
     }

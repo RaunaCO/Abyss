@@ -365,6 +365,9 @@ pub struct App {
     /// Where each page of the history was scrolled when it was left (Back and
     /// Forward bring it back there), newest last.
     scroll_memory: Vec<(Page, f32)>,
+    /// A seek the engine may not have done yet: (target s, when). The tick
+    /// keeps showing the target instead of the engine's older position.
+    seek_hold: Option<(f64, Instant)>,
 }
 
 /// Fades of the ambient colour and palette (track changes).
@@ -832,6 +835,7 @@ impl App {
             eq_scale: None,
             last_frame: Instant::now(),
             scroll_memory: Vec::new(),
+            seek_hold: None,
         };
         let mut tasks = vec![window::oldest().and_then(|id| window::size(id).map(move |size| Message::WindowOpened(id, size)))];
         if storage_unavailable {
@@ -1636,6 +1640,10 @@ impl App {
         if self.page == page {
             return Task::none();
         }
+        // A menu belongs to the page it was opened on (Back with the mouse's
+        // button or Alt+Left left it floating over the next one, acting on a
+        // row no longer shown).
+        self.menu = None;
         self.scroll_memory.retain(|(p, _)| *p != page);
         self.scroll_memory.push((page, scroll));
         if self.scroll_memory.len() > HISTORY_CAP {
