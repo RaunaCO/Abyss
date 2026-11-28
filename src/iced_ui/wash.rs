@@ -287,6 +287,10 @@ where
             let state = tree.state.downcast_mut::<State>();
             let now = Instant::now();
             state.springy = self.pulse;
+            if matches!(event, Event::Mouse(_) | Event::Keyboard(_) | Event::Touch(_)) {
+                // Someone is using the window: the ambient drift keeps going.
+                motion::note_input();
+            }
             let over = cursor.is_over(layout.bounds()) && cursor.is_over(*viewport);
             if over != state.over {
                 state.over = over;
@@ -304,7 +308,8 @@ where
                     state.down = true;
                     // A new press takes over from a spring still settling.
                     state.pulse = None;
-                    state.press.go(1.0, motion::PRESS_IN, now);
+                    // Immediate: the frame after the click already shows most of the press.
+                    state.press.go_ahead(1.0, motion::PRESS_IN, now, motion::PRESS_LEAD);
                     shell.request_redraw();
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
@@ -511,24 +516,106 @@ struct Enter<'a, Message, Theme, Renderer> {
     pivot: Pivot,
 }
 
-/// When the surface appeared, and for which key.
-struct Appeared(Instant, u64);
+/// When the surface appeared, for which key, and from where.
+struct Appeared {
+    at: Instant,
+    key: u64,
+    /// Eased progress (0..1) the entrance starts from: 0 normally; where the
+    /// previous one had got to when a new key took over mid-way (fast track
+    /// skips carry on instead of dipping back to the floor each time); the
+    /// opacity of the ghost of the same surface still fading out (a menu
+    /// opened again where it was just closed grows back from there).
+    from: f32,
+    /// The first frame has looked for a ghost to continue from.
+    matched: bool,
+}
 
 impl Appeared {
     /// Starting now, or already over when a key press brought it (see
     /// [`motion::keyed`]).
     fn now(key: u64, dur: std::time::Duration) -> Self {
-        let now = Instant::now();
-        let at = if motion::by_keyboard() { now.checked_sub(dur).unwrap_or(now) } else { now };
-        Appeared(at, key)
+        Self::at(key, dur, Instant::now())
     }
+
+    fn at(key: u64, dur: std::time::Duration, now: Instant) -> Self {
+        let at = if motion::by_keyboard() { now.checked_sub(dur).unwrap_or(now) } else { now };
+        Appeared { at, key, from: 0.0, matched: false }
+    }
+
+    /// Eased progress 0..1 at `now`.
+    fn t(&self, now: Instant, dur: std::time::Duration) -> f32 {
+        self.from + (1.0 - self.from) * motion::ease_out(motion::progress(self.at, now, dur))
+    }
+
+    /// A new key at `now`: a settled surface enters anew; one still entering
+    /// carries on from where it is, never back to the start.
+    fn rekey(&mut self, key: u64, dur: std::time::Duration, now: Instant) {
+        let t = self.t(now, dur);
+        let mut next = Appeared::at(key, dur, now);
+        next.matched = true;
+        if t < 1.0 && next.t(now, dur) < 1.0 {
+            next.from = t;
+        }
+        *self = next;
+    }
+}
+
+// ------------------------------------------------------------------ traces
+
+/// What a floating surface looked like on its last frame, so its entrance
+/// and its exit ghost (separate widgets at the same place) hand over without
+/// a jump: a menu closed while still growing in fades out from the opacity
+/// and size it had reached, not from full, and one opened again where its
+/// ghost is still fading grows back from there.
+#[derive(Clone, Copy, Debug)]
+struct Trace {
+    bounds: Rectangle,
+    alpha: f32,
+    transform: Option<Transformation>,
+    leaving: bool,
+    at: Instant,
+}
+
+/// How recent a trace must be to hand over (a couple of frames at 60 Hz).
+const TRACE_FRESH: std::time::Duration = std::time::Duration::from_millis(100);
+
+thread_local! {
+    static TRACES: std::cell::RefCell<Vec<Trace>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn same_place(a: Rectangle, b: Rectangle) -> bool {
+    (a.x - b.x).abs() < 0.5 && (a.y - b.y).abs() < 0.5 && (a.width - b.width).abs() < 0.5 && (a.height - b.height).abs() < 0.5
+}
+
+fn trace(t: Trace) {
+    TRACES.with(|traces| {
+        let mut traces = traces.borrow_mut();
+        traces
+            .retain(|o| t.at.saturating_duration_since(o.at) < TRACE_FRESH && !(o.leaving == t.leaving && same_place(o.bounds, t.bounds)));
+        if traces.len() >= 8 {
+            traces.remove(0);
+        }
+        traces.push(t);
+    });
+}
+
+/// The latest trace of a surface `leaving` (or entering) at `bounds`.
+fn traced(bounds: Rectangle, leaving: bool, now: Instant) -> Option<Trace> {
+    TRACES.with(|traces| {
+        traces
+            .borrow()
+            .iter()
+            .rev()
+            .find(|t| t.leaving == leaving && same_place(t.bounds, bounds) && now.saturating_duration_since(t.at) < TRACE_FRESH)
+            .copied()
+    })
 }
 
 impl<Message, Theme, Renderer> Enter<'_, Message, Theme, Renderer> {
     /// Eased progress 0..1. Reduced motion keeps this fade (it is not
     /// movement); only the slide and the growth are dropped.
     fn opacity(&self, tree: &Tree, now: Instant) -> f32 {
-        motion::ease_out(motion::progress(tree.state.downcast_ref::<Appeared>().0, now, self.dur))
+        tree.state.downcast_ref::<Appeared>().t(now, self.dur)
     }
 }
 
@@ -550,8 +637,8 @@ where
 
     fn diff(&self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<Appeared>();
-        if state.1 != self.key {
-            *state = Appeared::now(self.key, self.dur);
+        if state.key != self.key {
+            state.rekey(self.key, self.dur, Instant::now());
         }
         tree.diff_children(std::slice::from_ref(&self.content));
     }
@@ -584,6 +671,16 @@ where
         viewport: &Rectangle,
     ) {
         if let Event::Window(window::Event::RedrawRequested(at)) = event {
+            let state = tree.state.downcast_mut::<Appeared>();
+            if !std::mem::replace(&mut state.matched, true) {
+                // Opened where its own ghost is still fading: grow back from it.
+                if let Some(ghost) = traced(layout.bounds(), true, *at) {
+                    let resumed = Appeared { at: *at, key: state.key, from: ghost.alpha.clamp(0.0, 1.0), matched: true };
+                    if resumed.from > state.t(*at, self.dur) {
+                        *state = resumed;
+                    }
+                }
+            }
             if self.opacity(tree, *at) < 1.0 {
                 shell.request_redraw();
             }
@@ -617,6 +714,9 @@ where
         if (1.0 - k).abs() >= 1e-4 {
             let grow = motion::scale_about(k, self.pivot.at(layout.bounds()));
             moved = Some(moved.map_or(grow, |m| m * grow));
+        }
+        if t < 1.0 && self.floor == 0.0 {
+            trace(Trace { bounds: layout.bounds(), alpha, transform: moved, leaving: false, at: Instant::now() });
         }
         match moved {
             Some(m) => renderer.with_transformation(m, |renderer| {
@@ -656,6 +756,8 @@ where
 /// fading out over `dur` (quartic ease-out, as everything that leaves). It
 /// takes no input and offers nothing to operations: it is only a picture of
 /// what was there, so the click that closed it already reaches what is under.
+/// Dismissed while still entering, it leaves from the opacity and size the
+/// entrance had reached (no flash back to full before fading).
 pub fn leave<'a, Message: 'a, Theme: 'a, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
     started: Instant,
@@ -678,10 +780,34 @@ struct Leave<'a, Message, Theme, Renderer> {
     dur: std::time::Duration,
 }
 
+/// Where a ghost starts from: the entrance's opacity and transformation
+/// when it was dismissed (looked up on its first frame).
+type LeftFrom = std::cell::Cell<Option<(f32, Option<Transformation>)>>;
+
+impl<Message, Theme, Renderer> Leave<'_, Message, Theme, Renderer> {
+    fn start(&self, tree: &Tree, bounds: Rectangle) -> (f32, Option<Transformation>) {
+        let cell = tree.state.downcast_ref::<LeftFrom>();
+        if let Some(start) = cell.get() {
+            return start;
+        }
+        let start = traced(bounds, false, self.started).map_or((1.0, None), |t| (t.alpha.clamp(0.0, 1.0), t.transform));
+        cell.set(Some(start));
+        start
+    }
+}
+
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for Leave<'_, Message, Theme, Renderer>
 where
     Renderer: renderer::Renderer,
 {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<LeftFrom>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(LeftFrom::new(None))
+    }
+
     fn children(&self) -> Vec<Tree> {
         vec![Tree::new(&self.content)]
     }
@@ -704,9 +830,9 @@ where
 
     fn update(
         &mut self,
-        _tree: &mut Tree,
+        tree: &mut Tree,
         event: &Event,
-        _layout: Layout<'_>,
+        layout: Layout<'_>,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
@@ -714,6 +840,7 @@ where
         _viewport: &Rectangle,
     ) {
         if let Event::Window(window::Event::RedrawRequested(at)) = event {
+            let _ = self.start(tree, layout.bounds());
             if leaving(self.started, *at, self.dur) > 0.0 {
                 shell.request_redraw();
             }
@@ -730,12 +857,20 @@ where
         _cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        let alpha = leaving(self.started, Instant::now(), self.dur);
+        let (from, transform) = self.start(tree, layout.bounds());
+        let alpha = from * leaving(self.started, Instant::now(), self.dur);
         if alpha <= 0.002 {
             return;
         }
+        trace(Trace { bounds: layout.bounds(), alpha, transform, leaving: true, at: Instant::now() });
         let prev = FADE.with(|f| f.replace(f.get() * alpha));
-        self.content.as_widget().draw(&tree.children[0], renderer, theme, style, layout, mouse::Cursor::Unavailable, viewport);
+        let content = &tree.children[0];
+        match transform {
+            Some(m) => renderer.with_transformation(m, |renderer| {
+                self.content.as_widget().draw(content, renderer, theme, style, layout, mouse::Cursor::Unavailable, viewport);
+            }),
+            None => self.content.as_widget().draw(content, renderer, theme, style, layout, mouse::Cursor::Unavailable, viewport),
+        }
         FADE.with(|f| f.set(prev));
     }
 }
@@ -848,6 +983,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn fade_multiplies_colours_only_inside_an_entrance() {
@@ -944,6 +1080,48 @@ mod tests {
         let f = fill(Color::TRANSPARENT, ink(0.06), ink(0.04), Phase { hover: 0.0, press: 1.0, ..Phase::REST });
         assert!((f.a - 0.04).abs() < 1e-6);
         assert_eq!(fill(Color::TRANSPARENT, ink(0.06), ink(0.04), Phase::REST).a, 0.0);
+    }
+
+    #[test]
+    fn a_new_key_mid_entrance_carries_on_and_a_settled_one_enters_anew() {
+        motion::full_motion_for_tests();
+        let dur = motion::FAST;
+        let t0 = Instant::now();
+        let mut a = Appeared { at: t0, key: 1, from: 0.0, matched: true };
+        let mid = t0 + dur / 4;
+        let v = a.t(mid, dur);
+        assert!(v > 0.0 && v < 1.0);
+        // Five quick skips: never back to the start, always settling forward.
+        let mut last = v;
+        for k in 2..7 {
+            a.rekey(k, dur, mid);
+            let now_v = a.t(mid, dur);
+            assert!(now_v >= last - 1e-3, "skip {k}: {now_v} < {last}");
+            last = now_v;
+        }
+        assert!(a.t(mid + dur, dur) >= 1.0 - 1e-6);
+        // Settled: the next key plays the whole entrance again.
+        let mut b = Appeared { at: t0, key: 1, from: 0.0, matched: true };
+        let later = t0 + dur * 3;
+        b.rekey(2, dur, later);
+        assert!(b.t(later, dur) < 0.05);
+    }
+
+    #[test]
+    fn a_ghost_leaves_from_the_entrance_it_replaces_and_back() {
+        let now = Instant::now();
+        let bounds = Rectangle { x: 300.0, y: 120.0, width: 286.0, height: 240.0 };
+        let grow = Transformation::scale(0.985);
+        trace(Trace { bounds, alpha: 0.55, transform: Some(grow), leaving: false, at: now });
+        let found = traced(bounds, false, now + Duration::from_millis(5)).expect("the entrance's last frame");
+        assert!((found.alpha - 0.55).abs() < 1e-6 && found.transform == Some(grow));
+        // Elsewhere, or a leaving surface, or too old: nothing to hand over.
+        assert!(traced(Rectangle { x: 500.0, ..bounds }, false, now).is_none());
+        assert!(traced(bounds, true, now).is_none());
+        assert!(traced(bounds, false, now + TRACE_FRESH * 2).is_none());
+        // One trace per surface and direction: the latest frame wins.
+        trace(Trace { bounds, alpha: 0.7, transform: None, leaving: false, at: now + Duration::from_millis(5) });
+        assert!((traced(bounds, false, now + Duration::from_millis(6)).unwrap().alpha - 0.7).abs() < 1e-6);
     }
 
     /// A glass pane with a filled box inside, growing from its top-left
