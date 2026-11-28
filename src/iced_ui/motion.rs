@@ -29,7 +29,7 @@
 //! | Track info on a new track | [`FAST`] 91 ms from 70 % and 3 px; a skip mid-way continues from where it is | quartic | `wash::appear` |
 //! | Bar cover on a new track | [`COVER_FADE`] 195 ms cross-fade over the previous cover | quartic | `player_bar` |
 //! | Ambient colour after a track change | [`AMBIENT`] 585 ms | cubic ([`ease_out_soft`]) | `theme_fade`, palette |
-//! | Ambient drift (banners, bar, backdrop) | 30 fps focused / 10 fps behind ([`ambient_interval`]); 20 / 8 fps for the slowest ([`ambient_slow_interval`]); comes to rest over [`AMBIENT_SETTLE`] after [`AMBIENT_IDLE`] without input while nothing plays | [`ambient_clock`] | `liquid_glass`, `gpu/backdrop` |
+//! | Ambient drift (banners, bar, backdrop) | 30 fps focused / 10 fps behind ([`ambient_interval`]), on one shared grid (`liquid_glass::ambient_deadline`); comes to rest over [`AMBIENT_SETTLE`] after [`AMBIENT_IDLE`] without input while nothing plays | [`ambient_clock`] | `liquid_glass`, `gpu/backdrop` |
 //! | Wheel | 99 px a notch, 63 % in 75 ms | exponential | `glide` |
 //! | Opened by a key | instant ([`keyed`]) | — | search, pages, menus |
 //!
@@ -226,17 +226,6 @@ fn slow_interval() -> Duration {
 pub fn ambient_interval() -> Duration {
     if ambient_moving(Instant::now()) {
         interval()
-    } else {
-        AMBIENT_ASLEEP
-    }
-}
-
-/// The slowest ambient motion (album banners and panes lit by a cover, whose
-/// lights take 5-8 s to cross): 20 fps with the focus, 8 fps without — the
-/// eye cannot tell it from 30 at that speed. At rest, as [`ambient_interval`].
-pub fn ambient_slow_interval() -> Duration {
-    if ambient_moving(Instant::now()) {
-        slow_interval()
     } else {
         AMBIENT_ASLEEP
     }

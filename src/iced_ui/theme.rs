@@ -415,11 +415,6 @@ fn pick_a(dark: u32, light: u32) -> Rgba {
     rgba(if is_light() { light } else { dark })
 }
 
-/// Solid gold-tinted background of a selected quality option.
-pub fn gold_solid() -> Rgba {
-    pick(0x2a2a20, 0xf5edd2)
-}
-
 pub fn gold_bg() -> Rgba {
     pick_a(0xffd43222, 0xd9a4002a)
 }
